@@ -253,6 +253,32 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 
 ---
 
+### TTL-Gated Caching: Invalidation Contract
+
+- **Rule**: Whenever a previously-unconditional async fetch is converted to TTL-gated caching, audit every CALLER of the fetched value. Every mutating operation that the caller might immediately follow with a stale read MUST either: (a) call the gated fetch with `force=True` before returning, OR (b) invalidate the cache on the mutation path itself.
+  - **Action**: Document the contract at the cache class: "all writers must invalidate; all read-after-write callers in the same process must `force=True`".
+  - **Verification**: Write an integration test that exercises mutation → immediate read in the SAME process (not just the cross-process eventual-consistency path) to prevent silent regressions.
+  - **Exposure**: TTL-gated caches MUST expose `last_refresh_at` (or `is_stale_for(window)`) so operators and health probes can detect the cache going cold; silent staleness is worse than a loud cache miss.
+
+---
+
+### Composition Root Wiring: E2E Test Mandatory
+
+- **Rule**: Any composition-root wiring that translates an env var into a constructor arg of a hot-path client (e.g., `model.api_url → EmbeddingClient(url=...)`) MUST be paired with at least one e2e subprocess test (following the `tests/e2e/test_ingest_success_rate.py` pattern) that runs through the env-to-runtime translation end-to-end.
+  - **Rationale**: Unit tests that mock the env, and integration tests that build the client directly, both bypass the composition root and let configuration-translation bugs land silently.
+  - **Rule**: Seed rows that default-empty a field MUST have an explicit documented fallback in the consuming code AND a unit test asserting that fallback fires (`assert client.url == fallback_url` when seed row has `api_url=""`). The fallback contract belongs in spec §4.6 near the env var it falls back to.
+
+---
+
+### Skill Fan-out Integrity: /simplify Phase 2 Is Non-Negotiable
+
+- **Rule**: When `/simplify` runs, Phase 2 (three parallel review agents: Reuse / Quality / Efficiency) MUST be launched in a single message via the Agent tool. The phrase "diff is small/focused/surgical, inline review sufficient" is forbidden self-justification — it is the same pattern the journal calls out as a process violation.
+  - **Self-test**: After emitting the simplify stamp, write in chat WHICH of the three agents ran. If the answer is "none, did it inline", that is a process violation regardless of finding quality.
+  - **Recovery**: If a commit shipped with an inline-only simplify, the agent owes a `git show <sha>` triple-agent review and a follow-up commit fixing any real findings.
+  - **Note**: The audit-log + diff_sha + stamp triangle catches BYPASS of the skill but does NOT catch DEGRADATION (skill invoked, body shortcut). Self-test is the only enforcement until the hook can verify Phase 2 ran.
+
+---
+
 
 ### OpenTelemetry: Initialize Once, Re-init After Fork
 

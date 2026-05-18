@@ -8,6 +8,8 @@ Run `git diff` (or `git diff HEAD` if there are staged changes) to see what chan
 
 ## Phase 2: Launch Three Review Agents in Parallel
 
+> **Mandatory (00_rule.md §Skill Fan-out Integrity):** All three agents MUST launch in a single `Agent` tool call message. Skipping any agent — including when the diff seems small or an inline review "feels sufficient" — is forbidden. After receiving their results, confirm Phase 2 ran by naming all three: Code Reuse, Code Quality, Efficiency.
+
 Use the Agent tool to launch all three agents concurrently in a single message. Pass each agent the full diff so it has the complete context.
 
 ### Agent 1: Code Reuse Review
