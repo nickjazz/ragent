@@ -88,6 +88,7 @@ def test_readyz_minio_probe_uses_registry_default_client(_minimal_env: None) -> 
         es_client=MagicMock(),
         minio_registry=registry,
         rate_limiter=SimpleNamespace(_redis=None),
+        chunks_index_name="chunks_v1",
     )
 
     probes = _build_probes(container)
