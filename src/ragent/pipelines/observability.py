@@ -17,8 +17,10 @@ from collections.abc import Iterator
 from typing import Any
 
 import structlog
+from opentelemetry import trace
 
 _INGEST_LOGGER = structlog.get_logger("ragent.ingest")
+_tracer = trace.get_tracer(__name__)
 
 
 class IngestStepError(Exception):
@@ -75,6 +77,7 @@ def wrap_pipeline_component(
     started_event = f"{namespace}.step.started"
     ok_event = f"{namespace}.step.ok"
     failed_event = f"{namespace}.step.failed"
+    span_name = f"{namespace}.step.{step}"
 
     @functools.wraps(original)
     def _logged(*args: Any, **kwargs: Any) -> Any:
@@ -93,38 +96,50 @@ def wrap_pipeline_component(
                     break
         logger.info(started_event, step=step, **ctx)
         started = time.monotonic()
-        try:
-            result = original(*args, **kwargs)
-        except IngestStepError as exc:
+        with _tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("pipeline.namespace", namespace)
+            span.set_attribute("pipeline.step", step)
+            if atoms_in is not None:
+                span.set_attribute("atoms_in", atoms_in)
+            try:
+                result = original(*args, **kwargs)
+            except IngestStepError as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                span.record_exception(exc)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, exc.error_code))
+                logger.error(
+                    failed_event,
+                    step=step,
+                    duration_ms=duration_ms,
+                    error_code=exc.error_code,
+                    error=str(exc),
+                    **ctx,
+                )
+                raise
+            except Exception as exc:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                span.record_exception(exc)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, error_code))
+                logger.error(
+                    failed_event,
+                    step=step,
+                    duration_ms=duration_ms,
+                    error_code=error_code,
+                    error=f"{type(exc).__name__}: {exc}",
+                    **ctx,
+                )
+                raise
             duration_ms = int((time.monotonic() - started) * 1000)
-            logger.error(
-                failed_event,
-                step=step,
-                duration_ms=duration_ms,
-                error_code=exc.error_code,
-                error=str(exc),
-                **ctx,
-            )
-            raise
-        except Exception as exc:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            logger.error(
-                failed_event,
-                step=step,
-                duration_ms=duration_ms,
-                error_code=error_code,
-                error=f"{type(exc).__name__}: {exc}",
-                **ctx,
-            )
-            raise
-        duration_ms = int((time.monotonic() - started) * 1000)
-        chunks_out: int | None = None
-        if isinstance(result, dict):
-            for key in ("documents", "documents_written"):
-                if key in result:
-                    val = result[key]
-                    chunks_out = val if isinstance(val, int) else _count_documents(val)
-                    break
+            chunks_out: int | None = None
+            if isinstance(result, dict):
+                for key in ("documents", "documents_written"):
+                    if key in result:
+                        val = result[key]
+                        chunks_out = val if isinstance(val, int) else _count_documents(val)
+                        break
+            if chunks_out is not None:
+                span.set_attribute("chunks_out", chunks_out)
+            span.set_attribute("duration_ms", duration_ms)
         # Re-snapshot contextvars: components may bind new ones during run()
         # (e.g. _MimeAwareSplitter sets `splitter=<label>`) — the ok payload
         # MUST include those, so do not reuse the pre-run `ctx` here.

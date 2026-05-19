@@ -112,6 +112,32 @@ def test_build_retrieval_pipeline_wraps_every_component_across_join_modes(
         assert hasattr(node.run, "__wrapped__"), f"component {name!r} not wrapped"
 
 
+def test_wrap_pipeline_component_emits_otel_span_per_call(otel_exporter) -> None:
+    """Each wrapped run() opens an OTEL span named `{namespace}.step.{step}`."""
+    comp = _FakeComponent()
+    wrap_pipeline_component(comp, namespace="chat", step="reranker")
+    comp.run(documents=[1, 2])
+    spans = [s for s in otel_exporter.get_finished_spans() if s.name == "chat.step.reranker"]
+    assert len(spans) == 1
+
+
+def test_wrap_pipeline_component_otel_span_records_failure(otel_exporter) -> None:
+    """Span status is ERROR on exception and the exception is recorded."""
+    from opentelemetry.trace import StatusCode
+
+    class _BoomComponent:
+        def run(self) -> dict:
+            raise RuntimeError("boom")
+
+    comp = _BoomComponent()
+    wrap_pipeline_component(comp, namespace="chat", step="reranker", error_code="RERANK_ERROR")
+    with contextlib.suppress(RuntimeError):
+        comp.run()
+    spans = [s for s in otel_exporter.get_finished_spans() if s.name == "chat.step.reranker"]
+    assert len(spans) == 1
+    assert spans[0].status.status_code == StatusCode.ERROR
+
+
 def test_build_retrieval_pipeline_wraps_each_component_with_chat_namespace() -> None:
     """Every component the factory adds emits a `chat.step.ok` on a happy-path run.
 
