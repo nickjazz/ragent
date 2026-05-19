@@ -281,6 +281,32 @@ def test_init_mariadb_executes_schema_statements() -> None:
     assert mock_conn.execute.call_count >= 1
 
 
+def test_init_mariadb_handles_semicolon_inside_trailing_dash_comments(
+    tmp_path, monkeypatch
+) -> None:
+    """Inline trailing `--` comments on the same line as a statement also
+    hide `;` from the splitter. The whole-line filter wouldn't catch this
+    because the line doesn't START with `--`. Same bug class as the
+    whole-line variant; gemini-code-assist flagged it on PR #89."""
+    schema = "CREATE TABLE t (id INT);  -- inline trailing; with semicolon\n"
+    (tmp_path / "schema.sql").write_text(schema, encoding="utf-8")
+    monkeypatch.setattr("ragent.bootstrap.init_schema._MIGRATIONS", tmp_path)
+
+    mock_conn = MagicMock()
+    mock_engine = MagicMock()
+    mock_engine.begin.return_value = mock_conn
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    init_mariadb(mock_engine)
+
+    executed = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
+    assert len(executed) == 1, f"expected 1 statement, got {len(executed)}: {executed!r}"
+    assert "CREATE TABLE t" in executed[0]
+    assert "with semicolon" not in executed[0]
+    assert "inline trailing" not in executed[0]
+
+
 def test_init_mariadb_handles_semicolon_inside_dash_comments(tmp_path, monkeypatch) -> None:
     """`;` inside a `--` comment must not tear the comment in half. Naive
     `sql.split(';')` followed by per-fragment `--` strip leaves the post-`;`
