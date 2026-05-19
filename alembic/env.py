@@ -11,6 +11,8 @@ if config.config_file_name is not None:
 
 def _sync_dsn() -> str:
     # Alembic runs synchronously; coerce the async aiomysql driver to pymysql.
+    # Mirrors src/ragent/bootstrap/init_schema.py:_to_sync_dsn (kept local to
+    # avoid pulling that module's import chain into alembic bootstrap).
     return os.environ["MARIADB_DSN"].replace("mysql+aiomysql://", "mysql+pymysql://")
 
 
