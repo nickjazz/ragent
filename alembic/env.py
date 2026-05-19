@@ -9,16 +9,19 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
+def _sync_dsn() -> str:
+    # Alembic runs synchronously; coerce the async aiomysql driver to pymysql.
+    return os.environ["MARIADB_DSN"].replace("mysql+aiomysql://", "mysql+pymysql://")
+
+
 def run_migrations_offline() -> None:
-    url = os.environ["MARIADB_DSN"]
-    context.configure(url=url, literal_binds=True, dialect_opts={"paramstyle": "named"})
+    context.configure(url=_sync_dsn(), literal_binds=True, dialect_opts={"paramstyle": "named"})
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    url = os.environ["MARIADB_DSN"]
-    connectable = create_engine(url, poolclass=pool.NullPool)
+    connectable = create_engine(_sync_dsn(), poolclass=pool.NullPool)
     with connectable.connect() as connection:
         context.configure(connection=connection)
         with context.begin_transaction():
