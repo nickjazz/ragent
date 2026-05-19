@@ -17,11 +17,17 @@ from ragent.pipelines.observability import (
     IngestStepError,
     bind_ingest_context,
     log_ingest_step,
-    wrap_component_run,
+    wrap_pipeline_component,
 )
 
+
+def _wrap(component, *, step, error_code="PIPELINE_UNEXPECTED_ERROR"):
+    """Test-local ingest-namespaced shim; mirrors the dropped wrap_component_run alias."""
+    return wrap_pipeline_component(component, namespace="ingest", step=step, error_code=error_code)
+
+
 # ---------------------------------------------------------------------------
-# wrap_component_run — happy path
+# wrap_pipeline_component (ingest namespace) — happy path
 # ---------------------------------------------------------------------------
 
 
@@ -36,7 +42,7 @@ class _FakeComponent:
 
 def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
     comp = _FakeComponent()
-    wrap_component_run(comp, step="embedder")
+    _wrap(comp, step="embedder")
     with (
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-1", mime_type="text/markdown"),
@@ -71,7 +77,7 @@ class _BoomComponent:
 
 def test_wrap_emits_failed_with_error_code_and_reraises() -> None:
     comp = _BoomComponent()
-    wrap_component_run(comp, step="embedder", error_code="EMBEDDER_ERROR")
+    _wrap(comp, step="embedder", error_code="EMBEDDER_ERROR")
     with (
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-2", mime_type="text/plain"),
@@ -102,7 +108,7 @@ def test_wrap_failure_with_explicit_error_code_via_exception() -> None:
             raise IngestStepError("unroutable mime", error_code="PIPELINE_UNROUTABLE")
 
     comp = _RouterRaiser()
-    wrap_component_run(comp, step="router", error_code="PIPELINE_UNROUTABLE")
+    _wrap(comp, step="router", error_code="PIPELINE_UNROUTABLE")
     with (
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-3", mime_type="text/x-bogus"),
@@ -179,7 +185,7 @@ def test_wrap_writer_chunks_out_uses_int_documents_written() -> None:
             return {"documents_written": len(documents)}
 
     comp = _IntWriter()
-    wrap_component_run(comp, step="writer", error_code="ES_WRITE_ERROR")
+    _wrap(comp, step="writer", error_code="ES_WRITE_ERROR")
     with (
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-W", mime_type="text/plain"),
@@ -219,7 +225,7 @@ def test_extra_context_vars_appear_in_step_logs() -> None:
     the split step.
     """
     comp = _FakeComponent()
-    wrap_component_run(comp, step="load")
+    _wrap(comp, step="load")
 
     with (
         structlog.testing.capture_logs() as logs,
@@ -256,7 +262,7 @@ def test_splitter_context_var_appears_in_split_step_log() -> None:
     from haystack.dataclasses import Document
 
     splitter = _MimeAwareSplitter()
-    wrap_component_run(splitter, step="split")
+    _wrap(splitter, step="split")
     with (
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-Y", mime_type=IngestMime.PPTX),

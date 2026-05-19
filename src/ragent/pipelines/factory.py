@@ -31,7 +31,7 @@ from haystack.dataclasses import Document
 from haystack.document_stores.types import DuplicatePolicy
 
 from ragent.errors.codes import TaskErrorCode
-from ragent.pipelines.observability import IngestStepError, wrap_component_run
+from ragent.pipelines.observability import IngestStepError, wrap_pipeline_component
 from ragent.schemas.ingest import IngestMime
 from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES
 from ragent.utility.env import int_env, str_env
@@ -775,25 +775,27 @@ def build_ingest_pipeline(embedder: Any, document_store: Any) -> Pipeline:
     dropped in C6.
     """
     pipeline = Pipeline()
-    pipeline.add_component("loader", wrap_component_run(_TextLoader(), step="load"))
-    pipeline.add_component(
+
+    def _add(name: str, component: Any, *, step: str, error_code: str | None = None) -> None:
+        kwargs: dict = {"namespace": "ingest", "step": step}
+        if error_code is not None:
+            kwargs["error_code"] = error_code
+        pipeline.add_component(name, wrap_pipeline_component(component, **kwargs))
+
+    _add("loader", _TextLoader(), step="load")
+    _add(
         "splitter",
-        wrap_component_run(
-            _MimeAwareSplitter(), step="split", error_code=TaskErrorCode.PIPELINE_UNROUTABLE
-        ),
+        _MimeAwareSplitter(),
+        step="split",
+        error_code=TaskErrorCode.PIPELINE_UNROUTABLE,
     )
-    pipeline.add_component("chunker", wrap_component_run(_BudgetChunker(), step="chunker"))
-    pipeline.add_component(
-        "embedder",
-        wrap_component_run(embedder, step="embedder", error_code=TaskErrorCode.EMBEDDER_ERROR),
-    )
-    pipeline.add_component(
+    _add("chunker", _BudgetChunker(), step="chunker")
+    _add("embedder", embedder, step="embedder", error_code=TaskErrorCode.EMBEDDER_ERROR)
+    _add(
         "writer",
-        wrap_component_run(
-            DocumentWriter(document_store=document_store, policy=DuplicatePolicy.OVERWRITE),
-            step="writer",
-            error_code=TaskErrorCode.ES_WRITE_ERROR,
-        ),
+        DocumentWriter(document_store=document_store, policy=DuplicatePolicy.OVERWRITE),
+        step="writer",
+        error_code=TaskErrorCode.ES_WRITE_ERROR,
     )
 
     pipeline.connect("loader.documents", "splitter.documents")

@@ -62,12 +62,10 @@ def test_wrap_pipeline_component_failure_emits_failed_with_namespace() -> None:
     assert isinstance(e["duration_ms"], int)
 
 
-def test_wrap_component_run_remains_ingest_namespaced_for_backcompat() -> None:
-    """Existing call sites that used wrap_component_run keep the `ingest` namespace."""
-    from ragent.pipelines.observability import wrap_component_run
-
+def test_wrap_pipeline_component_ingest_namespace_still_emits_ingest_events() -> None:
+    """The generic helper preserves the `ingest.step.*` shape ingest callers depend on."""
     comp = _FakeComponent()
-    wrap_component_run(comp, step="splitter")
+    wrap_pipeline_component(comp, namespace="ingest", step="splitter")
     with structlog.testing.capture_logs() as logs:
         comp.run(documents=[1])
     events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]

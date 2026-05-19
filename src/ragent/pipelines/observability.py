@@ -140,17 +140,6 @@ def wrap_pipeline_component(
     return component
 
 
-def wrap_component_run(
-    component: Any, *, step: str, error_code: str = "PIPELINE_UNEXPECTED_ERROR"
-) -> Any:
-    """Back-compat shim — wraps with the ingest namespace.
-
-    Existing ingest-pipeline construction sites continue calling this; chat
-    pipeline callers use ``wrap_pipeline_component(..., namespace="chat")``.
-    """
-    return wrap_pipeline_component(component, namespace="ingest", step=step, error_code=error_code)
-
-
 class _TerminalLogger:
     """Worker-terminal events. Kept as a namespace for grep-ability."""
 
