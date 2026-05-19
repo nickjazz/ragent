@@ -22,7 +22,10 @@ from ragent.utility.datetime import utcnow
 from ragent.utility.env import int_env, optional_float_env
 from ragent.utility.wilson import wilson_lower_bound
 
-_EXCERPT_MAX_CHARS = int_env("EXCERPT_MAX_CHARS", 512)
+# Spec §4.6 default; composition.py reads EXCERPT_MAX_CHARS env and threads
+# the runtime value into build_retrieval_pipeline + create_{chat,retrieve}_router
+# so doc_to_source_entry and _ExcerptTruncator share one value.
+EXCERPT_MAX_CHARS_DEFAULT = 512
 # Upper bound on top_k — pinned by spec §3.4.4 (`POST /retrieve/v1` Pydantic
 # `le=200`) and §3.8.3 (MCP retrieve tool `maximum: 200`). DEFAULT_TOP_K is the
 # fallback when callers omit `top_k`; if an operator sets RETRIEVAL_TOP_K above
@@ -74,7 +77,7 @@ def dedupe_by_document(docs: list[Any]) -> list[Any]:
     return out
 
 
-def doc_to_source_entry(doc: Any) -> dict:
+def doc_to_source_entry(doc: Any, *, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> dict:
     meta = doc.meta or {}
     excerpt_src = meta.get("raw_content") or (doc.content or "")
     return {
@@ -86,7 +89,7 @@ def doc_to_source_entry(doc: Any) -> dict:
         "source_title": meta.get("source_title"),
         "source_url": meta.get("source_url"),
         "mime_type": meta.get("mime_type"),
-        "excerpt": excerpt_src[:_EXCERPT_MAX_CHARS],
+        "excerpt": excerpt_src[:max_chars],
         "score": doc.score if hasattr(doc, "score") else None,
     }
 
@@ -318,7 +321,7 @@ class _LLMGenerator:
 class _ExcerptTruncator:
     """Truncate chunk content to EXCERPT_MAX_CHARS for response payloads."""
 
-    def __init__(self, max_chars: int = _EXCERPT_MAX_CHARS) -> None:
+    def __init__(self, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> None:
         self._max = max_chars
 
     @component.output_types(documents=list[Document])
@@ -553,6 +556,7 @@ def build_retrieval_pipeline(
     embed_query_callable: Any = None,
     feedback_retriever: Any | None = None,
     feedback_weight: float = 0.5,
+    excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
 ) -> Pipeline:
     """Build the retrieval pipeline.
 
@@ -575,7 +579,7 @@ def build_retrieval_pipeline(
 
     pipeline = Pipeline()
     pipeline.add_component("source_hydrator", _SourceHydrator(doc_repo))
-    pipeline.add_component("excerpt_truncator", _ExcerptTruncator())
+    pipeline.add_component("excerpt_truncator", _ExcerptTruncator(max_chars=excerpt_max_chars))
     pipeline.connect("source_hydrator.documents", "excerpt_truncator.documents")
 
     # The retriever output feeds either reranker → source_hydrator (when a

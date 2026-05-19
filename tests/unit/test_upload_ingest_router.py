@@ -22,10 +22,11 @@ _FORM = {
 _FILE = ("file", ("report.md", b"# Hello\n", "text/markdown"))
 
 
-def _make_client(svc=None):
+def _make_client(svc=None, max_upload_bytes=None):
     svc = svc or AsyncMock()
     app = FastAPI()
-    app.include_router(create_router(svc=svc))
+    kwargs = {"max_upload_bytes": max_upload_bytes} if max_upload_bytes is not None else {}
+    app.include_router(create_router(svc=svc, **kwargs))
     return TestClient(app, raise_server_exceptions=False), svc
 
 
@@ -112,21 +113,18 @@ def test_upload_missing_file_returns_422():
 
 
 def test_upload_max_bytes_default_is_10mb():
-    """_MAX_UPLOAD_BYTES default must be 10 MB per spec §4.6 (INGEST_INLINE_MAX_BYTES)."""
+    """UPLOAD_MAX_BYTES_DEFAULT must be 10 MB per spec §4.6 (INGEST_INLINE_MAX_BYTES)."""
     import ragent.routers.admin_ingest as mod
 
-    assert mod._MAX_UPLOAD_BYTES == 10_485_760, (
-        f"Expected 10 MB (10485760), got {mod._MAX_UPLOAD_BYTES} — "
-        "update the os.environ.get default in admin_ingest.py"
+    assert mod.UPLOAD_MAX_BYTES_DEFAULT == 10_485_760, (
+        f"Expected 10 MB (10485760), got {mod.UPLOAD_MAX_BYTES_DEFAULT} — "
+        "update the constant in admin_ingest.py"
     )
 
 
-def test_upload_file_too_large_via_size_attr_returns_413(monkeypatch):
+def test_upload_file_too_large_via_size_attr_returns_413():
     """Early rejection via file.size avoids reading the payload into memory."""
-    import ragent.routers.admin_ingest as mod
-
-    monkeypatch.setattr(mod, "_MAX_UPLOAD_BYTES", 5)
-    client, svc = _make_client()
+    client, svc = _make_client(max_upload_bytes=5)
     resp = client.post(
         "/ingest/v1/upload",
         data=_FORM,

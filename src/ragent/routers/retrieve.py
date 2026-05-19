@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from ragent.pipelines.chat import (
     DEFAULT_MIN_SCORE,
     DEFAULT_TOP_K,
+    EXCERPT_MAX_CHARS_DEFAULT,
     build_es_filters,
     dedupe_by_document,
     doc_to_source_entry,
@@ -70,7 +71,11 @@ class RetrieveResponse(BaseModel):
     chunks: list[ChunkEntry]
 
 
-def create_retrieve_router(retrieval_pipeline: Any) -> APIRouter:
+def create_retrieve_router(
+    retrieval_pipeline: Any,
+    *,
+    excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
+) -> APIRouter:
     router = APIRouter(prefix="/retrieve/v1")
 
     @router.post("", response_model=RetrieveResponse)
@@ -109,6 +114,10 @@ def create_retrieve_router(retrieval_pipeline: Any) -> APIRouter:
                         input_count=input_count,
                         output_count=len(docs),
                     )
-            return RetrieveResponse(chunks=[ChunkEntry(**doc_to_source_entry(d)) for d in docs])
+            return RetrieveResponse(
+                chunks=[
+                    ChunkEntry(**doc_to_source_entry(d, max_chars=excerpt_max_chars)) for d in docs
+                ]
+            )
 
     return router

@@ -10,7 +10,6 @@ staged blob on READY — DELETE /ingest/v1/{id} is the sole reclaim path).
 
 from __future__ import annotations
 
-import os
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Header, UploadFile
@@ -21,10 +20,12 @@ from ragent.errors.problem import problem
 from ragent.schemas.ingest import SOURCE_META_MAX, SOURCE_URL_MAX, IngestMime
 from ragent.services.ingest_service import FileTooLarge
 
-_MAX_UPLOAD_BYTES = int(os.environ.get("INGEST_INLINE_MAX_BYTES", "10485760"))
+# Spec §4.6 default; composition.py reads INGEST_INLINE_MAX_BYTES env and passes
+# the runtime value via create_router(max_upload_bytes=...).
+UPLOAD_MAX_BYTES_DEFAULT = 10 * 1024 * 1024
 
 
-def create_router(svc: Any) -> APIRouter:
+def create_router(svc: Any, *, max_upload_bytes: int = UPLOAD_MAX_BYTES_DEFAULT) -> APIRouter:
     router = APIRouter()
 
     @router.post("/ingest/v1/upload", status_code=202)
@@ -40,7 +41,7 @@ def create_router(svc: Any) -> APIRouter:
     ):
         # Early rejection when the client provides Content-Length for the part,
         # avoiding a full read into memory before the service-level size check.
-        if file.size is not None and file.size > _MAX_UPLOAD_BYTES:
+        if file.size is not None and file.size > max_upload_bytes:
             await file.close()
             return problem(413, HttpErrorCode.INGEST_FILE_TOO_LARGE, "Upload too large")
         try:

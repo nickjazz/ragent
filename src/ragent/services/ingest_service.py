@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,9 +26,12 @@ from ragent.utility.id_gen import new_id
 
 logger = structlog.get_logger(__name__)
 
-_MAX_INLINE_BYTES = int(os.environ.get("INGEST_INLINE_MAX_BYTES", "10485760"))
-_MAX_FILE_BYTES = int(os.environ.get("INGEST_FILE_MAX_BYTES", "52428800"))
-_LIST_MAX = int(os.environ.get("INGEST_LIST_MAX_LIMIT", "100"))
+# Spec §4.6 defaults; composition.py reads INGEST_*_MAX_BYTES / _LIMIT env vars
+# and overrides via constructor kwargs. Kept here as numeric constants — not env
+# reads — so tests can construct IngestService without setting env.
+INLINE_MAX_BYTES_DEFAULT = 10 * 1024 * 1024
+FILE_MAX_BYTES_DEFAULT = 50 * 1024 * 1024
+LIST_MAX_LIMIT_DEFAULT = 100
 
 
 class MimeNotAllowed(Exception):
@@ -69,11 +71,18 @@ class IngestService:
         storage: Any,
         broker: Any,
         registry: Any,
+        *,
+        inline_max_bytes: int = INLINE_MAX_BYTES_DEFAULT,
+        file_max_bytes: int = FILE_MAX_BYTES_DEFAULT,
+        list_max_limit: int = LIST_MAX_LIMIT_DEFAULT,
     ) -> None:
         self._repo = repo
         self._storage = storage  # MinioSiteRegistry
         self._broker = broker  # TaskiqDispatcher (create); unused in supersede path
         self._registry = registry
+        self._inline_max_bytes = inline_max_bytes
+        self._file_max_bytes = file_max_bytes
+        self._list_max_limit = list_max_limit
 
     async def create(
         self,
@@ -132,7 +141,7 @@ class IngestService:
         mime_type: str,
         max_bytes: int | None,
     ) -> str:
-        limit = max_bytes if max_bytes is not None else _MAX_INLINE_BYTES
+        limit = max_bytes if max_bytes is not None else self._inline_max_bytes
         data_len = len(data)
         if data_len > limit:
             raise FileTooLarge(f"Content {data_len}B exceeds limit {limit}B")
@@ -174,7 +183,7 @@ class IngestService:
         if res is None:
             raise ObjectNotFoundError(f"{request.minio_site}/{request.object_key} not found")
         size, _ = res
-        limit = max_file_bytes if max_file_bytes is not None else _MAX_FILE_BYTES
+        limit = max_file_bytes if max_file_bytes is not None else self._file_max_bytes
         if size is not None and size > limit:
             raise FileTooLarge(f"File {size}B exceeds limit {limit}B")
         return request.object_key, request.minio_site
@@ -307,11 +316,12 @@ class IngestService:
     async def list(
         self,
         after: str | None = None,
-        limit: int = _LIST_MAX,
+        limit: int | None = None,
         source_id: str | None = None,
         source_app: str | None = None,
     ) -> IngestListResult:
-        limit = min(limit, _LIST_MAX)
+        cap = self._list_max_limit
+        limit = min(limit if limit is not None else cap, cap)
         rows = await self._repo.list(
             after=after, limit=limit + 1, source_id=source_id, source_app=source_app
         )
