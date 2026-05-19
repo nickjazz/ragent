@@ -78,21 +78,37 @@ def test_test_mapping_uses_standard_analyzer_no_icu_dependency() -> None:
     assert "analyzer" not in props["title"]
 
 
-def test_test_mapping_structurally_matches_prod_except_icu_deltas() -> None:
-    """B42: prod adds an ICU `analysis` block + `analyzer: icu_text` on
-    text/title; everything else (field set, types, dims, similarity) must stay
-    identical so integration tests exercise the same shape that prod runs."""
+def test_prod_mapping_uses_bbq_hnsw_vector_index() -> None:
+    """B58: P1 reversal of B26 — prod flips `embedding.index_options.type`
+    from `flat` to `bbq_hnsw` (Better Binary Quantization HNSW, ES 8.16+);
+    ~32× memory reduction at negligible recall cost. Test resource keeps
+    `flat` so vanilla ES 9.2.3 CI containers stay light-weight."""
+    prod = json.loads(_PROD_CHUNKS_V1.read_text(encoding="utf-8"))
+    assert prod["mappings"]["properties"]["embedding"]["index_options"] == {"type": "bbq_hnsw"}
+
+
+def test_test_mapping_structurally_matches_prod_except_documented_deltas() -> None:
+    """B42 (ICU) + B58 (bbq_hnsw): two documented deltas separate the prod
+    mapping from the test mapping; everything else (field set, types, dims,
+    similarity) must stay identical so integration tests exercise the same
+    shape that prod runs."""
     prod = json.loads(_PROD_CHUNKS_V1.read_text(encoding="utf-8"))
     test = json.loads(_TEST_CHUNKS_V1.read_text(encoding="utf-8"))
 
+    # B42 — ICU analyzer is a prod-only block.
     prod["settings"]["index"].pop("analysis")
     for field in ("text", "title"):
         prod["mappings"]["properties"][field].pop("analyzer")
 
+    # B58 — prod uses `bbq_hnsw`; test stays on `flat`. Pop both so the
+    # remaining structural equality check is delta-neutral.
+    assert prod["mappings"]["properties"]["embedding"].pop("index_options") == {"type": "bbq_hnsw"}
+    assert test["mappings"]["properties"]["embedding"].pop("index_options") == {"type": "flat"}
+
     assert prod == test, (
         "tests/resources/es/chunks_v1.json has drifted from "
-        "resources/es/chunks_v1.json beyond the documented ICU deltas. "
-        "Update the test mapping to match the prod mapping (sans ICU)."
+        "resources/es/chunks_v1.json beyond the documented ICU + bbq_hnsw deltas. "
+        "Update the test mapping to match the prod mapping (sans documented deltas)."
     )
 
 
