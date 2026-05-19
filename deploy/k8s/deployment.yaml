@@ -23,7 +23,10 @@ spec:
       serviceAccountName: ragent
       containers:
         - name: api
-          image: ragent:latest
+          # Image tag is a placeholder — CI/CD must rewrite to an immutable
+          # digest/tag (e.g. via `kustomize edit set image` or `yq`) before
+          # apply. Never deploy `:latest` to a long-lived cluster.
+          image: ragent:REPLACE_WITH_RELEASE_TAG
           command: ["python", "-m", "ragent.api"]
           ports:
             - name: http
@@ -85,7 +88,9 @@ spec:
       serviceAccountName: ragent
       containers:
         - name: worker
-          image: ragent:latest
+          # Same image as ragent-api — CI/CD must rewrite to the same
+          # immutable digest/tag as the api container.
+          image: ragent:REPLACE_WITH_RELEASE_TAG
           command: ["python", "-m", "ragent.worker"]
           envFrom:
             - configMapRef:
@@ -95,6 +100,17 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: ragent-worker
+          # Workers have no HTTP surface; liveness verifies the python
+          # entrypoint is still resident. Broker/DB readiness is enforced
+          # by the lifespan infra-ready check at boot, so kubelet only
+          # needs to detect a crashed/zombied process here.
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "ragent.worker"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: "500m"
