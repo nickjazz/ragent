@@ -3,6 +3,7 @@
     "index": {
       "number_of_shards": 1,
       "number_of_replicas": 0,
+      "default_pipeline": "chunks_default",
       "analysis": {
         "analyzer": {
           "icu_text": {
@@ -25,12 +26,13 @@
       "title":            { "type": "text", "analyzer": "icu_text" },
       "text":             { "type": "text", "analyzer": "icu_text" },
       "raw_content":      { "type": "text", "index": false },
+      "indexed_at":       { "type": "date" },
       "embedding": {
         "type": "dense_vector",
         "dims": 1024,
         "index": true,
         "similarity": "cosine",
-        "index_options": { "type": "flat" }
+        "index_options": { "type": "bbq_hnsw" }
       }
     }
   }

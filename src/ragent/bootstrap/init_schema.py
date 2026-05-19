@@ -80,8 +80,26 @@ def init_es(es_url: str) -> None:
     # (B36).
     resources_dir = Path(os.environ.get("RAGENT_ES_RESOURCES_DIR") or _ES_RESOURCES)
     base = es_url.rstrip("/")
+
+    # B59 — pipelines MUST land before indexes. `chunks_v1.settings.index.
+    # default_pipeline` references `chunks_default`; ES rejects index creation
+    # when its referenced pipeline doesn't exist. Pipeline PUT is idempotent
+    # on the ES side (overwrite-by-id), no HEAD guard needed.
+    pipelines_dir = resources_dir / "pipelines"
+    if pipelines_dir.is_dir():
+        for path in sorted(pipelines_dir.glob("*.json")):
+            pipeline_id = path.stem
+            body = json.loads(path.read_text(encoding="utf-8"))
+            _es_request(f"{base}/_ingest/pipeline/{pipeline_id}", method="PUT", body=body)
+            logger.info("es.pipeline_put", pipeline=pipeline_id)
+
+    # B60 / T-EI.6 — chunks index name is env-overridable (matches the App's
+    # `Container.chunks_index_name` resolution, T-EI.1); other resources keep
+    # filename-as-name. Without this, an `ES_CHUNKS_INDEX=foo` operator gets
+    # bootstrap-created `chunks_v1` but App reads/writes `foo` — silent split.
+    chunks_index_name = os.environ.get("ES_CHUNKS_INDEX", "chunks_v1")
     for path in sorted(resources_dir.glob("*.json")):
-        index = path.stem
+        index = chunks_index_name if path.stem == "chunks_v1" else path.stem
         index_url = f"{base}/{index}"
         existing = _es_request(index_url, method="HEAD")
         if existing is not None:

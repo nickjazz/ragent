@@ -169,6 +169,7 @@ def test_dynamic_retriever_defaults_field_to_legacy_embedding_when_omitted() -> 
 
 
 def test_dynamic_retriever_passes_top_k_override_and_filters() -> None:
+    """Filters are normalised to ES DSL before reaching `_search_documents`."""
     from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
 
     store = MagicMock()
@@ -184,8 +185,43 @@ def test_dynamic_retriever_passes_top_k_override_and_filters() -> None:
 
     body = store._search_documents.call_args.kwargs
     assert body["knn"]["k"] == 25
-    # Filter is forwarded (Haystack-format dict; normalisation handled by ES store).
-    assert "filter" in body["knn"]
+    # Filter normalised to ES query DSL — `{"bool": {"must": {"term": ...}}}`.
+    # Haystack's `_normalize_filters` emits the single-clause leaf form here;
+    # ES accepts either object or list for `bool.must`.
+    assert body["knn"]["filter"] == {"bool": {"must": {"term": {"source_app": "confluence"}}}}
+
+
+def test_dynamic_retriever_normalises_composite_filters() -> None:
+    """Composite AND filters (source_app + source_meta) must also be
+    normalised — `build_es_filters` emits this shape when both router params
+    are present."""
+    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+
+    store = MagicMock()
+    store._search_documents.return_value = []
+
+    retriever = _DynamicFieldEmbeddingRetriever(document_store=store, top_k=10)
+    retriever.run(
+        query_embedding=[0.1] * 4,
+        embedding_field="embedding_bgem3_1024",
+        filters={
+            "operator": "AND",
+            "conditions": [
+                {"field": "source_app", "operator": "==", "value": "confluence"},
+                {"field": "source_meta", "operator": "==", "value": "space-A"},
+            ],
+        },
+    )
+
+    body = store._search_documents.call_args.kwargs
+    assert body["knn"]["filter"] == {
+        "bool": {
+            "must": [
+                {"term": {"source_app": "confluence"}},
+                {"term": {"source_meta": "space-A"}},
+            ]
+        }
+    }
 
 
 def test_dynamic_retriever_rejects_empty_embedding() -> None:

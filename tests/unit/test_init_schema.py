@@ -48,8 +48,36 @@ def test_init_es_skips_existing_index() -> None:
     with patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request):
         init_es("http://es:9200")
 
-    put_calls = [c for c in calls if c[0] == "PUT"]
-    assert not put_calls, "PUT should not be called when index already exists"
+    # B59 — pipeline PUT is idempotent (no HEAD guard); index PUT is skipped.
+    index_put_calls = [c for c in calls if c[0] == "PUT" and "_ingest/pipeline/" not in c[1]]
+    assert not index_put_calls, "index PUT should not be called when index already exists"
+
+
+def test_init_es_puts_pipelines_before_indexes() -> None:
+    """T-EI.3 / B59 — `chunks_v1.settings.index.default_pipeline` references
+    `chunks_default`; ES rejects index creation if the referenced pipeline
+    doesn't exist yet. The bootstrap MUST PUT every pipeline before the
+    first index PUT."""
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        calls.append((method, url))
+        if method == "HEAD":
+            return None  # index does not exist → triggers PUT
+        return {}
+
+    with patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request):
+        init_es("http://es:9200")
+
+    puts = [(method, url) for method, url in calls if method == "PUT"]
+    pipeline_puts = [i for i, (_, url) in enumerate(puts) if "/_ingest/pipeline/" in url]
+    index_puts = [i for i, (_, url) in enumerate(puts) if "/_ingest/pipeline/" not in url]
+    assert pipeline_puts, "no pipeline PUT was made — `chunks_default` resource missing?"
+    assert index_puts, "no index PUT was made"
+    assert max(pipeline_puts) < min(index_puts), (
+        "all pipeline PUTs must precede any index PUT — index creation rejects "
+        f"a `default_pipeline` referencing an absent pipeline. order={puts}"
+    )
 
 
 # ── ICU analyzer mapping (B26 / B42) ─────────────────────────────────────────
@@ -78,21 +106,122 @@ def test_test_mapping_uses_standard_analyzer_no_icu_dependency() -> None:
     assert "analyzer" not in props["title"]
 
 
-def test_test_mapping_structurally_matches_prod_except_icu_deltas() -> None:
-    """B42: prod adds an ICU `analysis` block + `analyzer: icu_text` on
-    text/title; everything else (field set, types, dims, similarity) must stay
-    identical so integration tests exercise the same shape that prod runs."""
+def test_prod_mapping_uses_bbq_hnsw_vector_index() -> None:
+    """B58: P1 reversal of B26 — prod flips `embedding.index_options.type`
+    from `flat` to `bbq_hnsw` (Better Binary Quantization HNSW, ES 8.16+);
+    ~32× memory reduction at negligible recall cost. Test resource keeps
+    `flat` so vanilla ES 9.2.3 CI containers stay light-weight."""
+    prod = json.loads(_PROD_CHUNKS_V1.read_text(encoding="utf-8"))
+    assert prod["mappings"]["properties"]["embedding"]["index_options"] == {"type": "bbq_hnsw"}
+
+
+# ── B59 indexed_at / default_pipeline (T-EI.3) ──────────────────────────────
+
+
+def test_chunks_v1_mapping_declares_indexed_at_date_field() -> None:
+    """T-EI.3 / B59 — `indexed_at` is populated by the ES `chunks_default`
+    ingest pipeline (no Python writer touches the field); the mapping MUST
+    declare it as a `date` field so it surfaces in `_search` results."""
+    for resource_path in (_PROD_CHUNKS_V1, _TEST_CHUNKS_V1):
+        mapping = json.loads(resource_path.read_text(encoding="utf-8"))
+        assert mapping["mappings"]["properties"].get("indexed_at") == {"type": "date"}, (
+            f"{resource_path.relative_to(_REPO_ROOT)} missing indexed_at:date — "
+            "ingest pipeline writes to this field, mapping MUST declare it."
+        )
+
+
+def test_init_es_uses_env_chunks_index_name_for_chunks_resource(tmp_path: Path) -> None:
+    """T-EI.6 / B60 — when operator sets `ES_CHUNKS_INDEX=foo`, `init_es`
+    must PUT the chunks_v1.json schema to `/foo` (not `/chunks_v1`), so the
+    bootstrap-created index matches what the App reads/writes (T-EI.1).
+    PR #83 gemini-code-assist high — closes the T-EI.1 audit gap."""
+    custom_dir = tmp_path / "es"
+    custom_dir.mkdir()
+    (custom_dir / "chunks_v1.json").write_text('{"settings": {}}')
+
+    seen_index_puts: list[str] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        if method == "PUT" and "_ingest/pipeline/" not in url:
+            seen_index_puts.append(url.rsplit("/", 1)[-1])
+        return None  # HEAD → absent triggers PUT; PUT → return None is fine
+
+    with (
+        patch.dict(
+            os.environ,
+            {"RAGENT_ES_RESOURCES_DIR": str(custom_dir), "ES_CHUNKS_INDEX": "foo"},
+        ),
+        patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request),
+    ):
+        init_es("http://es:9200")
+
+    assert seen_index_puts == ["foo"], (
+        f"expected PUT to /foo (env ES_CHUNKS_INDEX), got {seen_index_puts}"
+    )
+
+
+def test_init_es_keeps_filename_stem_for_non_chunks_resources(tmp_path: Path) -> None:
+    """T-EI.6 / B60 — `ES_CHUNKS_INDEX` ONLY renames the chunks index;
+    other resources (e.g. feedback_v1) keep filename-as-name semantics."""
+    custom_dir = tmp_path / "es"
+    custom_dir.mkdir()
+    (custom_dir / "chunks_v1.json").write_text('{"settings": {}}')
+    (custom_dir / "feedback_v1.json").write_text('{"settings": {}}')
+
+    seen_index_puts: list[str] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        if method == "PUT" and "_ingest/pipeline/" not in url:
+            seen_index_puts.append(url.rsplit("/", 1)[-1])
+        return None
+
+    with (
+        patch.dict(
+            os.environ,
+            {"RAGENT_ES_RESOURCES_DIR": str(custom_dir), "ES_CHUNKS_INDEX": "foo"},
+        ),
+        patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request),
+    ):
+        init_es("http://es:9200")
+
+    assert sorted(seen_index_puts) == ["feedback_v1", "foo"], (
+        f"expected feedback_v1 to keep stem, only chunks renamed; got {seen_index_puts}"
+    )
+
+
+def test_chunks_v1_settings_reference_default_pipeline() -> None:
+    """T-EI.3 / B59 — `index.default_pipeline = chunks_default` is what wires
+    the pipeline to every chunk write; both prod and test resources MUST set it."""
+    for resource_path in (_PROD_CHUNKS_V1, _TEST_CHUNKS_V1):
+        mapping = json.loads(resource_path.read_text(encoding="utf-8"))
+        assert mapping["settings"]["index"].get("default_pipeline") == "chunks_default", (
+            f"{resource_path.relative_to(_REPO_ROOT)} missing "
+            "settings.index.default_pipeline=chunks_default."
+        )
+
+
+def test_test_mapping_structurally_matches_prod_except_documented_deltas() -> None:
+    """B42 (ICU) + B58 (bbq_hnsw): two documented deltas separate the prod
+    mapping from the test mapping; everything else (field set, types, dims,
+    similarity) must stay identical so integration tests exercise the same
+    shape that prod runs."""
     prod = json.loads(_PROD_CHUNKS_V1.read_text(encoding="utf-8"))
     test = json.loads(_TEST_CHUNKS_V1.read_text(encoding="utf-8"))
 
+    # B42 — ICU analyzer is a prod-only block.
     prod["settings"]["index"].pop("analysis")
     for field in ("text", "title"):
         prod["mappings"]["properties"][field].pop("analyzer")
 
+    # B58 — prod uses `bbq_hnsw`; test stays on `flat`. Pop both so the
+    # remaining structural equality check is delta-neutral.
+    assert prod["mappings"]["properties"]["embedding"].pop("index_options") == {"type": "bbq_hnsw"}
+    assert test["mappings"]["properties"]["embedding"].pop("index_options") == {"type": "flat"}
+
     assert prod == test, (
         "tests/resources/es/chunks_v1.json has drifted from "
-        "resources/es/chunks_v1.json beyond the documented ICU deltas. "
-        "Update the test mapping to match the prod mapping (sans ICU)."
+        "resources/es/chunks_v1.json beyond the documented ICU + bbq_hnsw deltas. "
+        "Update the test mapping to match the prod mapping (sans documented deltas)."
     )
 
 

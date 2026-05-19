@@ -240,10 +240,12 @@ class _PerTickRunner:
         try:
             await taskiq_broker.startup()
             try:
+                container = get_container()
                 rec = Reconciler(
                     repo=DocumentRepository(engine=engine),
                     broker=TaskiqDispatcher(taskiq_broker),
-                    registry=get_container().registry,
+                    registry=container.registry,
+                    chunks_index=container.chunks_index_name,
                 )
                 await rec._run_async()
             finally:
