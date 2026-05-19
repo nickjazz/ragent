@@ -16,6 +16,7 @@ from haystack_integrations.components.retrievers.elasticsearch import (
     ElasticsearchBM25Retriever,
     ElasticsearchEmbeddingRetriever,
 )
+from haystack_integrations.document_stores.elasticsearch.filters import _normalize_filters
 
 from ragent.utility.datetime import utcnow
 from ragent.utility.env import int_env, optional_float_env
@@ -160,6 +161,9 @@ class _DynamicFieldEmbeddingRetriever:
     Reaches into ``document_store._search_documents(**body)`` to bypass the
     haystack-elasticsearch retriever's hardcoded ``"field": "embedding"``.
     The store's public API does not expose a per-call field override yet.
+    Because that path skips the store's own filter normalisation (which
+    ``_bm25_retrieval`` / ``_embedding_retrieval`` do), filters must be
+    normalised to ES query DSL here before reaching the client.
     """
 
     def __init__(
@@ -193,7 +197,7 @@ class _DynamicFieldEmbeddingRetriever:
             },
         }
         if filters:
-            body["knn"]["filter"] = filters
+            body["knn"]["filter"] = _normalize_filters(filters)
         docs = self._store._search_documents(**body)
         return {"documents": docs}
 
