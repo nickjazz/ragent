@@ -156,9 +156,10 @@ def build_container() -> Container:
         basic_auth=es_basic_auth,
         verify_certs=es_verify_certs,
     )
+    chunks_index_name = os.environ.get("ES_CHUNKS_INDEX", "chunks_v1")
     document_store = ElasticsearchDocumentStore(
         hosts=es_hosts,
-        index=os.environ.get("ES_CHUNKS_INDEX", "chunks_v1"),
+        index=chunks_index_name,
         verify_certs=es_verify_certs,
         basic_auth=es_basic_auth,
     )
@@ -185,6 +186,7 @@ def build_container() -> Container:
             chunks={},  # v2: chunks live in ES; vector plugin is a no-op stub.
             embedder=embedding_client,
             es=es_client,
+            index=chunks_index_name,
         )
     )
     registry.register(StubGraphExtractor())
@@ -194,7 +196,6 @@ def build_container() -> Container:
     # (table `system_settings` from migration 009). ActiveModelRegistry caches
     # the four `embedding.*` rows with a TTL refresh; lifespan startup calls
     # `await registry.refresh()` so query/ingest paths never see a cold cache.
-    chunks_index_name = os.environ.get("ES_CHUNKS_INDEX", "chunks_v1")
     system_settings_repo = SystemSettingsRepository(engine=engine)
     embedding_registry = ActiveModelRegistry(
         settings_repo=system_settings_repo,
@@ -255,6 +256,7 @@ def build_container() -> Container:
         feedback_retriever = _FeedbackMemoryRetriever(
             es_client=es_client,
             doc_repo=doc_repo,
+            chunks_index=chunks_index_name,
             min_votes=_int_env("CHAT_FEEDBACK_MIN_VOTES", 3),
             half_life_days=_int_env("CHAT_FEEDBACK_HALF_LIFE_DAYS", 14),
             request_timeout=_float_env("ES_QUERY_TIMEOUT_SECONDS", 10.0),
