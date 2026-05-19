@@ -130,6 +130,65 @@ def test_chunks_v1_mapping_declares_indexed_at_date_field() -> None:
         )
 
 
+def test_init_es_uses_env_chunks_index_name_for_chunks_resource(tmp_path: Path) -> None:
+    """T-EI.6 / B60 — when operator sets `ES_CHUNKS_INDEX=foo`, `init_es`
+    must PUT the chunks_v1.json schema to `/foo` (not `/chunks_v1`), so the
+    bootstrap-created index matches what the App reads/writes (T-EI.1).
+    PR #83 gemini-code-assist high — closes the T-EI.1 audit gap."""
+    custom_dir = tmp_path / "es"
+    custom_dir.mkdir()
+    (custom_dir / "chunks_v1.json").write_text('{"settings": {}}')
+
+    seen_index_puts: list[str] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        if method == "PUT" and "_ingest/pipeline/" not in url:
+            seen_index_puts.append(url.rsplit("/", 1)[-1])
+        return None  # HEAD → absent triggers PUT; PUT → return None is fine
+
+    with (
+        patch.dict(
+            os.environ,
+            {"RAGENT_ES_RESOURCES_DIR": str(custom_dir), "ES_CHUNKS_INDEX": "foo"},
+        ),
+        patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request),
+    ):
+        init_es("http://es:9200")
+
+    assert seen_index_puts == ["foo"], (
+        f"expected PUT to /foo (env ES_CHUNKS_INDEX), got {seen_index_puts}"
+    )
+
+
+def test_init_es_keeps_filename_stem_for_non_chunks_resources(tmp_path: Path) -> None:
+    """T-EI.6 / B60 — `ES_CHUNKS_INDEX` ONLY renames the chunks index;
+    other resources (e.g. feedback_v1) keep filename-as-name semantics."""
+    custom_dir = tmp_path / "es"
+    custom_dir.mkdir()
+    (custom_dir / "chunks_v1.json").write_text('{"settings": {}}')
+    (custom_dir / "feedback_v1.json").write_text('{"settings": {}}')
+
+    seen_index_puts: list[str] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        if method == "PUT" and "_ingest/pipeline/" not in url:
+            seen_index_puts.append(url.rsplit("/", 1)[-1])
+        return None
+
+    with (
+        patch.dict(
+            os.environ,
+            {"RAGENT_ES_RESOURCES_DIR": str(custom_dir), "ES_CHUNKS_INDEX": "foo"},
+        ),
+        patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request),
+    ):
+        init_es("http://es:9200")
+
+    assert sorted(seen_index_puts) == ["feedback_v1", "foo"], (
+        f"expected feedback_v1 to keep stem, only chunks renamed; got {seen_index_puts}"
+    )
+
+
 def test_chunks_v1_settings_reference_default_pipeline() -> None:
     """T-EI.3 / B59 — `index.default_pipeline = chunks_default` is what wires
     the pipeline to every chunk write; both prod and test resources MUST set it."""
