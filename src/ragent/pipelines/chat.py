@@ -18,6 +18,7 @@ from haystack_integrations.components.retrievers.elasticsearch import (
 )
 from haystack_integrations.document_stores.elasticsearch.filters import _normalize_filters
 
+from ragent.pipelines.observability import wrap_pipeline_component
 from ragent.utility.datetime import utcnow
 from ragent.utility.env import int_env, optional_float_env
 from ragent.utility.wilson import wilson_lower_bound
@@ -578,14 +579,21 @@ def build_retrieval_pipeline(
     use_feedback = feedback_retriever is not None and join_mode == "rrf"
 
     pipeline = Pipeline()
-    pipeline.add_component("source_hydrator", _SourceHydrator(doc_repo))
-    pipeline.add_component("excerpt_truncator", _ExcerptTruncator(max_chars=excerpt_max_chars))
+
+    def _add(name: str, component: Any) -> None:
+        """Wrap with chat.step.{started,ok,failed} observability then add."""
+        pipeline.add_component(
+            name, wrap_pipeline_component(component, namespace="chat", step=name)
+        )
+
+    _add("source_hydrator", _SourceHydrator(doc_repo))
+    _add("excerpt_truncator", _ExcerptTruncator(max_chars=excerpt_max_chars))
     pipeline.connect("source_hydrator.documents", "excerpt_truncator.documents")
 
     # The retriever output feeds either reranker → source_hydrator (when a
     # rerank_client is configured) or source_hydrator directly.
     if rerank_client is not None:
-        pipeline.add_component("reranker", _Reranker(rerank_client, top_k=top_k))
+        _add("reranker", _Reranker(rerank_client, top_k=top_k))
         pipeline.connect("reranker.documents", "source_hydrator.documents")
         retriever_sink = "reranker.documents"
     else:
@@ -609,38 +617,36 @@ def build_retrieval_pipeline(
             pipeline.connect("query_embedder.embedding_field", "vector_retriever.embedding_field")
 
     if join_mode == "vector_only":
-        pipeline.add_component("query_embedder", _build_query_embedder())
-        pipeline.add_component("vector_retriever", _build_vector_retriever())
+        _add("query_embedder", _build_query_embedder())
+        _add("vector_retriever", _build_vector_retriever())
         _connect_query_to_retriever()
         pipeline.connect("vector_retriever.documents", retriever_sink)
 
     elif join_mode == "bm25_only":
-        pipeline.add_component(
+        _add(
             "bm25_retriever",
             ElasticsearchBM25Retriever(document_store=document_store, top_k=top_k),
         )
         pipeline.connect("bm25_retriever.documents", retriever_sink)
 
     else:  # rrf or concatenate
-        pipeline.add_component("query_embedder", _build_query_embedder())
-        pipeline.add_component("vector_retriever", _build_vector_retriever())
-        pipeline.add_component(
+        _add("query_embedder", _build_query_embedder())
+        _add("vector_retriever", _build_vector_retriever())
+        _add(
             "bm25_retriever",
             ElasticsearchBM25Retriever(document_store=document_store, top_k=top_k),
         )
         if use_feedback:
             weights = [1.0, 1.0, feedback_weight]
-            pipeline.add_component("feedback_retriever", feedback_retriever)
-            pipeline.add_component(
+            _add("feedback_retriever", feedback_retriever)
+            _add(
                 "joiner",
                 DocumentJoiner(
                     join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k, weights=weights
                 ),
             )
         else:
-            pipeline.add_component(
-                "joiner", DocumentJoiner(join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k)
-            )
+            _add("joiner", DocumentJoiner(join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k))
         _connect_query_to_retriever()
         # Connection order is the joiner's positional input order. `weights`
         # is matched positionally, so feedback MUST be connected LAST to

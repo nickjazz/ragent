@@ -1,0 +1,142 @@
+"""T-APL.6 — Per-step structured logging for chat / retrieve pipeline components.
+
+Mirrors `test_pipeline_logging.py` (ingest) but for the `chat` namespace.
+Each chat pipeline component emits ``chat.step.{started,ok,failed}`` via
+``structlog.get_logger("ragent.chat")``; the wrapper inherits context vars
+bound by ``RequestLoggingMiddleware`` (``request_id``, ``user_id``).
+"""
+
+from __future__ import annotations
+
+import contextlib
+from unittest.mock import MagicMock
+
+import pytest
+import structlog
+from haystack.dataclasses import Document
+from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
+
+from ragent.pipelines.chat import (
+    _FeedbackMemoryRetriever,
+    build_retrieval_pipeline,
+    run_retrieval,
+)
+from ragent.pipelines.observability import wrap_pipeline_component
+
+
+class _FakeComponent:
+    def run(self, documents: list) -> dict:
+        return {"documents": [{"out": True} for _ in range(len(documents) + 1)]}
+
+
+def test_wrap_pipeline_component_emits_namespaced_events() -> None:
+    comp = _FakeComponent()
+    wrap_pipeline_component(comp, namespace="chat", step="reranker")
+    with structlog.testing.capture_logs() as logs:
+        comp.run(documents=[1, 2, 3])
+    events = [e for e in logs if e.get("event", "").startswith("chat.step.")]
+    assert [e["event"] for e in events] == ["chat.step.started", "chat.step.ok"]
+    ok = events[1]
+    assert ok["step"] == "reranker"
+    assert isinstance(ok["duration_ms"], int)
+    assert ok["duration_ms"] >= 0
+    assert ok["atoms_in"] == 3
+    assert ok["chunks_out"] == 4
+
+
+def test_wrap_pipeline_component_failure_emits_failed_with_namespace() -> None:
+    class _BoomComponent:
+        def run(self) -> dict:
+            raise RuntimeError("boom")
+
+    comp = _BoomComponent()
+    wrap_pipeline_component(comp, namespace="chat", step="reranker", error_code="RERANK_ERROR")
+    with structlog.testing.capture_logs() as logs, contextlib.suppress(RuntimeError):
+        comp.run()
+    failed = [e for e in logs if e.get("event") == "chat.step.failed"]
+    assert len(failed) == 1
+    e = failed[0]
+    assert e["step"] == "reranker"
+    assert e["error_code"] == "RERANK_ERROR"
+    assert "boom" in e["error"]
+    assert isinstance(e["duration_ms"], int)
+
+
+def test_wrap_component_run_remains_ingest_namespaced_for_backcompat() -> None:
+    """Existing call sites that used wrap_component_run keep the `ingest` namespace."""
+    from ragent.pipelines.observability import wrap_component_run
+
+    comp = _FakeComponent()
+    wrap_component_run(comp, step="splitter")
+    with structlog.testing.capture_logs() as logs:
+        comp.run(documents=[1])
+    events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
+    assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
+
+
+@pytest.mark.parametrize(
+    ("join_mode", "with_rerank", "with_feedback"),
+    [
+        ("bm25_only", False, False),
+        ("vector_only", False, False),
+        ("rrf", False, False),
+        ("rrf", True, False),
+        ("concatenate", False, False),
+        ("rrf", True, True),
+    ],
+)
+def test_build_retrieval_pipeline_wraps_every_component_across_join_modes(
+    join_mode: str, with_rerank: bool, with_feedback: bool
+) -> None:
+    """Every Haystack component in every supported join_mode is wrapped.
+
+    `functools.wraps` on the monkey-patched `run` sets `__wrapped__` to the
+    original method; presence of that attribute on every node's `run` proves
+    no factory branch silently skipped the `_add` helper.
+    """
+    rerank_client = MagicMock() if with_rerank else None
+    feedback_retriever = (
+        _FeedbackMemoryRetriever(es_client=MagicMock(), doc_repo=MagicMock())
+        if with_feedback
+        else None
+    )
+
+    pipeline = build_retrieval_pipeline(
+        embedder=MagicMock(),
+        document_store=MagicMock(spec=ElasticsearchDocumentStore),
+        doc_repo=MagicMock(),
+        join_mode=join_mode,
+        rerank_client=rerank_client,
+        feedback_retriever=feedback_retriever,
+    )
+    for name in pipeline.graph.nodes:
+        node = pipeline.get_component(name)
+        assert hasattr(node.run, "__wrapped__"), f"component {name!r} not wrapped"
+
+
+def test_build_retrieval_pipeline_wraps_each_component_with_chat_namespace() -> None:
+    """Every component the factory adds emits a `chat.step.ok` on a happy-path run.
+
+    Uses join_mode=bm25_only to minimise the mock surface: only the BM25
+    retriever needs a fake doc-producing run, no embedder is constructed.
+    """
+    # Docs WITHOUT document_id meta keep the hydrator's anyio.from_thread.run path
+    # cold — sync unit tests aren't inside an AnyIO worker thread, and the
+    # hydrator's docstring is explicit about that pre-existing constraint.
+    bm25_docs = [Document(id="A", content="alpha", meta={})]
+
+    store = MagicMock(spec=ElasticsearchDocumentStore)
+    store._bm25_retrieval.return_value = bm25_docs
+
+    pipeline = build_retrieval_pipeline(
+        embedder=MagicMock(),
+        document_store=store,
+        doc_repo=MagicMock(),
+        join_mode="bm25_only",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        run_retrieval(pipeline, query="alpha", top_k=1)
+
+    ok_events = {e["step"] for e in logs if e.get("event") == "chat.step.ok"}
+    assert {"bm25_retriever", "source_hydrator", "excerpt_truncator"}.issubset(ok_events)
