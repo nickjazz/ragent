@@ -25,7 +25,7 @@ from ragent.bootstrap.broker import broker
 from ragent.bootstrap.metrics import observe_pipeline_duration, record_pipeline_outcome
 from ragent.errors.codes import TaskErrorCode
 from ragent.pipelines.observability import bind_ingest_context, log_ingest_step
-from ragent.schemas.ingest import BINARY_MIMES
+from ragent.schemas.ingest import BINARY_MIMES, MIME_EXTENSIONS, IngestMime
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +34,16 @@ DEFAULT_MIME = "text/plain"
 
 def _aggregate_timeout_seconds() -> float:
     return float(os.environ.get("INGEST_PIPELINE_TIMEOUT_SECONDS", "300"))
+
+
+def _unprotect_filename(object_key: str, mime: str) -> str:
+    try:
+        ext = MIME_EXTENSIONS[IngestMime(mime)]
+    except (KeyError, ValueError):
+        return object_key
+    if object_key.lower().endswith(f".{ext}"):
+        return object_key
+    return f"{object_key}.{ext}"
 
 
 @broker.task("ingest.pipeline")
@@ -89,7 +99,7 @@ async def ingest_pipeline_task(document_id: str) -> None:
             data = container.unprotect_client.unprotect(
                 file_bytes=data,
                 user_id=doc.create_user,
-                filename=doc.object_key,
+                filename=_unprotect_filename(doc.object_key, mime),
             )
 
         if mime in BINARY_MIMES:
@@ -206,8 +216,10 @@ async def ingest_pipeline_task(document_id: str) -> None:
     )
     record_pipeline_outcome(source_app=doc.source_app, mime_type=doc.mime_type, outcome="success")
 
-    # File-type ingests are caller-owned: never delete. Inline staging blob is
-    # no longer needed regardless of survivor outcome (chunks are in ES).
+    # Only inline staging blobs are auto-deleted on READY (chunks are in ES,
+    # so the bytes are no longer needed). `file` is caller-owned; `upload` is
+    # server-staged but reserved for the DELETE API path so admin operators
+    # can rerun against the same row without losing the source bytes.
     if (doc.ingest_type or "inline") == "inline":
         with contextlib.suppress(Exception):
             registry.delete_object(site, doc.object_key)

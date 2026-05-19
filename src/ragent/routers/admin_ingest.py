@@ -2,8 +2,10 @@
 
 POST /ingest/v1/upload accepts a multipart form with the file bytes and
 metadata fields. The server stages bytes to the default MinIO site and
-enqueues the pipeline task — identical downstream behaviour to ingest_type
-"inline" (server owns the object; delete cleans it up).
+enqueues the pipeline task. The persisted row carries ingest_type="upload"
+(distinct from JSON-body "inline" because the multipart path accepts binary
+MIMEs the inline schema rejects, and the worker does NOT auto-delete the
+staged blob on READY — DELETE /ingest/v1/{id} is the sole reclaim path).
 """
 
 from __future__ import annotations
@@ -17,7 +19,6 @@ from fastapi.responses import JSONResponse
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.schemas.ingest import SOURCE_META_MAX, SOURCE_URL_MAX, IngestMime
-from ragent.security.file_signature import MagicByteMismatchError, assert_magic_byte
 from ragent.services.ingest_service import FileTooLarge
 
 _MAX_UPLOAD_BYTES = int(os.environ.get("INGEST_INLINE_MAX_BYTES", "10485760"))
@@ -44,7 +45,6 @@ def create_router(svc: Any) -> APIRouter:
             return problem(413, HttpErrorCode.INGEST_FILE_TOO_LARGE, "Upload too large")
         try:
             data = await file.read()
-            assert_magic_byte(mime_type, data)
             document_id = await svc.create_from_upload(
                 create_user=x_user_id,
                 source_id=source_id,
@@ -55,8 +55,6 @@ def create_router(svc: Any) -> APIRouter:
                 source_meta=source_meta,
                 source_url=source_url,
             )
-        except MagicByteMismatchError as exc:
-            return problem(exc.http_status, exc.error_code, str(exc))
         except FileTooLarge:
             return problem(413, HttpErrorCode.INGEST_FILE_TOO_LARGE, "Upload too large")
         finally:
