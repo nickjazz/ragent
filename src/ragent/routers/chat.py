@@ -16,7 +16,12 @@ from opentelemetry import trace
 from ragent.clients.rate_limiter import RateLimiter
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
-from ragent.pipelines.chat import build_es_filters, doc_to_source_entry, run_retrieval
+from ragent.pipelines.chat import (
+    EXCERPT_MAX_CHARS_DEFAULT,
+    build_es_filters,
+    doc_to_source_entry,
+    run_retrieval,
+)
 from ragent.schemas.chat import ChatRequest, build_rag_messages
 from ragent.utility.feedback_token import compute_sources_hash
 from ragent.utility.feedback_token import sign as sign_feedback_token
@@ -26,10 +31,10 @@ logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer(__name__)
 
 
-def _build_sources(documents: list[Any]) -> list[dict] | None:
+def _build_sources(documents: list[Any], max_chars: int) -> list[dict] | None:
     if not documents:
         return None
-    return [doc_to_source_entry(d) for d in documents]
+    return [doc_to_source_entry(d, max_chars=max_chars) for d in documents]
 
 
 def _maybe_mint_feedback_envelope(
@@ -88,6 +93,7 @@ def create_chat_router(
     rate_limit: int = 60,
     rate_limit_window: int = 60,
     feedback_hmac_secret: str | None = None,
+    excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
 ) -> APIRouter:
     router = APIRouter(prefix="/chat/v1")
 
@@ -161,7 +167,7 @@ def create_chat_router(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
-            sources = _build_sources(docs)
+            sources = _build_sources(docs, max_chars=excerpt_max_chars)
             return JSONResponse(
                 {
                     "content": result["content"],
@@ -201,7 +207,7 @@ def create_chat_router(
                 )
             with _tracer.start_as_current_span("chat.build_messages"):
                 messages = build_rag_messages(body, docs)
-            sources = _build_sources(docs)
+            sources = _build_sources(docs, max_chars=excerpt_max_chars)
             # Capture the chat.request context so chat.llm (started later inside the
             # StreamingResponse generator, in a different async context) still nests
             # under chat.request via explicit parent reference rather than via the

@@ -41,6 +41,12 @@ class Container:
     # B54/B55 T-FB.8 — feedback retrieval signal (renumbered from B50/B51)
     feedback_repository: Any  # FeedbackRepository | None
     feedback_hmac_secret: str | None  # None when CHAT_FEEDBACK_ENABLED=false
+    # T-APL.5 — env-driven size limits routed through composition root
+    ingest_inline_max_bytes: int
+    ingest_file_max_bytes: int
+    ingest_list_max_limit: int
+    ingest_upload_max_bytes: int
+    excerpt_max_chars: int
 
 
 def build_container() -> Container:
@@ -56,7 +62,7 @@ def build_container() -> Container:
     from ragent.clients.llm import LLMClient
     from ragent.clients.rate_limiter import RateLimiter
     from ragent.clients.rerank import RerankClient
-    from ragent.pipelines.chat import build_retrieval_pipeline
+    from ragent.pipelines.chat import EXCERPT_MAX_CHARS_DEFAULT, build_retrieval_pipeline
     from ragent.pipelines.factory import DocumentEmbedder, build_ingest_pipeline
     from ragent.plugins.registry import PluginRegistry
     from ragent.plugins.stub_graph import StubGraphExtractor
@@ -65,6 +71,11 @@ def build_container() -> Container:
     from ragent.repositories.system_settings_repository import SystemSettingsRepository
     from ragent.services.active_model_registry import ActiveModelRegistry
     from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
+    from ragent.services.ingest_service import (
+        FILE_MAX_BYTES_DEFAULT,
+        INLINE_MAX_BYTES_DEFAULT,
+        LIST_MAX_LIMIT_DEFAULT,
+    )
     from ragent.storage.minio_registry import MinioSiteRegistry
 
     http = httpx.Client(timeout=60.0)
@@ -251,6 +262,10 @@ def build_container() -> Container:
             request_timeout=_float_env("ES_QUERY_TIMEOUT_SECONDS", 10.0),
         )
 
+    excerpt_max_chars = _int_env("EXCERPT_MAX_CHARS", EXCERPT_MAX_CHARS_DEFAULT)
+    # Spec §4.6 ties the admin upload route's size ceiling to the same env knob
+    # as inline ingest — share one read so the two Container fields cannot drift.
+    inline_max_bytes = _int_env("INGEST_INLINE_MAX_BYTES", INLINE_MAX_BYTES_DEFAULT)
     retrieval_pipeline = build_retrieval_pipeline(
         document_store=document_store,
         doc_repo=doc_repo,
@@ -260,6 +275,7 @@ def build_container() -> Container:
         embed_query_callable=partial(_embed, query=True),
         feedback_retriever=feedback_retriever,
         feedback_weight=feedback_weight,
+        excerpt_max_chars=excerpt_max_chars,
     )
 
     ingest_pipeline = build_ingest_pipeline(
@@ -306,6 +322,11 @@ def build_container() -> Container:
         chunks_index_name=chunks_index_name,
         feedback_repository=feedback_repository,
         feedback_hmac_secret=feedback_hmac_secret,
+        ingest_inline_max_bytes=inline_max_bytes,
+        ingest_file_max_bytes=_int_env("INGEST_FILE_MAX_BYTES", FILE_MAX_BYTES_DEFAULT),
+        ingest_list_max_limit=_int_env("INGEST_LIST_MAX_LIMIT", LIST_MAX_LIMIT_DEFAULT),
+        ingest_upload_max_bytes=inline_max_bytes,
+        excerpt_max_chars=excerpt_max_chars,
     )
 
 

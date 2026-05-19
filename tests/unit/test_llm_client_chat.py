@@ -65,6 +65,23 @@ def test_chat_uses_timeout():
     assert timeout == 77
 
 
+def test_chat_honours_explicit_zero_timeout(monkeypatch):
+    """T-APL.3 — `timeout=0` must reach httpx (not be swallowed by `value or env`).
+
+    The constructor previously read `self._timeout = timeout or float(env)`,
+    so an explicit `0` (operator-meaningful: "0 seconds" in httpx semantics,
+    or a fail-fast signal) collapsed to the env default. Pinned here so the
+    falsy-check pattern cannot regress.
+    """
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "120")
+    http = _mock_http("ok")
+    client = LLMClient(
+        api_url="https://llm.example.com", http=http, get_token=lambda: "tok", timeout=0
+    )
+    client.chat(messages=[{"role": "user", "content": "q"}], model="m")
+    assert http.post.call_args[1]["timeout"] == 0
+
+
 def test_chat_retries_3_times_on_error():
     sleep_calls: list[float] = []
     call_count = [0]

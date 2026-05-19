@@ -18,11 +18,15 @@ from haystack_integrations.components.retrievers.elasticsearch import (
 )
 from haystack_integrations.document_stores.elasticsearch.filters import _normalize_filters
 
+from ragent.pipelines.observability import wrap_pipeline_component
 from ragent.utility.datetime import utcnow
 from ragent.utility.env import int_env, optional_float_env
 from ragent.utility.wilson import wilson_lower_bound
 
-_EXCERPT_MAX_CHARS = int_env("EXCERPT_MAX_CHARS", 512)
+# Spec §4.6 default; composition.py reads EXCERPT_MAX_CHARS env and threads
+# the runtime value into build_retrieval_pipeline + create_{chat,retrieve}_router
+# so doc_to_source_entry and _ExcerptTruncator share one value.
+EXCERPT_MAX_CHARS_DEFAULT = 512
 # Upper bound on top_k — pinned by spec §3.4.4 (`POST /retrieve/v1` Pydantic
 # `le=200`) and §3.8.3 (MCP retrieve tool `maximum: 200`). DEFAULT_TOP_K is the
 # fallback when callers omit `top_k`; if an operator sets RETRIEVAL_TOP_K above
@@ -74,7 +78,7 @@ def dedupe_by_document(docs: list[Any]) -> list[Any]:
     return out
 
 
-def doc_to_source_entry(doc: Any) -> dict:
+def doc_to_source_entry(doc: Any, *, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> dict:
     meta = doc.meta or {}
     excerpt_src = meta.get("raw_content") or (doc.content or "")
     return {
@@ -86,7 +90,7 @@ def doc_to_source_entry(doc: Any) -> dict:
         "source_title": meta.get("source_title"),
         "source_url": meta.get("source_url"),
         "mime_type": meta.get("mime_type"),
-        "excerpt": excerpt_src[:_EXCERPT_MAX_CHARS],
+        "excerpt": excerpt_src[:max_chars],
         "score": doc.score if hasattr(doc, "score") else None,
     }
 
@@ -257,14 +261,15 @@ class _Reranker:
         self._top_k = top_k
 
     @component.output_types(documents=list[Document])
-    def run(self, query: str, documents: list[Document]) -> dict:
+    def run(self, query: str, documents: list[Document], top_k: int | None = None) -> dict:
         if not documents:
             return {"documents": []}
+        k = top_k if top_k is not None else self._top_k
         texts = [d.content or "" for d in documents]
-        results = self._client.rerank(query=query, texts=texts, top_k=self._top_k)
+        results = self._client.rerank(query=query, texts=texts, top_k=k)
         ordered: list[Document] = []
         invalid = 0
-        for r in results[: self._top_k]:
+        for r in results[:k]:
             i = r.get("index")
             # bool is an int subclass, so isinstance(True, int) is True; reject
             # explicitly so {"index": True} is not silently treated as docs[1].
@@ -317,7 +322,7 @@ class _LLMGenerator:
 class _ExcerptTruncator:
     """Truncate chunk content to EXCERPT_MAX_CHARS for response payloads."""
 
-    def __init__(self, max_chars: int = _EXCERPT_MAX_CHARS) -> None:
+    def __init__(self, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> None:
         self._max = max_chars
 
     @component.output_types(documents=list[Document])
@@ -395,14 +400,18 @@ class _FeedbackMemoryRetriever:
         self._request_timeout = request_timeout
 
     def _search_kwargs(self) -> dict:
-        return {"request_timeout": self._request_timeout} if self._request_timeout else {}
+        return (
+            {"request_timeout": self._request_timeout} if self._request_timeout is not None else {}
+        )
 
     @component.output_types(documents=list[Document])
     def run(
         self,
         query_embedding: list[float],
         filters: dict | None = None,
+        top_k: int | None = None,
     ) -> dict:
+        k = top_k if top_k is not None else self._top_k
         # 1. kNN feedback_v1
         knn_filter: list[dict] = [{"range": {"ts": {"gte": f"now-{self._lookback_days}d"}}}]
         if filters:
@@ -468,7 +477,7 @@ class _FeedbackMemoryRetriever:
             decay = 0.5 ** (age_days / self._half_life_days)
             scored.append((key, wilson * decay))
         scored.sort(key=lambda kv: kv[1], reverse=True)
-        scored = scored[: self._top_k]
+        scored = scored[:k]
         if not scored:
             _logger.info(
                 "feedback.retriever.below_min_votes",
@@ -494,7 +503,7 @@ class _FeedbackMemoryRetriever:
 
         # 6. Single ES terms query on chunks_v1
         terms_body = {
-            "size": self._top_k * _FEEDBACK_CHUNK_FAN_OUT,
+            "size": k * _FEEDBACK_CHUNK_FAN_OUT,
             "query": {"terms": {"document_id": list(scored_by_doc.keys())}},
         }
         chunk_hits = self._es.search(
@@ -548,6 +557,7 @@ def build_retrieval_pipeline(
     embed_query_callable: Any = None,
     feedback_retriever: Any | None = None,
     feedback_weight: float = 0.5,
+    excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
 ) -> Pipeline:
     """Build the retrieval pipeline.
 
@@ -569,14 +579,21 @@ def build_retrieval_pipeline(
     use_feedback = feedback_retriever is not None and join_mode == "rrf"
 
     pipeline = Pipeline()
-    pipeline.add_component("source_hydrator", _SourceHydrator(doc_repo))
-    pipeline.add_component("excerpt_truncator", _ExcerptTruncator())
+
+    def _add(name: str, component: Any) -> None:
+        """Wrap with chat.step.{started,ok,failed} observability then add."""
+        pipeline.add_component(
+            name, wrap_pipeline_component(component, namespace="chat", step=name)
+        )
+
+    _add("source_hydrator", _SourceHydrator(doc_repo))
+    _add("excerpt_truncator", _ExcerptTruncator(max_chars=excerpt_max_chars))
     pipeline.connect("source_hydrator.documents", "excerpt_truncator.documents")
 
     # The retriever output feeds either reranker → source_hydrator (when a
     # rerank_client is configured) or source_hydrator directly.
     if rerank_client is not None:
-        pipeline.add_component("reranker", _Reranker(rerank_client, top_k=top_k))
+        _add("reranker", _Reranker(rerank_client, top_k=top_k))
         pipeline.connect("reranker.documents", "source_hydrator.documents")
         retriever_sink = "reranker.documents"
     else:
@@ -600,38 +617,36 @@ def build_retrieval_pipeline(
             pipeline.connect("query_embedder.embedding_field", "vector_retriever.embedding_field")
 
     if join_mode == "vector_only":
-        pipeline.add_component("query_embedder", _build_query_embedder())
-        pipeline.add_component("vector_retriever", _build_vector_retriever())
+        _add("query_embedder", _build_query_embedder())
+        _add("vector_retriever", _build_vector_retriever())
         _connect_query_to_retriever()
         pipeline.connect("vector_retriever.documents", retriever_sink)
 
     elif join_mode == "bm25_only":
-        pipeline.add_component(
+        _add(
             "bm25_retriever",
             ElasticsearchBM25Retriever(document_store=document_store, top_k=top_k),
         )
         pipeline.connect("bm25_retriever.documents", retriever_sink)
 
     else:  # rrf or concatenate
-        pipeline.add_component("query_embedder", _build_query_embedder())
-        pipeline.add_component("vector_retriever", _build_vector_retriever())
-        pipeline.add_component(
+        _add("query_embedder", _build_query_embedder())
+        _add("vector_retriever", _build_vector_retriever())
+        _add(
             "bm25_retriever",
             ElasticsearchBM25Retriever(document_store=document_store, top_k=top_k),
         )
         if use_feedback:
             weights = [1.0, 1.0, feedback_weight]
-            pipeline.add_component("feedback_retriever", feedback_retriever)
-            pipeline.add_component(
+            _add("feedback_retriever", feedback_retriever)
+            _add(
                 "joiner",
                 DocumentJoiner(
                     join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k, weights=weights
                 ),
             )
         else:
-            pipeline.add_component(
-                "joiner", DocumentJoiner(join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k)
-            )
+            _add("joiner", DocumentJoiner(join_mode=_HAYSTACK_JOIN_MODE[join_mode], top_k=top_k))
         _connect_query_to_retriever()
         # Connection order is the joiner's positional input order. `weights`
         # is matched positionally, so feedback MUST be connected LAST to
@@ -711,12 +726,20 @@ def run_retrieval(
     # apps via the joiner (PR #80 review, codex P1).
     if "feedback_retriever" in nodes:
         scope = _scope_from_haystack_filters(filters)
+        fb_inputs: dict[str, Any] = {}
         if scope:
-            inputs["feedback_retriever"] = {"filters": scope}
+            fb_inputs["filters"] = scope
+        if top_k is not None:
+            fb_inputs["top_k"] = top_k
+        if fb_inputs:
+            inputs["feedback_retriever"] = fb_inputs
     if "joiner" in nodes and top_k is not None:
         inputs["joiner"] = {"top_k": top_k}
     if "reranker" in nodes:
-        inputs["reranker"] = {"query": query}
+        rr_inputs: dict[str, Any] = {"query": query}
+        if top_k is not None:
+            rr_inputs["top_k"] = top_k
+        inputs["reranker"] = rr_inputs
 
     result = pipeline.run(inputs)
     docs = result.get("excerpt_truncator", {}).get("documents", [])

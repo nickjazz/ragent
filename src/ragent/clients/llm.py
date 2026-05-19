@@ -11,6 +11,7 @@ from opentelemetry import trace
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.upstream import classify_upstream_error
+from ragent.utility.env import float_env_or
 
 logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer(__name__)
@@ -29,7 +30,7 @@ class LLMClient:
         self._url = api_url
         self._http = http
         self._get_token = get_token
-        self._timeout = timeout or float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
+        self._timeout = float_env_or(timeout, "LLM_TIMEOUT_SECONDS", 120.0)
         self._sleep = sleep
         self._auth_header_name = auth_header_name or os.environ.get(
             "LLM_AUTH_HEADER_NAME", "Authorization"

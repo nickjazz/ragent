@@ -262,10 +262,17 @@ def create_app() -> FastAPI:
         storage=container.minio_registry,
         broker=dispatcher,
         registry=container.registry,
+        inline_max_bytes=container.ingest_inline_max_bytes,
+        file_max_bytes=container.ingest_file_max_bytes,
+        list_max_limit=container.ingest_list_max_limit,
     )
 
     app.include_router(create_ingest_router(svc=ingest_svc))
-    app.include_router(create_upload_ingest_router(svc=ingest_svc))
+    app.include_router(
+        create_upload_ingest_router(
+            svc=ingest_svc, max_upload_bytes=container.ingest_upload_max_bytes
+        )
+    )
     app.include_router(
         create_chat_router(
             retrieval_pipeline=container.retrieval_pipeline,
@@ -274,9 +281,15 @@ def create_app() -> FastAPI:
             rate_limit=container.rate_limit,
             rate_limit_window=container.rate_limit_window,
             feedback_hmac_secret=container.feedback_hmac_secret,
+            excerpt_max_chars=container.excerpt_max_chars,
         )
     )
-    app.include_router(create_retrieve_router(retrieval_pipeline=container.retrieval_pipeline))
+    app.include_router(
+        create_retrieve_router(
+            retrieval_pipeline=container.retrieval_pipeline,
+            excerpt_max_chars=container.excerpt_max_chars,
+        )
+    )
     if container.feedback_hmac_secret is not None:
         app.include_router(
             create_feedback_router(

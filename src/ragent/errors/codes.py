@@ -92,13 +92,13 @@ class HttpErrorCode(StrEnum):
 class TaskErrorCode(StrEnum):
     """Codes persisted to ``documents.error_code`` by async ingest paths."""
 
-    # Per-step failures wrapped by pipelines/observability::wrap_component_run.
+    # Per-step failures wrapped by pipelines/observability::wrap_pipeline_component.
     PIPELINE_UNROUTABLE = "PIPELINE_UNROUTABLE"  # mime → splitter has no route
     CHUNK_BUDGET_EXCEEDED = "CHUNK_BUDGET_EXCEEDED"  # CHUNK_MAX_PIECES_PER_ATOM
     ES_WRITE_ERROR = "ES_WRITE_ERROR"  # DocumentWriter raised
     EMBEDDER_ERROR = "EMBEDDER_ERROR"  # embedder client raised inside step
 
-    # Step fallback when wrap_component_run catches an exception that wasn't
+    # Step fallback when wrap_pipeline_component catches an exception that wasn't
     # pre-tagged with an error_code. Honest name (former "PIPELINE_TIMEOUT"
     # was misleading: it fires for any unexpected error, not only timeouts).
     PIPELINE_UNEXPECTED_ERROR = "PIPELINE_UNEXPECTED_ERROR"

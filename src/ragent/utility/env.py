@@ -43,6 +43,18 @@ def float_env(var: str, default: float) -> float:
         sys.exit(1)
 
 
+def float_env_or(passed: float | None, var: str, default: float) -> float:
+    """Caller-arg → env-var → default, distinguishing `None` (unset) from `0`.
+
+    The `passed or float_env(...)` shorthand swallows an explicit `0` because
+    `0.0` is falsy; this resolver honours the explicit value. Inherits
+    `float_env`'s `[ragent] X must be a float` exit path for malformed env.
+    """
+    if passed is not None:
+        return passed
+    return float_env(var, default)
+
+
 def optional_float_env(var: str) -> float | None:
     raw = os.environ.get(var)
     if not raw:

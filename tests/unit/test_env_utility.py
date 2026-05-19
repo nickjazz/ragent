@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from ragent.utility.env import bool_env, float_env, int_env, optional_float_env, require, str_env
+from ragent.utility.env import (
+    bool_env,
+    float_env,
+    float_env_or,
+    int_env,
+    optional_float_env,
+    require,
+    str_env,
+)
 
 
 def test_require_returns_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +78,22 @@ def test_optional_float_env_exits_on_invalid(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("OPT_F", "not-a-float")
     with pytest.raises(SystemExit):
         optional_float_env("OPT_F")
+
+
+def test_float_env_or_honours_explicit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`0.0` is falsy but operator-meaningful (fail-fast); MUST NOT collapse to env."""
+    monkeypatch.setenv("T", "30")
+    assert float_env_or(0.0, "T", 999.0) == 0.0
+
+
+def test_float_env_or_falls_through_when_passed_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("T", "30")
+    assert float_env_or(None, "T", 999.0) == 30.0
+
+
+def test_float_env_or_uses_default_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("T", raising=False)
+    assert float_env_or(None, "T", 999.0) == 999.0
 
 
 def test_str_env_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
