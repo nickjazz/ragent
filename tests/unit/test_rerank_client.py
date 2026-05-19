@@ -51,6 +51,20 @@ def test_rerank_uses_raw_token_no_bearer():
     assert headers["Authorization"] == "secret"
 
 
+def test_rerank_honours_explicit_zero_timeout(monkeypatch):
+    """T-APL.3 — explicit timeout=0 must not be swallowed by env fallback."""
+    monkeypatch.setenv("RERANK_TIMEOUT_SECONDS", "30")
+    http = _mock_http([0.5])
+    client = RerankClient(
+        api_url="https://rerank.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        timeout=0,
+    )
+    client.rerank(query="q", texts=["x"], top_k=1)
+    assert http.post.call_args[1]["timeout"] == 0
+
+
 def test_rerank_custom_auth_header_name():
     http = _mock_http([0.5])
     client = RerankClient(

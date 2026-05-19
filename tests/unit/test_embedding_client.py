@@ -239,6 +239,36 @@ def test_embed_query_uses_query_timeout():
     assert timeout == 10
 
 
+def test_embed_honours_explicit_zero_ingest_timeout(monkeypatch):
+    """T-APL.3 — explicit ingest_timeout=0 must not be swallowed by env fallback."""
+    monkeypatch.setenv("EMBEDDER_INGEST_TIMEOUT_SECONDS", "30")
+    http = _mock_http([[0.1]])
+    client = EmbeddingClient(
+        api_url="https://embed.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        ingest_timeout=0,
+        query_timeout=10,
+    )
+    client.embed(["text"], query=False)
+    assert http.post.call_args[1]["timeout"] == 0
+
+
+def test_embed_honours_explicit_zero_query_timeout(monkeypatch):
+    """T-APL.3 — explicit query_timeout=0 must not be swallowed by env fallback."""
+    monkeypatch.setenv("EMBEDDER_QUERY_TIMEOUT_SECONDS", "10")
+    http = _mock_http([[0.1]])
+    client = EmbeddingClient(
+        api_url="https://embed.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        ingest_timeout=30,
+        query_timeout=0,
+    )
+    client.embed(["text"], query=True)
+    assert http.post.call_args[1]["timeout"] == 0
+
+
 def test_embed_raises_on_zero_magnitude_vector() -> None:
     """ES dense_vector cosine rejects zero-magnitude — refuse before write."""
     from unittest.mock import MagicMock

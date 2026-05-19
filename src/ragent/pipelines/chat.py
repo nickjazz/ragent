@@ -396,7 +396,9 @@ class _FeedbackMemoryRetriever:
         self._request_timeout = request_timeout
 
     def _search_kwargs(self) -> dict:
-        return {"request_timeout": self._request_timeout} if self._request_timeout else {}
+        return (
+            {"request_timeout": self._request_timeout} if self._request_timeout is not None else {}
+        )
 
     @component.output_types(documents=list[Document])
     def run(

@@ -189,6 +189,18 @@ def test_optional_source_app_filter_propagates(from_thread):
 
 
 @patch("anyio.from_thread.run")
+def test_search_kwargs_honours_explicit_zero_request_timeout(from_thread):
+    """T-APL.3 — explicit request_timeout=0 must reach ES, not be swallowed by `if self._x`."""
+    es = MagicMock()
+    es.search = MagicMock(return_value=_knn_response([]))
+    retriever = _FeedbackMemoryRetriever(
+        es_client=es, doc_repo=MagicMock(), min_votes=3, request_timeout=0
+    )
+    retriever.run(query_embedding=[0.1] * 1024)
+    assert es.search.call_args.kwargs.get("request_timeout") == 0
+
+
+@patch("anyio.from_thread.run")
 def test_feedback_retriever_run_accepts_runtime_top_k_overrides_construction_default(from_thread):
     """T-APL.1 — per-request top_k must reach the dedup-by-source cut, not the build-time default.
 

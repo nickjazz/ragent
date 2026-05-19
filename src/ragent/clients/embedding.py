@@ -11,6 +11,7 @@ from opentelemetry import trace
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.upstream import classify_upstream_error
+from ragent.utility.env import float_env_or
 
 _EMBED_MODEL = "bge-m3"
 _SUCCESS_CODE = 96200
@@ -54,12 +55,8 @@ class EmbeddingClient:
         self._http = http
         self._get_token = get_token
         self._batch_size = batch_size or int(os.environ.get("EMBEDDER_BATCH_SIZE", "32"))
-        self._ingest_timeout = ingest_timeout or float(
-            os.environ.get("EMBEDDER_INGEST_TIMEOUT_SECONDS", "30")
-        )
-        self._query_timeout = query_timeout or float(
-            os.environ.get("EMBEDDER_QUERY_TIMEOUT_SECONDS", "10")
-        )
+        self._ingest_timeout = float_env_or(ingest_timeout, "EMBEDDER_INGEST_TIMEOUT_SECONDS", 30.0)
+        self._query_timeout = float_env_or(query_timeout, "EMBEDDER_QUERY_TIMEOUT_SECONDS", 10.0)
         self._sleep = sleep
         self._auth_header_name = auth_header_name or os.environ.get(
             "EMBEDDING_AUTH_HEADER_NAME", "Authorization"
