@@ -1,0 +1,6 @@
+{
+  "description": "chunks_v1 default ingest pipeline (B59): fills indexed_at with the ES coordinating-node timestamp on every write — single source of truth for the chunk row's last-write time. Re-runs on every OVERWRITE.",
+  "processors": [
+    { "set": { "field": "indexed_at", "value": "{{{_ingest.timestamp}}}" } }
+  ]
+}

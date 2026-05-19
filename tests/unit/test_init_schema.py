@@ -48,8 +48,36 @@ def test_init_es_skips_existing_index() -> None:
     with patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request):
         init_es("http://es:9200")
 
-    put_calls = [c for c in calls if c[0] == "PUT"]
-    assert not put_calls, "PUT should not be called when index already exists"
+    # B59 — pipeline PUT is idempotent (no HEAD guard); index PUT is skipped.
+    index_put_calls = [c for c in calls if c[0] == "PUT" and "_ingest/pipeline/" not in c[1]]
+    assert not index_put_calls, "index PUT should not be called when index already exists"
+
+
+def test_init_es_puts_pipelines_before_indexes() -> None:
+    """T-EI.3 / B59 — `chunks_v1.settings.index.default_pipeline` references
+    `chunks_default`; ES rejects index creation if the referenced pipeline
+    doesn't exist yet. The bootstrap MUST PUT every pipeline before the
+    first index PUT."""
+    calls: list[tuple[str, str]] = []
+
+    def fake_request(url: str, method: str = "GET", body: dict | None = None):
+        calls.append((method, url))
+        if method == "HEAD":
+            return None  # index does not exist → triggers PUT
+        return {}
+
+    with patch("ragent.bootstrap.init_schema._es_request", side_effect=fake_request):
+        init_es("http://es:9200")
+
+    puts = [(method, url) for method, url in calls if method == "PUT"]
+    pipeline_puts = [i for i, (_, url) in enumerate(puts) if "/_ingest/pipeline/" in url]
+    index_puts = [i for i, (_, url) in enumerate(puts) if "/_ingest/pipeline/" not in url]
+    assert pipeline_puts, "no pipeline PUT was made — `chunks_default` resource missing?"
+    assert index_puts, "no index PUT was made"
+    assert max(pipeline_puts) < min(index_puts), (
+        "all pipeline PUTs must precede any index PUT — index creation rejects "
+        f"a `default_pipeline` referencing an absent pipeline. order={puts}"
+    )
 
 
 # ── ICU analyzer mapping (B26 / B42) ─────────────────────────────────────────
@@ -85,6 +113,32 @@ def test_prod_mapping_uses_bbq_hnsw_vector_index() -> None:
     `flat` so vanilla ES 9.2.3 CI containers stay light-weight."""
     prod = json.loads(_PROD_CHUNKS_V1.read_text(encoding="utf-8"))
     assert prod["mappings"]["properties"]["embedding"]["index_options"] == {"type": "bbq_hnsw"}
+
+
+# ── B59 indexed_at / default_pipeline (T-EI.3) ──────────────────────────────
+
+
+def test_chunks_v1_mapping_declares_indexed_at_date_field() -> None:
+    """T-EI.3 / B59 — `indexed_at` is populated by the ES `chunks_default`
+    ingest pipeline (no Python writer touches the field); the mapping MUST
+    declare it as a `date` field so it surfaces in `_search` results."""
+    for resource_path in (_PROD_CHUNKS_V1, _TEST_CHUNKS_V1):
+        mapping = json.loads(resource_path.read_text(encoding="utf-8"))
+        assert mapping["mappings"]["properties"].get("indexed_at") == {"type": "date"}, (
+            f"{resource_path.relative_to(_REPO_ROOT)} missing indexed_at:date — "
+            "ingest pipeline writes to this field, mapping MUST declare it."
+        )
+
+
+def test_chunks_v1_settings_reference_default_pipeline() -> None:
+    """T-EI.3 / B59 — `index.default_pipeline = chunks_default` is what wires
+    the pipeline to every chunk write; both prod and test resources MUST set it."""
+    for resource_path in (_PROD_CHUNKS_V1, _TEST_CHUNKS_V1):
+        mapping = json.loads(resource_path.read_text(encoding="utf-8"))
+        assert mapping["settings"]["index"].get("default_pipeline") == "chunks_default", (
+            f"{resource_path.relative_to(_REPO_ROOT)} missing "
+            "settings.index.default_pipeline=chunks_default."
+        )
 
 
 def test_test_mapping_structurally_matches_prod_except_documented_deltas() -> None:
