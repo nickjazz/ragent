@@ -50,7 +50,7 @@ def _add_cors_middleware(app: FastAPI, origins: list[str]) -> None:
     )
 
 
-_NO_USER_ID_PATHS = frozenset(
+_PUBLIC_PATHS = frozenset(
     {"/livez", "/readyz", "/startupz", "/metrics", "/docs", "/redoc", "/openapi.json"}
 )
 _DEFAULT_USER_ID_HEADER = "X-User-Id"
@@ -176,7 +176,7 @@ def _x_user_id_middleware(
 
     @app.middleware("http")
     async def require_user_id(request: Request, call_next: Any) -> Response:
-        if request.url.path in _NO_USER_ID_PATHS:
+        if request.url.path in _PUBLIC_PATHS:
             return await call_next(request)
 
         if trust_header_mode:

@@ -2,7 +2,7 @@
 
 Pins:
   * The 8-path canonical set (adds `/docs/oauth2-redirect` over the prior
-    `_NO_USER_ID_PATHS` 7-path set so Swagger UI's OAuth2 redirect doesn't 401).
+    7-path set so Swagger UI's OAuth2 redirect doesn't 401).
   * `_SKIP_PATHS ⊂ _PUBLIC_PATHS` — the structured-logging skip set must NEVER
     drop a path that auth would short-circuit (otherwise an unauthenticated
     bypass would still log per-request — broken contract).

@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI, Header
 from fastapi.testclient import TestClient
 
-from ragent.bootstrap.app import _NO_USER_ID_PATHS, _x_user_id_middleware
+from ragent.bootstrap.app import _PUBLIC_PATHS, _x_user_id_middleware
 
 
 def _b64url(payload: bytes) -> str:
@@ -83,7 +83,7 @@ def test_protected_path_requires_user_id() -> None:
 
 def test_no_user_id_paths_includes_docs_and_probes() -> None:
     expected = {"/livez", "/readyz", "/metrics", "/docs", "/redoc", "/openapi.json"}
-    assert expected <= _NO_USER_ID_PATHS
+    assert expected <= _PUBLIC_PATHS
 
 
 # --- T8.2 JWT path (auth_disabled=false, trust_header=false) ---

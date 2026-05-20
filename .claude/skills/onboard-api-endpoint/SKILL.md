@@ -28,10 +28,10 @@ Read `docs/00_rule.md §API Endpoint Naming & Versioning` and
 
   app.include_router(create_<resource>_router(...))  # ← wired here
 
-[ Auth middleware — bootstrap/app.py::_NO_USER_ID_PATHS ]
+[ Auth middleware — bootstrap/app.py::_PUBLIC_PATHS ]
 
   # If the endpoint must be reachable WITHOUT X-User-Id (health, metrics),
-  # add its exact path to _NO_USER_ID_PATHS. Business endpoints omit this.
+  # add its exact path to _PUBLIC_PATHS. Business endpoints omit this.
 
 [ Test contract ]
 
@@ -79,7 +79,7 @@ Rules from `docs/00_rule.md §API Endpoint Naming & Versioning`:
   - `DELETE /<resource>/v1/{id}` — delete (returns 204)
   - `POST /<resource>/v1/{id}/<action>` — item-scoped action (returns 200/202)
 
-If the endpoint is infrastructure-style (health probe, internal ping), it goes in `health.py` or a dedicated infra router with **no version prefix** and must be added to `_NO_USER_ID_PATHS`.
+If the endpoint is infrastructure-style (health probe, internal ping), it goes in `health.py` or a dedicated infra router with **no version prefix** and must be added to `_PUBLIC_PATHS`.
 
 ---
 
@@ -212,7 +212,7 @@ Document the deprecation timeline for v1 in `docs/00_spec.md` and a
 
 If the new endpoint must be reachable **without** `X-User-Id` (a health
 probe, a metrics scrape, an unauthenticated callback), add its path to
-`_NO_USER_ID_PATHS` in `src/ragent/bootstrap/app.py` and to the
+`_PUBLIC_PATHS` in `src/ragent/bootstrap/app.py` and to the
 `_SKIP_PATHS` list in `src/ragent/middleware/logging.py`. Business
 endpoints (any path under `/<resource>/v<N>`) must NOT be in this list.
 
@@ -231,6 +231,6 @@ endpoints (any path under `/<resource>/v<N>`) must NOT be in this list.
 - [ ] For new resource: `create_<resource>_router()` wired in `bootstrap/app.py`
 - [ ] `tests/unit/test_api_versioning.py` still passes after wiring
 - [ ] For v2: old version still mounted; deprecation timeline in spec; decommission task in plan
-- [ ] Infra bypass: only added to `_NO_USER_ID_PATHS` if genuinely infra (not a business endpoint)
+- [ ] Infra bypass: only added to `_PUBLIC_PATHS` if genuinely infra (not a business endpoint)
 - [ ] `make check` green (format + lint + full test suite)
 - [ ] `[BEHAVIORAL]` commit; no structural changes mixed in

@@ -287,7 +287,7 @@ def _http_metric_fns() -> list:
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Register HTTP metrics + expose `/metrics` on `app`.
 
-    Auth bypass: `/metrics` is in `_NO_USER_ID_PATHS` (bootstrap/app.py), so
+    Auth bypass: `/metrics` is in `_PUBLIC_PATHS` (bootstrap/app.py), so
     requests reach the instrumentator without an `X-User-Id` header.
     """
     inst = Instrumentator(
