@@ -1,8 +1,8 @@
-"""T8.1a Red — Armasec-verified JWT contract (§3.5 rewritten 2026-05-20).
+"""T8.5a — joserfc-verified JWT contract (§3.5 rewritten 2026-05-20).
 
-`verify_jwt(token, *, claim_user_id, token_manager)` is the verification seam
-(supersedes the decode-only `decode_jwt_payload` from T8.2). Every failure path
-returns the spec'd error code through ``JwtAuthError(error_code, http_status=401)``.
+`verify_jwt(token, *, claim_user_id, token_manager)` is the verification seam.
+Every failure path returns the spec'd error code through
+``JwtAuthError(error_code, http_status=401)``.
 """
 
 from __future__ import annotations
@@ -16,27 +16,27 @@ from ragent.auth.jwt import JwtAuthError, verify_jwt
 from ragent.errors.codes import HttpErrorCode
 
 
-def test_verify_jwt_happy_path_default_claim(armasec_token_manager, make_token) -> None:
+def test_verify_jwt_happy_path_default_claim(oidc_token_manager, make_token) -> None:
     token = make_token(preferred_username="alice")
     user_id = verify_jwt(
         token,
         claim_user_id="preferred_username",
-        token_manager=armasec_token_manager,
+        token_manager=oidc_token_manager,
     )
     assert user_id == "alice"
 
 
-def test_verify_jwt_custom_claim_override(armasec_token_manager, make_token) -> None:
+def test_verify_jwt_custom_claim_override(oidc_token_manager, make_token) -> None:
     token = make_token(email="alice@example.com")
     user_id = verify_jwt(
         token,
         claim_user_id="email",
-        token_manager=armasec_token_manager,
+        token_manager=oidc_token_manager,
     )
     assert user_id == "alice@example.com"
 
 
-def test_verify_jwt_bad_signature(armasec_token_manager, make_token) -> None:
+def test_verify_jwt_bad_signature(oidc_token_manager, make_token) -> None:
     token = make_token(preferred_username="alice")
     # Replace the signature segment with a same-length string of `A`s. A single-
     # byte flip can land in the trailing base64url padding bits of an RSA-256
@@ -48,7 +48,7 @@ def test_verify_jwt_bad_signature(armasec_token_manager, make_token) -> None:
         verify_jwt(
             tampered,
             claim_user_id="preferred_username",
-            token_manager=armasec_token_manager,
+            token_manager=oidc_token_manager,
         )
     assert exc.value.error_code == HttpErrorCode.AUTH_TOKEN_INVALID
 
@@ -89,7 +89,7 @@ _FAILURE_CASES: list[tuple[str, Callable[..., dict], HttpErrorCode]] = [
     ids=[label for (label, _factory, _code) in _FAILURE_CASES],
 )
 def test_verify_jwt_failure_modes(
-    armasec_token_manager,
+    oidc_token_manager,
     make_token,
     kwargs_factory: Callable[..., dict],
     expected: HttpErrorCode,
@@ -99,7 +99,7 @@ def test_verify_jwt_failure_modes(
         verify_jwt(
             token,
             claim_user_id="preferred_username",
-            token_manager=armasec_token_manager,
+            token_manager=oidc_token_manager,
         )
     assert exc.value.error_code == expected
 
@@ -109,17 +109,17 @@ def test_verify_jwt_failure_modes(
     ["", "not.a.real.token"],
     ids=["empty_token", "malformed_token"],
 )
-def test_verify_jwt_rejects_malformed_input(armasec_token_manager, raw_token: str) -> None:
+def test_verify_jwt_rejects_malformed_input(oidc_token_manager, raw_token: str) -> None:
     with pytest.raises(JwtAuthError) as exc:
         verify_jwt(
             raw_token,
             claim_user_id="preferred_username",
-            token_manager=armasec_token_manager,
+            token_manager=oidc_token_manager,
         )
     assert exc.value.error_code == HttpErrorCode.AUTH_TOKEN_INVALID
 
 
 def test_jwt_auth_error_default_http_status() -> None:
-    """All Armasec auth failures map to 401 (§4.1.2)."""
+    """All JWT auth failures map to 401 (§4.1.2)."""
     err = JwtAuthError(error_code=HttpErrorCode.AUTH_TOKEN_INVALID)
     assert err.http_status == 401

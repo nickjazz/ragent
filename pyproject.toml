@@ -5,7 +5,6 @@ description = "Distributed RAG Agent System (Phase 1 skeleton)"
 requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.18.4",
-    "armasec>=3.0",
     "elasticsearch-haystack>=4.0,<7",
     "fastapi>=0.115.0",
     "haystack-ai>=2.7,<3",
@@ -33,6 +32,7 @@ dependencies = [
     "pymupdf4llm>=0.0.17",
     "fastmcp>=2.0",
     "pyyaml>=6.0",
+    "joserfc>=1.6.4",
 ]
 
 [project.optional-dependencies]
@@ -55,9 +55,6 @@ packages = ["src/ragent"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
-
-[tool.uv]
-override-dependencies = ["pytest>=8"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]

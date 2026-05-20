@@ -158,7 +158,7 @@ def _x_user_id_middleware(
       * ``auth_disabled=True`` (P1 default) OR ``trust_header=True`` (P2 dev override):
         require ``<user_id_header>`` non-empty; 422 ``MISSING_USER_ID`` otherwise.
       * ``auth_disabled=False`` AND ``trust_header=False`` (P2 prod): read
-        ``<jwt_header>``, verify via Armasec's ``TokenManager``, extract
+        ``<jwt_header>``, verify via joserfc against the OIDC JWKS, extract
         ``<jwt_claim>``, and inject the result into ``<user_id_header>`` on
         the request scope so downstream routers (whose ``Header(alias=...)``
         is bound to the canonical name) observe it transparently. Requires

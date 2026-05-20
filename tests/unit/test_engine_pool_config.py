@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture()
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # T8.2a — disable inbound auth so build_container doesn't require ARMASEC_*
+    # T8.5a — disable inbound auth so build_container doesn't require OIDC_*
     monkeypatch.setenv("RAGENT_AUTH_DISABLED", "true")
     monkeypatch.setenv("MARIADB_DSN", "mysql+aiomysql://u:p@h:3306/db")
     monkeypatch.setenv("AI_API_AUTH_URL", "http://auth.example/token")

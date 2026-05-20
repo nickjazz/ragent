@@ -36,7 +36,7 @@ def test_build_probes_uses_container_chunks_index_name() -> None:
 def _composition_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Minimum env for `build_container()` to traverse past the env-validation
     front-matter and reach the wiring sites under test."""
-    # T8.2a — Armasec TokenManager is constructed only when inbound auth is on;
+    # T8.5a — the JWT verifier is constructed only when inbound auth is on;
     # this test exercises chunks-index threading, not auth, so disable it.
     monkeypatch.setenv("RAGENT_AUTH_DISABLED", "true")
     monkeypatch.setenv("MARIADB_DSN", "mysql+aiomysql://u:p@h:3306/db")
