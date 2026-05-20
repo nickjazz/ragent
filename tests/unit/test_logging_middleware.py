@@ -132,9 +132,7 @@ def test_contextvars_cleared_between_requests():
     assert ctx.get("request_id") != "first"
 
 
-def test_jwt_mode_api_request_log_carries_resolved_user_id(
-    oidc_token_manager, make_token
-):
+def test_jwt_mode_api_request_log_carries_resolved_user_id(oidc_token_manager, make_token):
     """JWT-authenticated requests emit `api.request` with the verified user_id.
 
     The outer ``RequestLoggingMiddleware`` runs before the inner

@@ -193,9 +193,7 @@ def _x_user_id_middleware(
         """
         encoded = value.encode("latin-1")
         headers: list[tuple[bytes, bytes]] = [
-            (name, val)
-            for (name, val) in request.scope["headers"]
-            if name != user_id_header_lower
+            (name, val) for (name, val) in request.scope["headers"] if name != user_id_header_lower
         ]
         headers.append((user_id_header_lower, encoded))
         request.scope["headers"] = headers
