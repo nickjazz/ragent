@@ -33,6 +33,55 @@ if _PREFIX:
 # tests/unit/test_worker_decoration_invariant.py.
 import ragent.workers.ingest  # noqa: E402, F401
 
+# T8.1a — fake OIDC fixtures (rs256_*, mock_openid_server, build_rs256_token)
+# come from Armasec's pytest extension, auto-loaded via its `pytest_armasec`
+# entry point. respx-based — no real network. Pre-generated RS256 keypair
+# avoids per-test RSA keygen.
+
+
+@pytest.fixture
+def armasec_token_manager(rs256_domain, rs256_domain_config, mock_openid_server):
+    """A verifying ``TokenManager`` wired against the in-process mock OIDC server.
+
+    Constructed inside ``with mock_openid_server():`` so ``OpenidConfigLoader``
+    lazy-fetches the OIDC config + JWKS through respx-mocked routes. The fixture
+    yields the manager AFTER exiting the mock context: any subsequent JWKS
+    refetch attempt would hit real network and fail, which pins the §3.5 cache-
+    reuse contract (``extract_token_payload`` must reuse the cached JWKS).
+    """
+    from armasec.openid_config_loader import OpenidConfigLoader
+    from armasec.token_decoder import TokenDecoder
+    from armasec.token_manager import TokenManager
+
+    with mock_openid_server():
+        loader = OpenidConfigLoader(rs256_domain, use_https=True)
+        _ = loader.config  # force lazy fetch while mock active
+        decoder = TokenDecoder(loader.jwks)  # caches JWKS on the decoder
+        manager = TokenManager(
+            loader.config,
+            decoder,
+            audience=rs256_domain_config.audience,
+        )
+    yield manager
+
+
+@pytest.fixture
+def make_token(build_rs256_token, rs256_domain_config):
+    """Sign a JWT with the fake OIDC RSA key, defaulting ``aud`` to the test audience.
+
+    ``build_rs256_token`` (from armasec.pytest_extension) sets ``iss`` and ``sub``
+    but no ``aud`` — ``TokenManager(audience=...)`` rejects tokens without a
+    matching ``aud``, so we inject it. Any keyword that maps to a JWT claim
+    (``aud``, ``iss``, ``exp``, ``preferred_username``, ``email``, …) is forwarded
+    as a claim override.
+    """
+
+    def _make(**claim_overrides: Any) -> str:
+        overrides = {"aud": rs256_domain_config.audience, **claim_overrides}
+        return build_rs256_token(claim_overrides=overrides)
+
+    return _make
+
 
 def run_in_threadpool(fn: Callable[[], Any]) -> Any:
     """Run a sync callable inside ``anyio.to_thread.run_sync``.
