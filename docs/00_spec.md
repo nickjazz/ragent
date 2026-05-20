@@ -408,15 +408,17 @@ Two distinct concerns, kept architecturally separate from retrieval:
 
 | Concern | Question answered | Mechanism | P1 | Future phase |
 |---|---|---|---|---|
-| **Authentication** | Who is the caller? | JWT verify (`exp` expiry check) → `user_id = preferred_username` claim | OFF — `X-User-Id` header trusted, validated non-empty | JWT validated via FastAPI dependency; `RAGENT_TRUST_X_USER_ID_HEADER=true` falls back to header (dev/integration override) |
+| **Authentication** | Who is the caller? | JWT verified by **joserfc** against OIDC `OIDC_DOMAIN` JWKS (signature + `iss` + `aud` + `exp`) → `user_id = <RAGENT_JWT_CLAIM_USER_ID>` claim | OFF — `<RAGENT_USER_ID_HEADER>` trusted, validated non-empty | FastAPI middleware verifies on every protected endpoint; `RAGENT_TRUST_X_USER_ID_HEADER=true` falls back to header (dev/integration override) |
 | **Permission** | Can this caller see this document? | Permission Layer service that calls **OpenFGA** | OPEN — no checks, all docs visible | `PermissionClient.batch_check(user_id, document_ids)` returns the allowed subset; gated per-surface by `RAGENT_PERMISSION_INGEST_ENABLED` / `RAGENT_PERMISSION_CHAT_ENABLED` (both default `false` even in P2) |
 
 **Design principle:** ES (`chunks_v1`) carries **no auth fields** in any phase — retrieval is permission-blind. The Permission Layer post-filters by `document_id`, keeping ES schema stable across phases.
 
-**P1 (current phase):** No JWT — `X-User-Id` trusted, written to `documents.create_user` (audit only, not authz). No permission gating — all chunks visible. `auth_mode=open` in audit logs. **TokenManager (J1→J2) is active** for Embedding/LLM/Rerank API auth (unrelated to user auth).
+**P1 (current phase):** No JWT — `<RAGENT_USER_ID_HEADER>` trusted, written to `documents.create_user` (audit only, not authz). No permission gating — all chunks visible. `auth_mode=open` in audit logs. **TokenManager (J1→J2) is active** for Embedding/LLM/Rerank API auth (unrelated to user auth).
 
 **P2 additions:**
-- **JWT:** `{"exp": <unix-epoch>, "preferred_username": "<user_id>"}`. Absent/expired/invalid → 401 with `AUTH_CLAIM_MISSING` / `AUTH_TOKEN_EXPIRED` / `AUTH_TOKEN_INVALID`. `RAGENT_TRUST_X_USER_ID_HEADER=true` (non-prod only) bypasses JWT.
+- **JWT:** standard OIDC token. Carried in the `<RAGENT_JWT_HEADER>` request header as a **raw token, no `Bearer ` prefix** — clients send a raw JWT. **joserfc** (`joserfc` package — the actively-maintained successor to `authlib.jose`) verifies: signature against the JWKS published at `{scheme}://<OIDC_DOMAIN>/.well-known/jwks.json` (scheme = `https` unless `OIDC_USE_HTTPS=false`), `iss == OIDC discovery's "issuer"` (compared with trailing slashes stripped to absorb pydantic/IdP variance), `aud == <OIDC_AUDIENCE>`, `exp` ≥ now, `nbf` ≤ now. OIDC discovery + JWKS are fetched at composition (`build_container()`) via an injected `httpx.Client` (the same client controls `verify=...` for TLS verification — see `OIDC_VERIFY_SSL`), so a misconfigured `OIDC_DOMAIN` aborts startup rather than 500-ing the first protected request; the fetched JWKS is then cached in-process for the verifier's lifetime. Cache reuse is a contract requirement pinned by T8.1a tests. Once verified, `<RAGENT_JWT_CLAIM_USER_ID>` (default `preferred_username`) is extracted as the downstream `user_id`. Failure mapping: absent header / malformed token / bad signature / wrong `iss` / wrong `aud` / non-numeric `exp` / `nbf` in future / unknown `kid` / unsupported `alg` / any other verification error → 401 `AUTH_TOKEN_INVALID`; expired → 401 `AUTH_TOKEN_EXPIRED`; missing required claim → 401 `AUTH_CLAIM_MISSING`. `RAGENT_TRUST_X_USER_ID_HEADER=true` (non-prod only) bypasses JWT verification and reads `<RAGENT_USER_ID_HEADER>` directly.
+- **Public paths (auth short-circuit):** the JWT middleware does not read the header or call the verifier for `/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs`, `/docs/oauth2-redirect`, `/redoc`, `/openapi.json`. The set is a strict superset of `middleware/logging.py::_SKIP_PATHS` (which covers only the four operational health/metrics paths) — extended here with the FastAPI auto-docs surface. These endpoints are declared `P1 Auth = none` in §4.1 and remain auth-free in P2. The outbound MCP HUB (`src/ragent/mcp_hub/server.py`) runs as a separate process and is not covered by this middleware.
+- **Header injection:** the extracted `user_id` is written into `<RAGENT_USER_ID_HEADER>` on the request scope so downstream routers (whose `Header(alias=...)` is bound to the canonical name) see the same value irrespective of the inbound auth mode.
 - **PermissionClient (OpenFGA):** `batch_check(user_id, document_ids) → set[str]` post-filters retrieved chunks. Gated per-surface: `RAGENT_PERMISSION_INGEST_ENABLED` / `RAGENT_PERMISSION_CHAT_ENABLED` (both default `false`). Chat pipeline: ES retrieval → `batch_check` → `SourceHydrator → LLM`. May over-fetch K' = K × factor so K results remain after filtering.
 - OpenFGA is fully encapsulated behind `PermissionClient`; never reaches the retrieval/ES path.
 
@@ -494,7 +496,7 @@ Exposes ragent's retrieval pipeline as a **Model Context Protocol** tool so exte
   {"jsonrpc": "2.0", "id": <same-as-request>, "error": {"code": <int>, "message": "<text>", "data": {...}?}}
   ```
 - **Notification** (no response): omit `id`. P2.5 supports `notifications/initialized` only.
-- **Auth:** `Authorization: Bearer <jwt>` (P2.2 onwards) or `X-User-Id` fallback (`RAGENT_TRUST_X_USER_ID_HEADER=true`, dev only). Auth applies before JSON-RPC dispatch; failure returns HTTP 401 with `application/problem+json` (NOT a JSON-RPC error — auth is a transport-layer concern).
+- **Auth:** `<RAGENT_JWT_HEADER>: <raw-jwt>` (P2.2 onwards, joserfc-verified per §3.5) or `<RAGENT_USER_ID_HEADER>` fallback (`RAGENT_TRUST_X_USER_ID_HEADER=true`, dev only). Auth applies before JSON-RPC dispatch; failure returns HTTP 401 with `application/problem+json` (NOT a JSON-RPC error — auth is a transport-layer concern).
 - **Stateless mode:** P2.5 supports stateless requests only (no `Mcp-Session-Id` header). Stateful sessions deferred to P3 — gate condition: an MCP client requires server-initiated SSE or long-running tool resumption.
 - **Request body cap:** `MCP_REQUEST_MAX_BYTES` (default 256 KiB); over-limit returns HTTP 413 `application/problem+json` (transport-layer, not JSON-RPC error).
 - **Batch requests:** NOT implemented (P3 if needed). Array body → `-32600 Invalid Request`.
@@ -572,7 +574,7 @@ App-level errors (-32000..-32099) carry `data.error_code` matching the existing 
 - **S63 mcp tools/call missing query** — Given `{method:"tools/call", params:{name:"retrieve",arguments:{}}}` (no `query`), Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_INPUT_INVALID`.
 - **S64 mcp parse error** — Given a request body that is not valid JSON, Then HTTP `200` with JSON-RPC body `{jsonrpc:"2.0",id:null,error:{code:-32700,...}}` (per JSON-RPC 2.0 §5: `id` is `null` when parse failed).
 - **S65 mcp notifications/initialized** — Given `{jsonrpc:"2.0", method:"notifications/initialized"}` (no `id`), Then HTTP `204` with empty body; no JSON-RPC response object emitted.
-- **S66 mcp auth required** — Given `RAGENT_AUTH_DISABLED=false` and no `Authorization` header, Then HTTP `401` with `application/problem+json` (NOT a JSON-RPC error envelope) and `error_code=AUTH_CLAIM_MISSING`.
+- **S66 mcp auth required** — Given `RAGENT_AUTH_DISABLED=false` and `RAGENT_TRUST_X_USER_ID_HEADER=false` and no `<RAGENT_JWT_HEADER>` header, Then HTTP `401` with `application/problem+json` (NOT a JSON-RPC error envelope) and `error_code=AUTH_TOKEN_INVALID`.
 - **S67 mcp tool retrieval failure** — Given the retrieval pipeline raises, When `tools/call retrieve` is invoked, Then JSON-RPC response is `{error:{code:-32001, message:..., data:{error_code:"MCP_TOOL_EXECUTION_FAILED"}}}` — NOT `isError:true` inside a successful result. (App-error vs tool-soft-error distinction: pipeline crashes are JSON-RPC errors; an empty-result-set retrieval is `isError:false` with empty `chunks`.)
 
 ### 3.9 MCP Hub Microservice
@@ -758,7 +760,7 @@ Load failures appear simultaneously as structured `mcp_hub.load_failure` log eve
 | POST   | `/chat/v1`                 | `X-User-Id` | §3.4.1 schema (`messages` required; rest default) | `200 application/json` per §3.4.2 |
 | POST   | `/chat/v1/stream`          | `X-User-Id` | §3.4.1 schema | `text/event-stream` per §3.4.3 (`data: {type:delta\|done\|error}`) |
 | POST   | `/feedback/v1`             | `X-User-Id` | §3.4.5 schema | `204` on success; `401`/`410`/`422` `application/problem+json` per §3.4.5. |
-| POST   | `/mcp/v1`               | `X-User-Id` (P1) / `Authorization: Bearer` (P2) | JSON-RPC 2.0 envelope per §3.8 | `200` with JSON-RPC response envelope; `204` for `notifications/*`. Auth failure (401) returns `application/problem+json` per §3.8.1 (transport-layer). |
+| POST   | `/mcp/v1`               | `<RAGENT_USER_ID_HEADER>` (P1) / `<RAGENT_JWT_HEADER>` (P2) | JSON-RPC 2.0 envelope per §3.8 | `200` with JSON-RPC response envelope; `204` for `notifications/*`. Auth failure (401) returns `application/problem+json` per §3.8.1 (transport-layer). |
 | GET    | `/livez`                | none        | — | `200 {"status":"ok"}` — process up; no dependency probes |
 | GET    | `/readyz`               | none        | — | `200` if all dep probes pass; else `503 application/problem+json` listing failed deps. Probes: **MariaDB** (`SELECT 1`), **ES** (`GET /_cluster/health` + `analysis-icu` plugin loaded + every `resources/es/*.json` index exists; B26, I5), **Redis broker & rate-limiter** (`PING` against active topology per `REDIS_MODE`; B27), **MinIO** (`ListBuckets`). Each probe ≤ 2 s. |
 | GET    | `/metrics`              | none        | — | `200 text/plain; version=0.0.4` — Prometheus exposition (counters/histograms in §3.7) |
@@ -823,9 +825,9 @@ Inventory of every `error_code` emitted by P1 (API responses + log events). New 
 | `PIPELINE_TIMEOUT`                   | log `event=ingest.failed reason=pipeline_timeout` | Pipeline body exceeds `PIPELINE_TIMEOUT_SECONDS` (B18, S34) | Worker T3.2j |
 | `ES_BBQ_UNSUPPORTED`                 | log `event=es.bbq_unsupported` | Cluster rejected `bbq_hnsw`; bootstrap retried with standard HNSW (B26) | Bootstrap |
 | `RECONCILER_TICK_MISSING`            | Prometheus alert | `reconciler_tick_total` flat > 10 min (R8, S30) | Alerting rule T7.1a |
-| `AUTH_TOKEN_EXPIRED`                 | 401             | JWT `exp` claim is in the past (T8.1) | Auth dependency T8.2 |
-| `AUTH_CLAIM_MISSING`                 | 401             | `exp` or `preferred_username` claim absent or empty (T8.1) | Auth dependency T8.2 |
-| `AUTH_TOKEN_INVALID`                 | 401             | JWT signature invalid, or `exp` non-numeric/non-integer (T8.1) | Auth dependency T8.2 |
+| `AUTH_TOKEN_EXPIRED`                 | 401             | JWT `exp` claim is in the past (raised through joserfc's verification path, T8.1a) | Auth middleware T8.2a |
+| `AUTH_CLAIM_MISSING`                 | 401             | `<RAGENT_JWT_CLAIM_USER_ID>` claim absent or empty after JWKS verification (T8.1a) | Auth middleware T8.2a |
+| `AUTH_TOKEN_INVALID`                 | 401             | JWT header absent, token malformed, signature mismatch, wrong `iss`, wrong `aud`, or any other JWKS verification failure outside expiry/missing-claim (T8.1a) | Auth middleware T8.2a |
 
 ### 4.2 Supported Formats
 
@@ -884,7 +886,14 @@ All 3rd-party calls: timeout/retry/backoff per `00_rule.md`; circuit-breaker on 
 |---|---|---|
 | `RAGENT_ENV`                          | (required)       | `dev` \| `staging` \| `prod`. P1 startup guard refuses non-`dev`. |
 | `RAGENT_AUTH_DISABLED`                | `false`          | Must be `true` in P1; removed in P2 to enable JWT (§3.5). |
-| `RAGENT_TRUST_X_USER_ID_HEADER`       | `false`          | **P2 only.** When `true` and `RAGENT_ENV != prod`, JWT dependency is bypassed and the `X-User-Id` header is trusted as `preferred_username` (§3.5). Strictly ignored in `prod`. |
+| `RAGENT_TRUST_X_USER_ID_HEADER`       | `false`          | **P2 only.** When `true` and `RAGENT_ENV != prod`, JWT middleware is bypassed and `<RAGENT_USER_ID_HEADER>` is trusted as the user_id (§3.5). Strictly ignored in `prod`. |
+| `RAGENT_USER_ID_HEADER`               | `X-User-Id`      | Canonical header name carrying the downstream `user_id`. In trust mode this is the inbound header read directly; in JWT mode the extracted claim is injected into this header on the request scope. Routers consume the value via `Header(alias=...)` — currently hard-coded to the default, so changing this env var requires updating each router's alias. `RequestLoggingMiddleware` is header-name-agnostic: the auth middleware writes the resolved `user_id` into `request.scope["ragent.user_id"]` in both modes, and the logging layer reads from there, so customising this env var alone does not break `api.request` logging. |
+| `RAGENT_JWT_HEADER`                   | `X-Auth-Token`   | **P2 only.** Inbound header carrying the raw JWT (no `Bearer ` prefix). Read only when `RAGENT_AUTH_DISABLED=false` AND `RAGENT_TRUST_X_USER_ID_HEADER=false`. |
+| `RAGENT_JWT_CLAIM_USER_ID`            | `preferred_username` | **P2 only.** JWT payload claim path used as the downstream `user_id`. Verified value is non-empty string; missing/empty → 401 `AUTH_CLAIM_MISSING`. |
+| `OIDC_DOMAIN`                         | (required when `RAGENT_AUTH_DISABLED=false`) | **P2 only.** OIDC issuer domain. JWKS is fetched from `{scheme}://<OIDC_DOMAIN>/.well-known/jwks.json` (resolved via the OIDC discovery `jwks_uri`); the verifier validates `iss == discovery["issuer"]`. |
+| `OIDC_AUDIENCE`                       | (required when `RAGENT_AUTH_DISABLED=false`) | **P2 only.** Expected `aud` claim. Tokens with mismatched `aud` → 401 `AUTH_TOKEN_INVALID`. |
+| `OIDC_USE_HTTPS`                      | `true`           | **P2 only.** Scheme toggle for the OIDC discovery + JWKS URL. Set `false` ONLY for in-cluster discovery or local fixture; production deployments MUST keep `true`. |
+| `OIDC_VERIFY_SSL`                     | `true`           | **P2 only.** Verify the IdP's TLS certificate during OIDC discovery + JWKS fetch. Set `false` ONLY for dev/staging against self-signed Keycloak. For production with a private CA, leave `true` and mount the CA via `SSL_CERT_FILE` instead. |
 | `RAGENT_PERMISSION_INGEST_ENABLED`    | `false`          | **P2 only.** When `true`, `GET/DELETE /ingest/v1/{id}` and `GET /ingest/v1` enforce `PermissionClient` (§3.5). Default off — gate is wired but inert until OpenFGA tuples exist. |
 | `RAGENT_PERMISSION_CHAT_ENABLED`      | `false`          | **P2 only.** When `true`, chat retrieval applies the `PermissionClient` post-filter (§3.5). Default off. |
 | `RAGENT_HOST`                         | `127.0.0.1`      | API bind address. P1 OPEN guard (§1) refuses any value other than `127.0.0.1` while `RAGENT_ENV=dev` & `RAGENT_AUTH_DISABLED=true`. |

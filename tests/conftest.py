@@ -23,6 +23,16 @@ os.environ.setdefault("RAGENT_ES_RESOURCES_DIR", str(Path(__file__).parent / "re
 if _PREFIX:
     os.environ.setdefault("RYUK_CONTAINER_IMAGE", tc_image("testcontainers/ryuk:0.8.1"))
 
+# T8.5a — Self-contained fake OIDC fixtures (no external pytest plugin). One
+# RSA-2048 keypair is generated at module load (session-scoped via module-level
+# binding); httpx.MockTransport intercepts the OIDC discovery + JWKS fetch
+# performed inside ``build_token_manager``, so no real network is involved and
+# we don't need respx as a dep.
+import httpx as _httpx
+from joserfc import jwt as _joserfc_jwt
+from joserfc.jwk import KeySet as _KeySet
+from joserfc.jwk import RSAKey as _RSAKey
+
 # Pre-import ragent.workers.ingest so its @broker.task decorators bind to
 # the real broker before any test can monkeypatch
 # ragent.bootstrap.broker.broker. Without this, a test that patches that
@@ -32,6 +42,75 @@ if _PREFIX:
 # every later test in the run. Invariant pinned by
 # tests/unit/test_worker_decoration_invariant.py.
 import ragent.workers.ingest  # noqa: E402, F401
+
+_OIDC_DOMAIN = "ragent-test.example"
+_OIDC_ISSUER = f"https://{_OIDC_DOMAIN}"
+_OIDC_AUDIENCE = "https://this.api"
+_JWKS_URI = f"{_OIDC_ISSUER}/.well-known/jwks.json"
+_OIDC_DISCOVERY_URL = f"{_OIDC_ISSUER}/.well-known/openid-configuration"
+_OIDC_DISCOVERY = {
+    "issuer": _OIDC_ISSUER,
+    "jwks_uri": _JWKS_URI,
+}
+_RSA_KEY = _RSAKey.generate_key(2048, parameters={"kid": "test-kid"})
+_JWKS_PAYLOAD = _KeySet([_RSA_KEY]).as_dict()
+
+
+def _fake_oidc_handler(request: _httpx.Request) -> _httpx.Response:
+    url = str(request.url)
+    if url == _OIDC_DISCOVERY_URL:
+        return _httpx.Response(200, json=_OIDC_DISCOVERY)
+    if url == _JWKS_URI:
+        return _httpx.Response(200, json=_JWKS_PAYLOAD)
+    return _httpx.Response(404)
+
+
+@pytest.fixture
+def oidc_token_manager():
+    """Build ``VerifyingTokenManager`` against an in-process fake OIDC server.
+
+    The MockTransport intercepts OIDC discovery + JWKS fetch performed by
+    ``build_token_manager``; subsequent ``verify_jwt`` calls do no HTTP
+    (JWKS is cached on the manager). The test passes its own ``httpx.Client``
+    via the ``client`` seam, then closes it — production code never sees the
+    mock.
+    """
+    from ragent.auth.jwt import build_token_manager
+
+    transport = _httpx.MockTransport(_fake_oidc_handler)
+    with _httpx.Client(transport=transport) as client:
+        return build_token_manager(
+            domain=_OIDC_DOMAIN,
+            audience=_OIDC_AUDIENCE,
+            use_https=True,
+            client=client,
+        )
+
+
+@pytest.fixture
+def make_token():
+    """Sign a JWT with the fake OIDC RSA key, defaulting ``iss`` / ``aud`` /
+    ``exp`` / ``iat`` to values that pass the verifier. Any kwarg overrides
+    or adds a claim.
+    """
+
+    def _make(**claim_overrides: Any) -> str:
+        now = int(time.time())
+        claims = {
+            "iss": _OIDC_ISSUER,
+            "aud": _OIDC_AUDIENCE,
+            "sub": "test-sub",
+            "iat": now,
+            "exp": now + 3600,
+            **claim_overrides,
+        }
+        return _joserfc_jwt.encode(
+            {"alg": "RS256", "kid": _RSA_KEY.kid},
+            claims,
+            _RSA_KEY,
+        )
+
+    return _make
 
 
 def run_in_threadpool(fn: Callable[[], Any]) -> Any:

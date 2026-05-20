@@ -4,7 +4,8 @@ requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
     "python_full_version == '3.13.*'",
-    "python_full_version < '3.13'",
+    "python_full_version == '3.12.*'",
+    "python_full_version < '3.12'",
 ]
 
 [[package]]
@@ -3122,6 +3123,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "haystack-ai" },
     { name = "httpx" },
+    { name = "joserfc" },
     { name = "jsonschema" },
     { name = "minio" },
     { name = "mistletoe" },
@@ -3176,6 +3178,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "haystack-ai", specifier = ">=2.7,<3" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "joserfc", specifier = ">=1.6.4" },
     { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "minio", specifier = ">=7.2.0" },
     { name = "mistletoe", specifier = ">=1.4,<2" },

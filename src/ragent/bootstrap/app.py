@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from starlette.middleware.cors import CORSMiddleware
 
+from ragent.auth.jwt import JwtAuthError, verify_jwt
 from ragent.bootstrap.guard import enforce
 from ragent.bootstrap.init_schema import init_schema
 from ragent.bootstrap.logging_config import configure_logging
@@ -22,7 +23,7 @@ from ragent.bootstrap.metrics import (
 from ragent.bootstrap.telemetry import setup_tracing
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
-from ragent.middleware.logging import RequestLoggingMiddleware
+from ragent.middleware.logging import SCOPE_USER_ID_KEY, RequestLoggingMiddleware
 from ragent.routers.admin_embedding import create_router as create_admin_embedding_router
 from ragent.routers.admin_ingest import create_router as create_upload_ingest_router
 from ragent.routers.chat import create_chat_router
@@ -31,6 +32,7 @@ from ragent.routers.health import create_health_router
 from ragent.routers.ingest import create_router as create_ingest_router
 from ragent.routers.mcp import create_mcp_router
 from ragent.routers.retrieve import create_retrieve_router
+from ragent.utility.env import bool_env, str_env
 from ragent.utility.env import list_env as _list_env
 
 logger = structlog.get_logger(__name__)
@@ -47,9 +49,21 @@ def _add_cors_middleware(app: FastAPI, origins: list[str]) -> None:
     )
 
 
-_NO_USER_ID_PATHS = frozenset(
-    {"/livez", "/readyz", "/startupz", "/metrics", "/docs", "/redoc", "/openapi.json"}
+_PUBLIC_PATHS = frozenset(
+    {
+        "/livez",
+        "/readyz",
+        "/startupz",
+        "/metrics",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+        "/openapi.json",
+    }
 )
+_DEFAULT_USER_ID_HEADER = "X-User-Id"
+_DEFAULT_JWT_HEADER = "X-Auth-Token"
+_DEFAULT_JWT_CLAIM = "preferred_username"
 
 # Producer-side task labels that MUST be registered before traffic. Journal
 # 2026-05-06 (B27): missing registration silently 500s on first dispatch.
@@ -128,20 +142,110 @@ def _register_unhandled_exception_handler(app: FastAPI) -> None:
         return problem(http_status, error_code, title)
 
 
-def _x_user_id_middleware(app: FastAPI) -> None:
+def _x_user_id_middleware(
+    app: FastAPI,
+    *,
+    user_id_header: str = _DEFAULT_USER_ID_HEADER,
+    jwt_header: str = _DEFAULT_JWT_HEADER,
+    jwt_claim: str = _DEFAULT_JWT_CLAIM,
+    trust_header: bool = True,
+    auth_disabled: bool = True,
+    token_manager: Any = None,
+) -> None:
+    """User-identity middleware (§3.5, rewritten 2026-05-20).
+
+    Branch matrix:
+      * ``auth_disabled=True`` (P1 default) OR ``trust_header=True`` (P2 dev override):
+        require ``<user_id_header>`` non-empty; 422 ``MISSING_USER_ID`` otherwise.
+      * ``auth_disabled=False`` AND ``trust_header=False`` (P2 prod): read
+        ``<jwt_header>``, verify via joserfc against the OIDC JWKS, extract
+        ``<jwt_claim>``, and inject the result into ``<user_id_header>`` on
+        the request scope so downstream routers (whose ``Header(alias=...)``
+        is bound to the canonical name) observe it transparently. Requires
+        ``token_manager`` to be set (constructed by ``build_container``).
+    """
+
+    user_id_header_lower = user_id_header.lower().encode("latin-1")
+    jwt_header_lower = jwt_header.lower()
+    trust_header_mode = auth_disabled or trust_header
+    if not trust_header_mode and token_manager is None:
+        raise RuntimeError(
+            "JWT auth mode requires a token_manager; "
+            "build_container() must construct one when "
+            "RAGENT_AUTH_DISABLED=false and RAGENT_TRUST_X_USER_ID_HEADER=false."
+        )
+
+    def _inject_header(request: Request, value: str) -> None:
+        """Make the resolved user_id visible to the downstream handler chain.
+
+        Writes two channels:
+
+        1. ``scope["headers"]`` — FastAPI's ``Header(alias=...)`` dependencies
+           construct their own Request inside the route dispatcher and read
+           from headers; the route layer must see the resolved value.
+        2. ``scope[SCOPE_USER_ID_KEY]`` — Starlette's ``Headers(scope=...)``
+           constructor **replaces** ``scope["headers"]`` with a fresh list per
+           Request instance, so each ``BaseHTTPMiddleware`` boundary captures
+           a different list reference. The outer ``RequestLoggingMiddleware``
+           therefore cannot reliably observe header mutations done in inner
+           middleware; the scope dict itself IS shared, so a dedicated dict
+           key is the propagation channel for the outer log.
+        """
+        encoded = value.encode("latin-1")
+        headers: list[tuple[bytes, bytes]] = [
+            (name, val) for (name, val) in request.scope["headers"] if name != user_id_header_lower
+        ]
+        headers.append((user_id_header_lower, encoded))
+        request.scope["headers"] = headers
+        request.scope[SCOPE_USER_ID_KEY] = value
+
     @app.middleware("http")
     async def require_user_id(request: Request, call_next: Any) -> Response:
-        if request.url.path in _NO_USER_ID_PATHS:
+        if request.url.path in _PUBLIC_PATHS:
             return await call_next(request)
-        if not request.headers.get("X-User-Id"):
+
+        if trust_header_mode:
+            inbound = request.headers.get(user_id_header)
+            if not inbound:
+                logger.warning(
+                    "api.user_id_missing",
+                    path=request.url.path,
+                    method=request.method,
+                    error_code=HttpErrorCode.MISSING_USER_ID,
+                    http_status=422,
+                )
+                return problem(
+                    422, HttpErrorCode.MISSING_USER_ID, f"{user_id_header} header is required"
+                )
+            # The outer RequestLoggingMiddleware reads the canonical
+            # ``X-User-Id`` only; a customised ``user_id_header`` is invisible
+            # to it at request entry. The scope-key write feeds the final
+            # ``api.request`` log (via ``_final_identity``); the contextvar
+            # bind feeds handler-time structlog emissions.
+            request.scope[SCOPE_USER_ID_KEY] = inbound
+            structlog.contextvars.bind_contextvars(user_id=inbound)
+            return await call_next(request)
+
+        token = request.headers.get(jwt_header_lower) or ""
+        try:
+            user_id = verify_jwt(token, claim_user_id=jwt_claim, token_manager=token_manager)
+        except JwtAuthError as exc:
             logger.warning(
-                "api.user_id_missing",
+                "api.jwt_invalid",
                 path=request.url.path,
                 method=request.method,
-                error_code=HttpErrorCode.MISSING_USER_ID,
-                http_status=422,
+                error_code=exc.error_code,
+                http_status=exc.http_status,
             )
-            return problem(422, HttpErrorCode.MISSING_USER_ID, "X-User-Id header is required")
+            return problem(exc.http_status, exc.error_code, "Authentication failed")
+
+        _inject_header(request, user_id)
+        # Same contextvar binding as the trust-header branch — RequestLogging
+        # Middleware reads X-User-Id from request.headers BEFORE call_next, so
+        # in JWT mode the user id is absent at the outer layer; binding here
+        # makes the JWT-derived id available to every subsequent log emission
+        # (handler-time logs + the outer api.request log via merge_contextvars).
+        structlog.contextvars.bind_contextvars(user_id=user_id)
         return await call_next(request)
 
 
@@ -312,7 +416,15 @@ def create_app() -> FastAPI:
 
     _register_unhandled_exception_handler(app)
 
-    _x_user_id_middleware(app)
+    _x_user_id_middleware(
+        app,
+        user_id_header=str_env("RAGENT_USER_ID_HEADER", _DEFAULT_USER_ID_HEADER),
+        jwt_header=str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER),
+        jwt_claim=str_env("RAGENT_JWT_CLAIM_USER_ID", _DEFAULT_JWT_CLAIM),
+        trust_header=bool_env("RAGENT_TRUST_X_USER_ID_HEADER", False),
+        auth_disabled=bool_env("RAGENT_AUTH_DISABLED", False),
+        token_manager=container.auth_token_manager,
+    )
     # CORSMiddleware is registered after _x_user_id_middleware so it runs
     # BEFORE the user-ID check (Starlette wraps in reverse order). This lets
     # CORS preflight OPTIONS requests short-circuit before hitting the 422 gate.

@@ -47,6 +47,11 @@ class Container:
     ingest_list_max_limit: int
     ingest_upload_max_bytes: int
     excerpt_max_chars: int
+    # T8.5a — joserfc-based JWT verifier (VerifyingTokenManager) for inbound
+    # JWT verification. ``None`` when ``RAGENT_AUTH_DISABLED=true`` or
+    # ``RAGENT_TRUST_X_USER_ID_HEADER=true``; the middleware uses the
+    # header-trust branch in those cases.
+    auth_token_manager: Any = None
 
 
 def build_container() -> Container:
@@ -298,6 +303,23 @@ def build_container() -> Container:
             timeout=_float_env("UNPROTECT_TIMEOUT_SECONDS", 30.0),
         )
 
+    # T8.5a — Build the joserfc-based JWKS verifier iff inbound JWT auth is on.
+    # OIDC discovery + JWKS are fetched HERE (boot-time) so a misconfigured
+    # OIDC_DOMAIN aborts startup rather than 500-ing the first request; JWKS
+    # is then cached for the manager's lifetime (§3.5 cache-reuse).
+    auth_token_manager: Any = None
+    if not _bool_env("RAGENT_AUTH_DISABLED", False) and not _bool_env(
+        "RAGENT_TRUST_X_USER_ID_HEADER", False
+    ):
+        from ragent.auth.jwt import build_token_manager
+
+        auth_token_manager = build_token_manager(
+            domain=_require("OIDC_DOMAIN"),
+            audience=_require("OIDC_AUDIENCE"),
+            use_https=_bool_env("OIDC_USE_HTTPS", True),
+            verify_ssl=_bool_env("OIDC_VERIFY_SSL", True),
+        )
+
     return Container(
         token_managers=(llm_tm, embedding_tm, rerank_tm),
         embedding_client=embedding_client,
@@ -327,6 +349,7 @@ def build_container() -> Container:
         ingest_list_max_limit=_int_env("INGEST_LIST_MAX_LIMIT", LIST_MAX_LIMIT_DEFAULT),
         ingest_upload_max_bytes=inline_max_bytes,
         excerpt_max_chars=excerpt_max_chars,
+        auth_token_manager=auth_token_manager,
     )
 
 

@@ -123,7 +123,7 @@ Commit discipline (CLAUDE.md "Tidy First"):
 ## Step 6 — Wire the auth bypass and exclusion list
 
 Anything served at `/metrics`, `/livez`, `/readyz`, `/startupz` must:
-1. Be in `_NO_USER_ID_PATHS` in `src/ragent/bootstrap/app.py` (auth middleware bypass).
+1. Be in `_PUBLIC_PATHS` in `src/ragent/bootstrap/app.py` (auth middleware bypass).
 2. Be in `_SKIP_PATHS` in `src/ragent/middleware/logging.py` (request log skip).
 3. Be in `_EXCLUDED_HANDLERS` in `src/ragent/bootstrap/metrics.py` (instrumentator doesn't track probe traffic as RPS).
 
