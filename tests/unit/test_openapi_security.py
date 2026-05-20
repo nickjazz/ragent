@@ -129,3 +129,41 @@ def test_security_list_is_not_shared_across_operations() -> None:
     op_a = schema["paths"]["/chat/v1"]["post"]
     op_b = schema["paths"]["/ingest/v1"]["post"]
     assert op_a["security"] is not op_b["security"]
+
+
+def test_fastapi_metadata_fields_are_preserved() -> None:
+    """If a future ``FastAPI(servers=..., openapi_tags=..., ...)`` is set on the
+    app, ``install_openapi`` must NOT silently drop those fields from the
+    generated schema (gemini-code-assist PR #92 review)."""
+    app = FastAPI(
+        title="ragent",
+        version="2.0",
+        description="rag service",
+        openapi_tags=[{"name": "chat", "description": "Chat endpoints"}],
+        servers=[{"url": "https://api.example.com", "description": "prod"}],
+        terms_of_service="https://example.com/tos",
+        contact={"name": "ops", "email": "ops@example.com"},
+        license_info={"name": "Apache 2.0"},
+    )
+
+    @app.post("/chat/v1", tags=["chat"])
+    async def _chat() -> dict:
+        return {}
+
+    install_openapi(
+        app,
+        auth_disabled=True,
+        trust_header=True,
+        user_id_header="X-User-Id",
+        jwt_header="X-Auth-Token",
+        public_paths=_PUBLIC_PATHS,
+    )
+    schema = app.openapi()
+    assert schema["info"]["title"] == "ragent"
+    assert schema["info"]["version"] == "2.0"
+    assert schema["info"]["description"] == "rag service"
+    assert schema["info"]["termsOfService"] == "https://example.com/tos"
+    assert schema["info"]["contact"] == {"name": "ops", "email": "ops@example.com"}
+    assert schema["info"]["license"] == {"name": "Apache 2.0"}
+    assert schema["tags"] == [{"name": "chat", "description": "Chat endpoints"}]
+    assert schema["servers"] == [{"url": "https://api.example.com", "description": "prod"}]

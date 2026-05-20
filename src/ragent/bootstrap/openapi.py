@@ -74,8 +74,14 @@ def install_openapi(
         schema = get_openapi(
             title=app.title,
             version=app.version,
+            openapi_version=app.openapi_version,
             description=app.description,
             routes=app.routes,
+            tags=app.openapi_tags,
+            servers=app.servers,
+            terms_of_service=app.terms_of_service,
+            contact=app.contact,
+            license_info=app.license_info,
         )
         components = schema.setdefault("components", {})
         schemes = components.setdefault("securitySchemes", {})
