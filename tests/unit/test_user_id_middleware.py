@@ -102,9 +102,7 @@ def test_jwt_mode_ignores_user_id_header_when_token_present() -> None:
     app = _build_app(trust_header=False, auth_disabled=False)
     token = _jwt({"exp": int(time.time()) + 60, "preferred_username": "alice"})
     with TestClient(app) as client:
-        resp = client.get(
-            "/protected", headers={"X-Auth-Token": token, "X-User-Id": "mallory"}
-        )
+        resp = client.get("/protected", headers={"X-Auth-Token": token, "X-User-Id": "mallory"})
         assert resp.status_code == 200
         assert resp.json()["user_id"] == "alice"
 
