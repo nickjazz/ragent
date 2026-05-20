@@ -227,6 +227,16 @@ _DEFAULT_MAX_CONNECTIONS = 100
 
 def _parse_system_spec(doc: dict[str, Any], source: Path) -> _SystemSpec:
     defaults = doc.get("defaults") or {}
+    raw_verify = defaults.get("verify_ssl", True)
+    # Strict bool check — `bool(...)` silently turns null/empty-string into
+    # False (TLS off!) and any non-empty string into True (e.g. "false" reads
+    # as True). Reject anything that isn't a real yaml boolean so an operator
+    # typo cannot flip TLS verification by accident.
+    if not isinstance(raw_verify, bool):
+        raise ValueError(
+            f"{source}: defaults.verify_ssl must be a boolean (true/false), "
+            f"got {raw_verify!r} ({type(raw_verify).__name__})"
+        )
     return _SystemSpec(
         name=str(doc.get("system") or source.stem),
         base_url=str(defaults.get("base_url") or ""),
@@ -234,7 +244,7 @@ def _parse_system_spec(doc: dict[str, Any], source: Path) -> _SystemSpec:
         max_connections=int(defaults.get("max_connections", _DEFAULT_MAX_CONNECTIONS)),
         default_headers=_parse_headers(defaults.get("headers"), owner=f"{source} defaults.headers"),
         source=source,
-        verify_ssl=bool(defaults.get("verify_ssl", True)),
+        verify_ssl=raw_verify,
     )
 
 

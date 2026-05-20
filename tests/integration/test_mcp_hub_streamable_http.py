@@ -15,6 +15,7 @@ Two scenarios:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import socket
 import textwrap
 from contextlib import asynccontextmanager
@@ -52,8 +53,17 @@ async def _serve(tools_dir: Path):
             raise RuntimeError("hub did not start within 10s")
         yield f"http://127.0.0.1:{port}/mcp/"
     finally:
+        # Defensive teardown: signal shutdown, bound the wait so a stuck
+        # FastMCP session-manager cleanup can't hang the test forever, and
+        # swallow CancelledError if uvicorn's shutdown races the asyncio
+        # loop teardown (root cause of "Event loop is closed" flakes in CI).
         server.should_exit = True
-        await task
+        try:
+            await asyncio.wait_for(task, timeout=10)
+        except TimeoutError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def _write_tools(tmp_path: Path, body: str) -> Path:

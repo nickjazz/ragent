@@ -137,6 +137,45 @@ def test_load_failure_carries_system_phase_tool_fields():
     assert (f2.system, f2.phase, f2.tool) == ("billing", "tool_parse", "create_invoice")
 
 
+@pytest.mark.parametrize(
+    "yaml_value",
+    [
+        '"false"',  # string — bool('false') would be True (silently leave TLS on)
+        '"true"',  # string
+        "null",  # bool(None) would be False (silently disable TLS!)
+        "''",  # empty string — bool('') would be False
+        "0",  # int — bool(0) would be False
+        "1",  # int — bool(1) would be True
+    ],
+)
+def test_system_spec_verify_ssl_rejects_non_boolean(tmp_path: Path, yaml_value: str):
+    """`verify_ssl` controls TLS verification; permissive `bool(...)` coercion
+    would let a yaml typo (`"false"`, `null`, `0`, ...) flip the security
+    setting unexpectedly. Loader must reject anything that is not an actual
+    yaml boolean."""
+    yaml_file = tmp_path / "bad.yaml"
+    yaml_file.write_text(
+        textwrap.dedent(
+            f"""\
+            system: bad
+            defaults:
+              base_url: https://api.example.com
+              timeout: 5
+              verify_ssl: {yaml_value}
+            tools:
+              - name: ping
+                method: GET
+                path: /ping
+            """
+        )
+    )
+    result = load_tools_yaml(yaml_file, strict=False)
+    assert "bad" not in result.systems, f"non-bool verify_ssl={yaml_value} must be rejected"
+    assert any(
+        "verify_ssl" in f.reason and "boolean" in f.reason for f in result.failures
+    ), f"expected explicit verify_ssl rejection, got {[f.reason for f in result.failures]}"
+
+
 def test_system_spec_verify_ssl_defaults_true_and_can_be_disabled(tmp_path: Path):
     yaml_file = tmp_path / "ok.yaml"
     yaml_file.write_text(

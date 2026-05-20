@@ -610,8 +610,10 @@ defaults:
   base_url: https://api.example.com    # required if any tool path is relative
   timeout: 30.0                         # seconds; httpx default 30
   max_connections: 100                  # per-system pool size
-  verify_ssl: true                      # set false for self-signed / staging upstreams;
-                                        # `mcp_hub.system_configured` log records the value
+  verify_ssl: true                      # MUST be an explicit yaml boolean (true/false).
+                                        # Strings ("false", "true"), null, ints → load
+                                        # failure. `mcp_hub.system_configured` log records
+                                        # the value; false is for self-signed / staging.
   headers:                              # baseline headers on every request
     Accept: application/json
 
