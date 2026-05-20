@@ -88,9 +88,11 @@ Adding or modifying actual functionality:
 ## CORE DEVELOPMENT PHILOSOPHY
 
 ### 1. Think Before Coding
+*   **Understand** essence of the problem. Solutions must be able to achieve the goal and solve the problem.
 *   **Surface Trade-offs**: If multiple solutions exist, present them. Never pick silently.
 *   **No Assumptions**: Explicitly state assumptions. If a requirement is vague, **stop and ask**.
 *   **Push Back**: If a simpler approach exists, suggest it. Avoid over-engineering.
+*   **Best Practice**: Always refer to industry best practices and don't reinvent the wheel.
 
 ### 2. Simplicity First (YAGNI)
 *   **Minimum Viable Code**: No speculative features or "future-proofing."
