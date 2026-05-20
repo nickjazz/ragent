@@ -24,6 +24,11 @@ import yaml
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from ragent.bootstrap.metrics import (
+    record_mcp_hub_load_failure,
+    record_mcp_hub_tool_call,
+)
+
 logger = structlog.get_logger(__name__)
 
 _INCOMING_HEADERS: ContextVar[dict[str, str] | None] = ContextVar(
@@ -93,22 +98,35 @@ class _SystemSpec:
     max_connections: int
     default_headers: dict[str, str]
     source: Path
+    # Per-system TLS verification toggle. False ONLY for staging / self-signed
+    # internal upstreams behind mTLS or a trusted network. The Hub logs
+    # `verify_ssl=False` on startup so an operator audit catches deployments
+    # that accidentally ship with verification off.
+    verify_ssl: bool = True
 
     def make_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             timeout=self.timeout,
             limits=httpx.Limits(max_connections=self.max_connections),
             headers=self.default_headers or None,
+            verify=self.verify_ssl,
         )
 
 
 @dataclass
 class LoadFailure:
     """A single file or tool that could not be loaded. Reported through
-    LoadResult.failures (and via HubBundle.failures at runtime)."""
+    LoadResult.failures (and via HubBundle.failures at runtime). The
+    structured `system` / `phase` / `tool` fields drive the
+    `mcp_hub_tool_load_failures_total` counter — see `bootstrap/metrics.py`."""
 
     source: str  # e.g. "tools.d/billing.yaml" or "tools.d/billing.yaml:create_invoice"
     reason: str
+    system: str = ""
+    # file_parse: yaml syntax / IO; tool_parse: schema or duplicate;
+    # registration: FastMCP add_tool rejection.
+    phase: str = "tool_parse"
+    tool: str = ""
 
 
 @dataclass
@@ -209,6 +227,16 @@ _DEFAULT_MAX_CONNECTIONS = 100
 
 def _parse_system_spec(doc: dict[str, Any], source: Path) -> _SystemSpec:
     defaults = doc.get("defaults") or {}
+    raw_verify = defaults.get("verify_ssl", True)
+    # Strict bool check — `bool(...)` silently turns null/empty-string into
+    # False (TLS off!) and any non-empty string into True (e.g. "false" reads
+    # as True). Reject anything that isn't a real yaml boolean so an operator
+    # typo cannot flip TLS verification by accident.
+    if not isinstance(raw_verify, bool):
+        raise ValueError(
+            f"{source}: defaults.verify_ssl must be a boolean (true/false), "
+            f"got {raw_verify!r} ({type(raw_verify).__name__})"
+        )
     return _SystemSpec(
         name=str(doc.get("system") or source.stem),
         base_url=str(defaults.get("base_url") or ""),
@@ -216,6 +244,7 @@ def _parse_system_spec(doc: dict[str, Any], source: Path) -> _SystemSpec:
         max_connections=int(defaults.get("max_connections", _DEFAULT_MAX_CONNECTIONS)),
         default_headers=_parse_headers(defaults.get("headers"), owner=f"{source} defaults.headers"),
         source=source,
+        verify_ssl=raw_verify,
     )
 
 
@@ -225,13 +254,28 @@ def _record_failure(
     exc_or_msg: BaseException | str,
     *,
     strict: bool,
+    system: str = "",
+    phase: str = "tool_parse",
+    tool: str = "",
 ) -> None:
-    """Either re-raise (strict mode) or append to result.failures."""
+    """Either re-raise (strict mode) or append to result.failures.
+
+    `system` / `phase` / `tool` are surfaced as structured fields on the
+    `mcp_hub.load_failure` log and the `mcp_hub_tool_load_failures_total`
+    counter when `build_hub` iterates the collected failures."""
     if strict:
         if isinstance(exc_or_msg, BaseException):
             raise exc_or_msg
         raise ValueError(exc_or_msg)
-    result.failures.append(LoadFailure(source=source, reason=str(exc_or_msg)))
+    result.failures.append(
+        LoadFailure(
+            source=source,
+            reason=str(exc_or_msg),
+            system=system,
+            phase=phase,
+            tool=tool,
+        )
+    )
 
 
 def _load_one_file(source: Path, result: LoadResult, *, strict: bool) -> None:
@@ -245,7 +289,16 @@ def _load_one_file(source: Path, result: LoadResult, *, strict: bool) -> None:
             raise ValueError(f"top-level yaml must be a mapping, got {type(doc).__name__}")
         system = _parse_system_spec(doc, source)
     except (OSError, ValueError, yaml.YAMLError) as exc:
-        _record_failure(result, str(source), exc, strict=strict)
+        # file-level failure: no system spec available, use filename stem
+        # as a stable label so the counter still groups by deployment-known id.
+        _record_failure(
+            result,
+            str(source),
+            exc,
+            strict=strict,
+            system=source.stem,
+            phase="file_parse",
+        )
         return
 
     if system.name in result.systems:
@@ -255,6 +308,8 @@ def _load_one_file(source: Path, result: LoadResult, *, strict: bool) -> None:
             f"duplicate system name {system.name!r}: also defined in "
             f"{result.systems[system.name].source}",
             strict=strict,
+            system=system.name,
+            phase="file_parse",
         )
         return
 
@@ -264,7 +319,15 @@ def _load_one_file(source: Path, result: LoadResult, *, strict: bool) -> None:
         try:
             tool = _parse_tool(raw_tool)
         except (TypeError, ValueError, KeyError) as exc:
-            _record_failure(result, f"{source}:{raw_name or '?'}", exc, strict=strict)
+            _record_failure(
+                result,
+                f"{source}:{raw_name or '?'}",
+                exc,
+                strict=strict,
+                system=system.name,
+                phase="tool_parse",
+                tool=raw_name or "",
+            )
             continue
         if tool.name in seen_in_system:
             _record_failure(
@@ -272,6 +335,9 @@ def _load_one_file(source: Path, result: LoadResult, *, strict: bool) -> None:
                 f"{source}:{tool.name}",
                 f"duplicate tool name {tool.name!r} within system {system.name!r}",
                 strict=strict,
+                system=system.name,
+                phase="tool_parse",
+                tool=tool.name,
             )
             continue
         seen_in_system.add(tool.name)
@@ -315,7 +381,9 @@ def load_tools_yaml(path: str | Path, *, strict: bool = True) -> LoadResult:
         msg = f"path does not exist: {p}"
         if strict:
             raise FileNotFoundError(msg)
-        result.failures.append(LoadFailure(source=str(p), reason=msg))
+        result.failures.append(
+            LoadFailure(source=str(p), reason=msg, system="unknown", phase="file_parse")
+        )
         return result
 
     for fp in files:
@@ -470,23 +538,35 @@ def _make_tool_callable(
         try:
             resp = await client.request(spec.method, url, **request_kwargs)
         except httpx.TimeoutException as exc:
+            duration = time.perf_counter() - start
             logger.error(
                 "mcp_hub.timeout",
-                latency_ms=int((time.perf_counter() - start) * 1000),
+                latency_ms=int(duration * 1000),
                 configured_timeout=spec.timeout,
                 **log_ctx,
             )
+            record_mcp_hub_tool_call(
+                system=spec.system, tool=spec.name, outcome="timeout", duration_seconds=duration
+            )
             raise ToolError(json.dumps({"type": _ERR_TIMEOUT, "message": str(exc)})) from exc
         except httpx.ConnectError as exc:
+            duration = time.perf_counter() - start
             logger.error(
                 "mcp_hub.connect_error",
-                latency_ms=int((time.perf_counter() - start) * 1000),
+                latency_ms=int(duration * 1000),
                 error_type=type(exc).__name__,
                 **log_ctx,
             )
+            record_mcp_hub_tool_call(
+                system=spec.system,
+                tool=spec.name,
+                outcome="connect_error",
+                duration_seconds=duration,
+            )
             raise ToolError(json.dumps({"type": _ERR_CONNECT, "message": str(exc)})) from exc
 
-        latency_ms = int((time.perf_counter() - start) * 1000)
+        duration = time.perf_counter() - start
+        latency_ms = int(duration * 1000)
         upstream_request_id = _extract_request_id(resp.headers)
 
         if resp.status_code >= 500:
@@ -496,6 +576,12 @@ def _make_tool_callable(
                 latency_ms=latency_ms,
                 upstream_request_id=upstream_request_id,
                 **log_ctx,
+            )
+            record_mcp_hub_tool_call(
+                system=spec.system,
+                tool=spec.name,
+                outcome="upstream_5xx",
+                duration_seconds=duration,
             )
             raise ToolError(
                 json.dumps(_base_upstream_error(resp, _ERR_UPSTREAM_5XX, upstream_request_id))
@@ -508,6 +594,12 @@ def _make_tool_callable(
                 latency_ms=latency_ms,
                 upstream_request_id=upstream_request_id,
                 **log_ctx,
+            )
+            record_mcp_hub_tool_call(
+                system=spec.system,
+                tool=spec.name,
+                outcome="upstream_4xx",
+                duration_seconds=duration,
             )
             return {
                 "ok": False,
@@ -528,6 +620,9 @@ def _make_tool_callable(
             status=resp.status_code,
             latency_ms=latency_ms,
             **log_ctx,
+        )
+        record_mcp_hub_tool_call(
+            system=spec.system, tool=spec.name, outcome="success", duration_seconds=duration
         )
         return {"ok": True, "status": resp.status_code, "data": payload}
 
@@ -557,9 +652,6 @@ def build_hub(yaml_path: str | Path, *, name: str = "ragent-mcp-hub") -> HubBund
     result = load_tools_yaml(yaml_path, strict=False)
     clients = {name: spec.make_client() for name, spec in result.systems.items()}
 
-    for failure in result.failures:
-        logger.warning("mcp_hub.load_failure", source=failure.source, reason=failure.reason)
-
     mcp: FastMCP = FastMCP(name)
     registered = 0
     for spec in result.tools:
@@ -569,6 +661,9 @@ def build_hub(yaml_path: str | Path, *, name: str = "ragent-mcp-hub") -> HubBund
                 LoadFailure(
                     source=spec.name,
                     reason=f"no client for system {spec.system!r}",
+                    system=spec.system,
+                    phase="registration",
+                    tool=spec.name,
                 )
             )
             continue
@@ -577,8 +672,28 @@ def build_hub(yaml_path: str | Path, *, name: str = "ragent-mcp-hub") -> HubBund
             mcp.add_tool(fn)
             registered += 1
         except Exception as exc:  # noqa: BLE001 — must isolate any registration failure
-            result.failures.append(LoadFailure(source=spec.name, reason=f"add_tool: {exc}"))
-            logger.warning("mcp_hub.load_failure", source=spec.name, reason=f"add_tool: {exc}")
+            result.failures.append(
+                LoadFailure(
+                    source=spec.name,
+                    reason=f"add_tool: {exc}",
+                    system=spec.system,
+                    phase="registration",
+                    tool=spec.name,
+                )
+            )
+
+    # Single fan-out for log + counter so every failure surfaces with the
+    # same structured fields and a Prometheus increment.
+    for failure in result.failures:
+        logger.warning(
+            "mcp_hub.load_failure",
+            source=failure.source,
+            reason=failure.reason,
+            system=failure.system,
+            phase=failure.phase,
+            tool=failure.tool,
+        )
+        record_mcp_hub_load_failure(system=failure.system, phase=failure.phase)
 
     for sys_name, sys_spec in result.systems.items():
         logger.info(
@@ -587,6 +702,7 @@ def build_hub(yaml_path: str | Path, *, name: str = "ragent-mcp-hub") -> HubBund
             base_url=sys_spec.base_url,
             timeout=sys_spec.timeout,
             max_connections=sys_spec.max_connections,
+            verify_ssl=sys_spec.verify_ssl,
         )
     logger.info(
         "mcp_hub.ready",
