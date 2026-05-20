@@ -1,4 +1,4 @@
-# CLAUDE.md - Project Guidelines & TDD Workflow
+# AGENT.md - Project Guidelines & TDD Workflow
 
 * Read `docs/00_rule.md` and follow development standards and mandatory workflow for this project. 
 * Strict adherence to **TDD (Test-Driven Development)** and **Minimalism** and **Integrity** are required.
@@ -92,6 +92,7 @@ Adding or modifying actual functionality:
 *   **Surface Trade-offs**: If multiple solutions exist, present them. Never pick silently.
 *   **No Assumptions**: Explicitly state assumptions. If a requirement is vague, **stop and ask**.
 *   **Push Back**: If a simpler approach exists, suggest it. Avoid over-engineering.
+*   **Best Practice**: Always refer to industry best practices and don't reinvent the wheel.
 
 ### 2. Simplicity First (YAGNI)
 *   **Minimum Viable Code**: No speculative features or "future-proofing."
