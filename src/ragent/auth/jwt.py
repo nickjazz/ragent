@@ -97,9 +97,7 @@ def build_token_manager(
     )
 
 
-def verify_jwt(
-    token: str, *, claim_user_id: str, token_manager: VerifyingTokenManager
-) -> str:
+def verify_jwt(token: str, *, claim_user_id: str, token_manager: VerifyingTokenManager) -> str:
     """Verify ``token`` against the configured JWKS and return the user-id claim.
 
     Failure mapping (§4.1.2):
@@ -124,9 +122,7 @@ def verify_jwt(
     # iss is checked separately below to absorb trailing-slash variance between
     # OIDC discovery (often `.../`) and real-IdP-issued tokens (often `...`).
     try:
-        JWTClaimsRegistry(
-            aud={"essential": True, "value": token_manager.audience}
-        ).validate(claims)
+        JWTClaimsRegistry(aud={"essential": True, "value": token_manager.audience}).validate(claims)
     except ExpiredTokenError as exc:
         raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_EXPIRED) from exc
     except JoseError as exc:

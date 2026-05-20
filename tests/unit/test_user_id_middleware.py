@@ -79,9 +79,7 @@ def test_public_paths_includes_docs_and_probes() -> None:
 # --- T8.5a JWT path via joserfc (auth_disabled=false, trust_header=false) ---
 
 
-def test_jwt_mode_extracts_claim_and_injects_user_id_header(
-    oidc_token_manager, make_token
-) -> None:
+def test_jwt_mode_extracts_claim_and_injects_user_id_header(oidc_token_manager, make_token) -> None:
     app = _build_app(trust_header=False, auth_disabled=False, token_manager=oidc_token_manager)
     token = make_token(preferred_username="alice")
     with TestClient(app) as client:
@@ -90,9 +88,7 @@ def test_jwt_mode_extracts_claim_and_injects_user_id_header(
         assert resp.json()["user_id"] == "alice"
 
 
-def test_jwt_mode_ignores_user_id_header_when_token_present(
-    oidc_token_manager, make_token
-) -> None:
+def test_jwt_mode_ignores_user_id_header_when_token_present(oidc_token_manager, make_token) -> None:
     app = _build_app(trust_header=False, auth_disabled=False, token_manager=oidc_token_manager)
     token = make_token(preferred_username="alice")
     with TestClient(app) as client:
@@ -118,9 +114,7 @@ def test_jwt_mode_expired_returns_401_expired(oidc_token_manager, make_token) ->
         assert resp.json()["error_code"] == "AUTH_TOKEN_EXPIRED"
 
 
-def test_jwt_mode_missing_claim_returns_401_claim_missing(
-    oidc_token_manager, make_token
-) -> None:
+def test_jwt_mode_missing_claim_returns_401_claim_missing(oidc_token_manager, make_token) -> None:
     app = _build_app(trust_header=False, auth_disabled=False, token_manager=oidc_token_manager)
     token = make_token()  # no preferred_username
     with TestClient(app) as client:
