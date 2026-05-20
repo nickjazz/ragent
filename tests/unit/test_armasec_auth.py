@@ -8,7 +8,7 @@ returns the spec'd error code through ``JwtAuthError(error_code, http_status=401
 from __future__ import annotations
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 
@@ -56,10 +56,26 @@ def test_verify_jwt_bad_signature(armasec_token_manager, make_token) -> None:
 # stays as its own test above).
 _FAILURE_CASES: list[tuple[str, Callable[..., dict], HttpErrorCode]] = [
     # (label, token-kwargs factory, expected error code)
-    ("wrong_audience", lambda: {"preferred_username": "alice", "aud": "https://wrong.api"}, HttpErrorCode.AUTH_TOKEN_INVALID),
-    ("wrong_issuer", lambda: {"preferred_username": "alice", "iss": "https://evil.example.com"}, HttpErrorCode.AUTH_TOKEN_INVALID),
-    ("expired", lambda: {"preferred_username": "alice", "exp": int(time.time()) - 60}, HttpErrorCode.AUTH_TOKEN_EXPIRED),
-    ("nbf_in_future", lambda: {"preferred_username": "alice", "nbf": int(time.time()) + 3600}, HttpErrorCode.AUTH_TOKEN_INVALID),
+    (
+        "wrong_audience",
+        lambda: {"preferred_username": "alice", "aud": "https://wrong.api"},
+        HttpErrorCode.AUTH_TOKEN_INVALID,
+    ),
+    (
+        "wrong_issuer",
+        lambda: {"preferred_username": "alice", "iss": "https://evil.example.com"},
+        HttpErrorCode.AUTH_TOKEN_INVALID,
+    ),
+    (
+        "expired",
+        lambda: {"preferred_username": "alice", "exp": int(time.time()) - 60},
+        HttpErrorCode.AUTH_TOKEN_EXPIRED,
+    ),
+    (
+        "nbf_in_future",
+        lambda: {"preferred_username": "alice", "nbf": int(time.time()) + 3600},
+        HttpErrorCode.AUTH_TOKEN_INVALID,
+    ),
     ("missing_user_id_claim", dict, HttpErrorCode.AUTH_CLAIM_MISSING),
     ("empty_user_id_claim", lambda: {"preferred_username": ""}, HttpErrorCode.AUTH_CLAIM_MISSING),
 ]
