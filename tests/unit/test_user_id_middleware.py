@@ -82,9 +82,7 @@ def test_public_paths_includes_docs_and_probes() -> None:
 def test_jwt_mode_extracts_claim_and_injects_user_id_header(
     armasec_token_manager, make_token
 ) -> None:
-    app = _build_app(
-        trust_header=False, auth_disabled=False, token_manager=armasec_token_manager
-    )
+    app = _build_app(trust_header=False, auth_disabled=False, token_manager=armasec_token_manager)
     token = make_token(preferred_username="alice")
     with TestClient(app) as client:
         resp = client.get("/protected", headers={"X-Auth-Token": token})
@@ -95,22 +93,16 @@ def test_jwt_mode_extracts_claim_and_injects_user_id_header(
 def test_jwt_mode_ignores_user_id_header_when_token_present(
     armasec_token_manager, make_token
 ) -> None:
-    app = _build_app(
-        trust_header=False, auth_disabled=False, token_manager=armasec_token_manager
-    )
+    app = _build_app(trust_header=False, auth_disabled=False, token_manager=armasec_token_manager)
     token = make_token(preferred_username="alice")
     with TestClient(app) as client:
-        resp = client.get(
-            "/protected", headers={"X-Auth-Token": token, "X-User-Id": "mallory"}
-        )
+        resp = client.get("/protected", headers={"X-Auth-Token": token, "X-User-Id": "mallory"})
         assert resp.status_code == 200
         assert resp.json()["user_id"] == "alice"
 
 
 def test_jwt_mode_missing_token_returns_401(armasec_token_manager) -> None:
-    app = _build_app(
-        trust_header=False, auth_disabled=False, token_manager=armasec_token_manager
-    )
+    app = _build_app(trust_header=False, auth_disabled=False, token_manager=armasec_token_manager)
     with TestClient(app) as client:
         resp = client.get("/protected")
         assert resp.status_code == 401
@@ -118,9 +110,7 @@ def test_jwt_mode_missing_token_returns_401(armasec_token_manager) -> None:
 
 
 def test_jwt_mode_expired_returns_401_expired(armasec_token_manager, make_token) -> None:
-    app = _build_app(
-        trust_header=False, auth_disabled=False, token_manager=armasec_token_manager
-    )
+    app = _build_app(trust_header=False, auth_disabled=False, token_manager=armasec_token_manager)
     token = make_token(preferred_username="alice", exp=int(time.time()) - 1)
     with TestClient(app) as client:
         resp = client.get("/protected", headers={"X-Auth-Token": token})
@@ -131,9 +121,7 @@ def test_jwt_mode_expired_returns_401_expired(armasec_token_manager, make_token)
 def test_jwt_mode_missing_claim_returns_401_claim_missing(
     armasec_token_manager, make_token
 ) -> None:
-    app = _build_app(
-        trust_header=False, auth_disabled=False, token_manager=armasec_token_manager
-    )
+    app = _build_app(trust_header=False, auth_disabled=False, token_manager=armasec_token_manager)
     token = make_token()  # no preferred_username
     with TestClient(app) as client:
         resp = client.get("/protected", headers={"X-Auth-Token": token})

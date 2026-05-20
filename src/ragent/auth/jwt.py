@@ -67,9 +67,7 @@ def build_token_manager(
     return VerifyingTokenManager(manager=manager, expected_iss=expected_iss)
 
 
-def verify_jwt(
-    token: str, *, claim_user_id: str, token_manager: VerifyingTokenManager
-) -> str:
+def verify_jwt(token: str, *, claim_user_id: str, token_manager: VerifyingTokenManager) -> str:
     """Verify ``token`` via Armasec and return the configured user-id claim.
 
     The middleware passes a raw JWT (no ``Bearer `` prefix — see §3.5);
