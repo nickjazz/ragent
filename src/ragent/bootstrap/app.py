@@ -205,7 +205,8 @@ def _x_user_id_middleware(
             return await call_next(request)
 
         if trust_header_mode:
-            if not request.headers.get(user_id_header):
+            inbound = request.headers.get(user_id_header)
+            if not inbound:
                 logger.warning(
                     "api.user_id_missing",
                     path=request.url.path,
@@ -216,9 +217,13 @@ def _x_user_id_middleware(
                 return problem(
                     422, HttpErrorCode.MISSING_USER_ID, f"{user_id_header} header is required"
                 )
-            # No contextvar bind needed here: the outer RequestLoggingMiddleware
-            # already read the inbound X-User-Id header and bound it before
-            # call_next. Re-binding the same value would be a no-op.
+            # The outer RequestLoggingMiddleware reads the canonical
+            # ``X-User-Id`` only; a customised ``user_id_header`` is invisible
+            # to it at request entry. The scope-key write feeds the final
+            # ``api.request`` log (via ``_final_identity``); the contextvar
+            # bind feeds handler-time structlog emissions.
+            request.scope[SCOPE_USER_ID_KEY] = inbound
+            structlog.contextvars.bind_contextvars(user_id=inbound)
             return await call_next(request)
 
         token = request.headers.get(jwt_header_lower) or ""

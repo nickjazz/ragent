@@ -170,3 +170,42 @@ def test_jwt_mode_api_request_log_carries_resolved_user_id(oidc_token_manager, m
     api_logs = [e for e in logs if e.get("event") == "api.request"]
     assert len(api_logs) == 1
     assert api_logs[0]["user_id"] == "alice", api_logs[0]
+
+
+def test_trust_header_mode_custom_header_name_carries_user_id_in_api_request_log():
+    """Trust-header mode with a non-default ``RAGENT_USER_ID_HEADER`` must
+    still surface ``user_id`` on the final ``api.request`` log.
+
+    The outer ``RequestLoggingMiddleware`` reads the inbound header using the
+    canonical name ``X-User-Id`` (its own constant) — when the operator
+    customises the header name, the outer read misses the value at request
+    entry. The inner ``_x_user_id_middleware`` is the only layer that knows
+    the configured name, so it MUST propagate the resolved id through the
+    ASGI scope dict-key channel for the outer log to see it. Symmetric with
+    the JWT-mode contract pinned above.
+    """
+    from ragent.bootstrap.app import _x_user_id_middleware
+    from ragent.bootstrap.logging_config import configure_logging
+    from ragent.middleware.logging import RequestLoggingMiddleware
+
+    configure_logging("ragent-test")
+    app = FastAPI()
+    _x_user_id_middleware(
+        app,
+        user_id_header="X-Whoami",
+        trust_header=True,
+        auth_disabled=False,
+    )
+    app.add_middleware(RequestLoggingMiddleware)
+
+    @app.get("/p")
+    async def p():  # type: ignore[no-untyped-def]
+        return {"ok": True}
+
+    client = TestClient(app)
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get("/p", headers={"X-Whoami": "alice"})
+    assert resp.status_code == 200
+    api_logs = [e for e in logs if e.get("event") == "api.request"]
+    assert len(api_logs) == 1
+    assert api_logs[0].get("user_id") == "alice", api_logs[0]
