@@ -171,9 +171,9 @@ def test_system_spec_verify_ssl_rejects_non_boolean(tmp_path: Path, yaml_value: 
     )
     result = load_tools_yaml(yaml_file, strict=False)
     assert "bad" not in result.systems, f"non-bool verify_ssl={yaml_value} must be rejected"
-    assert any(
-        "verify_ssl" in f.reason and "boolean" in f.reason for f in result.failures
-    ), f"expected explicit verify_ssl rejection, got {[f.reason for f in result.failures]}"
+    assert any("verify_ssl" in f.reason and "boolean" in f.reason for f in result.failures), (
+        f"expected explicit verify_ssl rejection, got {[f.reason for f in result.failures]}"
+    )
 
 
 def test_system_spec_verify_ssl_defaults_true_and_can_be_disabled(tmp_path: Path):
