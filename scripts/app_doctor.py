@@ -558,9 +558,10 @@ def check_oidc() -> None:
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code} from {jwks_uri}")
         try:
-            keys = resp.json().get("keys")
+            data = resp.json()
         except ValueError as exc:
             raise RuntimeError(f"non-JSON JWKS response from {jwks_uri}") from exc
+        keys = data.get("keys") if isinstance(data, dict) else None
         if not keys:
             raise RuntimeError(f"JWKS has no keys at {jwks_uri}")
         return f"{len(keys)} key(s)"
