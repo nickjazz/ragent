@@ -45,9 +45,7 @@ async def _drain_pending_tasks(keep: set[asyncio.Task]) -> None:
     that residue deterministically."""
     current = asyncio.current_task()
     pending = [
-        t
-        for t in asyncio.all_tasks()
-        if t is not current and t not in keep and not t.done()
+        t for t in asyncio.all_tasks() if t is not current and t not in keep and not t.done()
     ]
     for t in pending:
         t.cancel()
