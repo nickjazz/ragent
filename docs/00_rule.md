@@ -254,6 +254,43 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 ---
 
 
+### Test Log Capture: `structlog.testing.capture_logs`, NOT `caplog` bridge
+
+- **Rule: Tests that assert on structlog event content MUST use `structlog.testing.capture_logs()`** — NOT the `structlog.configure(LoggerFactory=stdlib)` + pytest `caplog` bridge. The bridge is empirically flaky under `pytest-cov` instrumentation on Python 3.11: passes deterministically when run locally (with or without `--cov`) yet drops records intermittently on the CI runner, producing `assert 0 == 1; IndexError: list out of range`-style failures on tests that worked on the contributor's machine. The root cause is interference between coverage's per-line trace hook and the stdlib logging chain that structlog hands records off to — there is no workaround that re-routes through the bridge reliably. Root-caused on PR #90 after four CI rounds; see `docs/00_journal.md` row `2026-05-20 'Subprocess Isolation'` for the full forensics.
+  - **Pattern (apply forward; existing `log_capture` fixtures may be converted opportunistically):**
+    ```python
+    from structlog.testing import capture_logs
+
+    def test_emits_load_failure(tmp_path):
+        with capture_logs() as captured:
+            build_hub(tmp_path)
+        load_fails = [e for e in captured if e.get("event") == "mcp_hub.load_failure"]
+        assert len(load_fails) == 1
+        assert load_fails[0]["system"] == "broken"
+        assert load_fails[0]["log_level"] == "warning"
+    ```
+  - **Why this is robust**: `capture_logs()` monkey-patches structlog's active logger factory to append event-dicts to a list — it bypasses stdlib logging entirely. Coverage's trace hook never touches it. Assertions become structured (`e.get("field")`) instead of substring (`"field" in msg`) — also catches schema drift.
+  - **Banned alternative**: `structlog.configure(processors=[...JSONRenderer], LoggerFactory=stdlib) + caplog.set_level(...) + parsing caplog.records` is on borrowed time. PR review checklist: when reviewing new `tests/unit/**/*.py` that imports both `structlog` and uses `caplog`, request a `capture_logs` conversion.
+
+- **Rule: Integration tests that boot a real ASGI server (uvicorn + FastMCP + anyio task groups) MUST spawn it in a subprocess**, NOT `asyncio.create_task(server.serve())` inside the test's pytest-asyncio loop. Subprocess isolation eliminates an entire class of "Event loop is closed" flakes (uvicorn keep-alive workers, anyio task-group children leaking past `__aexit__`).
+  - **Pattern**:
+    ```python
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "ragent.mcp_hub.server"],
+        env={**os.environ, "MCP_HUB_PORT": str(port), ...},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    # readiness: poll a known endpoint over HTTP, bounded retries
+    # cleanup: proc.terminate() + wait(timeout=5) + kill() fallback
+    ```
+  - **Cost**: ~3-5s per test (Python interpreter spin-up); acceptable for CI.
+  - **The in-loop pattern with explicit `asyncio.all_tasks()` drain** is documented in the same journal row as a transitional attempt that did not durably fix the flake — do not reach for it.
+
+- **Rule: When CI fails with a top-level annotation but no per-test `FAILED <name>` line in the GitHub UI, DO NOT diagnose from the annotation alone.** The annotation is the loudest stderr/stdout tail snippet, NOT the actual pytest summary. Multiple simultaneous failures collapse into one annotation, leading the next-session-Claude to chase the wrong root cause. Request raw pytest output (`gh run view --log` operator-side, or paste from the Actions UI) before forming a hypothesis. Chasing the annotation alone cost two wrong fixes on PR #90.
+
+---
+
+
 ### OpenTelemetry: Initialize Once, Re-init After Fork
 
 - **Rule**: The global `TracerProvider` is set **exactly once per OS process**. Do not replace it at runtime; do not call `set_tracer_provider` from request paths, hot-reload paths, or library code.
