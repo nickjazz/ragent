@@ -1,26 +1,32 @@
-"""T8.2 — decode-only JWT payload extraction (§3.5 / §3.5.1).
+"""T8.2a — Armasec-verified JWT (§3.5, rewritten 2026-05-20).
 
-Accepted risk: the signature segment is **not** verified. The deployment
-contract (§3.5.1) is that an upstream gateway authenticates the caller and
-forwards the already-vetted JWT in ``<RAGENT_JWT_HEADER>``. ragent extracts
-``exp`` (expiry check only) and the configured user_id claim.
+Replaces the decode-only T8.2 implementation. ``verify_jwt`` calls Armasec's
+``TokenManager.extract_token_payload`` which performs JWKS signature
+verification + ``aud`` + ``exp`` checks against the configured OIDC provider.
+Armasec does not enforce ``iss`` out of the box, so we layer that check on
+top. ``build_token_manager`` is the single seam to Armasec internals so
+the rest of the codebase imports nothing from ``armasec.*``.
 """
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 from dataclasses import dataclass
+
+from armasec.exceptions import AuthenticationError
+from armasec.openid_config_loader import OpenidConfigLoader
+from armasec.token_decoder import TokenDecoder
+from armasec.token_manager import TokenManager
+from starlette.datastructures import Headers
 
 from ragent.errors.codes import HttpErrorCode
 
 
-@dataclass(frozen=True)
+@dataclass
 class JwtAuthError(Exception):
-    """Raised by :func:`decode_jwt_payload` on any decode/claim failure.
+    """Raised by :func:`verify_jwt` on any verification or claim failure.
 
-    Surfaces via the global problem-details handler.
+    Surfaces via the global problem-details handler. Not ``frozen`` — Python's
+    exception machinery assigns ``__traceback__`` during ``raise ... from``.
     """
 
     error_code: HttpErrorCode
@@ -30,52 +36,76 @@ class JwtAuthError(Exception):
         return self.error_code
 
 
-def decode_jwt_payload(token: str, *, claim_user_id: str, now: int) -> str:
-    """Decode a JWT, check ``exp``, and return the configured claim value.
+@dataclass(frozen=True)
+class VerifyingTokenManager:
+    """Wraps an Armasec ``TokenManager`` with the precomputed expected issuer.
 
-    Args:
-        token: Raw JWT (three base64url segments separated by ``.``).
-        claim_user_id: Payload claim path used as the downstream user_id.
-        now: Current unix epoch — injected to keep the function pure /
-            testable. Callers pass ``int(time.time())``.
-
-    Returns:
-        The non-empty string value of ``payload[claim_user_id]``.
-
-    Raises:
-        JwtAuthError: on any failure path enumerated in §3.5.
+    Built once at composition; reused across every protected request. The
+    issuer normalization (``rstrip("/")``) is paid once at construction
+    instead of per-request.
     """
-    segments = token.split(".") if token else []
-    if len(segments) != 3:
+
+    manager: TokenManager
+    expected_iss: str
+
+
+def build_token_manager(
+    *, domain: str, audience: str, use_https: bool = True
+) -> VerifyingTokenManager:
+    """Compose Armasec's pieces into a ``VerifyingTokenManager``.
+
+    OIDC discovery + JWKS are fetched HERE (at composition time), NOT lazily on
+    first request — a misconfigured ``ARMASEC_DOMAIN`` aborts boot rather than
+    500-ing the first protected request. The fetched JWKS is then cached on
+    the underlying decoder for the manager's lifetime; subsequent verifications
+    do no I/O (§3.5 cache-reuse contract).
+    """
+    loader = OpenidConfigLoader(domain, use_https=use_https)
+    decoder = TokenDecoder(loader.jwks)  # fetches JWKS now, caches on decoder
+    manager = TokenManager(loader.config, decoder, audience=audience)
+    expected_iss = str(loader.config.issuer).rstrip("/")
+    return VerifyingTokenManager(manager=manager, expected_iss=expected_iss)
+
+
+def verify_jwt(
+    token: str, *, claim_user_id: str, token_manager: VerifyingTokenManager
+) -> str:
+    """Verify ``token`` via Armasec and return the configured user-id claim.
+
+    The middleware passes a raw JWT (no ``Bearer `` prefix — see §3.5);
+    Armasec's ``extract_token_payload`` expects an Authorization-style header
+    value, so we re-prefix ``Bearer `` here before handing it over.
+    """
+    if not token:
         raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID)
 
-    body_b64 = segments[1]
+    headers = Headers({"Authorization": f"Bearer {token}"})
     try:
-        payload_bytes = base64.urlsafe_b64decode(body_b64 + "=" * (-len(body_b64) % 4))
-    except (binascii.Error, ValueError):
-        raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID) from None
+        payload = token_manager.manager.extract_token_payload(headers)
+    except AuthenticationError as exc:
+        # Armasec wraps PyJWT/python-jose errors. The "expired" leaf is the only
+        # one we map to a distinct error code per §4.1.2; everything else
+        # (bad sig, wrong aud, nbf in future, unknown kid, unsupported
+        # alg, malformed token) collapses into AUTH_TOKEN_INVALID.
+        if "expired" in str(exc).lower():
+            raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_EXPIRED) from exc
+        raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID) from exc
 
-    try:
-        payload = json.loads(payload_bytes)
-    except json.JSONDecodeError:
-        raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID) from None
-
-    if not isinstance(payload, dict):
+    # Armasec verifies signature + aud + exp via python-jose, but does NOT
+    # verify iss out of the box (no `issuer=` kwarg in its decode call). §3.5
+    # requires iss == OIDC issuer URL; expected value is precomputed (with
+    # trailing slashes stripped to absorb pydantic AnyHttpUrl / IdP variance)
+    # at composition time.
+    actual_iss = str((payload.model_extra or {}).get("iss") or "").rstrip("/")
+    if actual_iss != token_manager.expected_iss:
         raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID)
 
-    if "exp" not in payload:
-        raise JwtAuthError(HttpErrorCode.AUTH_CLAIM_MISSING)
-
-    exp = payload["exp"]
-    # bools are an int subclass in Python; reject them explicitly.
-    if isinstance(exp, bool) or not isinstance(exp, int):
-        raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_INVALID)
-
-    if exp <= now:
-        raise JwtAuthError(HttpErrorCode.AUTH_TOKEN_EXPIRED)
-
-    user_id = payload.get(claim_user_id)
+    # TokenPayload uses pydantic ``extra="allow"`` so custom claims like
+    # ``preferred_username`` / ``email`` land in ``model_extra``. Standard
+    # claims (``sub``, ``client_id``) are attributes.
+    user_id = getattr(payload, claim_user_id, None)
+    if user_id is None and payload.model_extra:
+        user_id = payload.model_extra.get(claim_user_id)
     if not isinstance(user_id, str) or not user_id:
         raise JwtAuthError(HttpErrorCode.AUTH_CLAIM_MISSING)
-
     return user_id

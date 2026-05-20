@@ -44,11 +44,15 @@ def test_skip_paths_is_subset_of_public_paths() -> None:
     assert extra == frozenset(), f"_SKIP_PATHS leaks paths not in _PUBLIC_PATHS: {extra}"
 
 
-@pytest.fixture(scope="module")
-def auth_on_client() -> TestClient:
-    """Single TestClient for every parametrized public-path case (no per-test state)."""
+@pytest.fixture
+def auth_on_client(armasec_token_manager) -> TestClient:
+    """TestClient for every parametrized public-path case. Function-scoped to
+    inherit ``armasec_token_manager`` (also function-scoped) — Armasec ships
+    function-scoped upstream fixtures, so we don't widen here."""
     app = FastAPI()
-    _x_user_id_middleware(app, auth_disabled=False, trust_header=False)
+    _x_user_id_middleware(
+        app, auth_disabled=False, trust_header=False, token_manager=armasec_token_manager
+    )
 
     @app.get("/livez")
     def _livez() -> dict:
@@ -81,10 +85,12 @@ def test_public_path_bypasses_middleware_without_token(
     )
 
 
-def test_protected_path_still_requires_auth_when_enabled() -> None:
+def test_protected_path_still_requires_auth_when_enabled(armasec_token_manager) -> None:
     """Sanity: with auth on, a non-public path without a token MUST fail."""
     app = FastAPI()
-    _x_user_id_middleware(app, auth_disabled=False, trust_header=False)
+    _x_user_id_middleware(
+        app, auth_disabled=False, trust_header=False, token_manager=armasec_token_manager
+    )
 
     @app.get("/protected")
     def _protected(x_user_id: str | None = Header(default=None, alias="X-User-Id")) -> dict:

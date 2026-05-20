@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -12,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from starlette.middleware.cors import CORSMiddleware
 
-from ragent.auth.jwt import JwtAuthError, decode_jwt_payload
+from ragent.auth.jwt import JwtAuthError, verify_jwt
 from ragent.bootstrap.guard import enforce
 from ragent.bootstrap.init_schema import init_schema
 from ragent.bootstrap.logging_config import configure_logging
@@ -51,7 +50,16 @@ def _add_cors_middleware(app: FastAPI, origins: list[str]) -> None:
 
 
 _PUBLIC_PATHS = frozenset(
-    {"/livez", "/readyz", "/startupz", "/metrics", "/docs", "/redoc", "/openapi.json"}
+    {
+        "/livez",
+        "/readyz",
+        "/startupz",
+        "/metrics",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+        "/openapi.json",
+    }
 )
 _DEFAULT_USER_ID_HEADER = "X-User-Id"
 _DEFAULT_JWT_HEADER = "X-Auth-Token"
@@ -142,22 +150,30 @@ def _x_user_id_middleware(
     jwt_claim: str = _DEFAULT_JWT_CLAIM,
     trust_header: bool = True,
     auth_disabled: bool = True,
+    token_manager: Any = None,
 ) -> None:
-    """User-identity middleware (§3.5).
+    """User-identity middleware (§3.5, rewritten 2026-05-20).
 
     Branch matrix:
       * ``auth_disabled=True`` (P1 default) OR ``trust_header=True`` (P2 dev override):
         require ``<user_id_header>`` non-empty; 422 ``MISSING_USER_ID`` otherwise.
       * ``auth_disabled=False`` AND ``trust_header=False`` (P2 prod): read
-        ``<jwt_header>``, decode-only-validate per §3.5.1, extract
+        ``<jwt_header>``, verify via Armasec's ``TokenManager``, extract
         ``<jwt_claim>``, and inject the result into ``<user_id_header>`` on
         the request scope so downstream routers (whose ``Header(alias=...)``
-        is bound to the canonical name) observe it transparently.
+        is bound to the canonical name) observe it transparently. Requires
+        ``token_manager`` to be set (constructed by ``build_container``).
     """
 
     user_id_header_lower = user_id_header.lower().encode("latin-1")
     jwt_header_lower = jwt_header.lower()
     trust_header_mode = auth_disabled or trust_header
+    if not trust_header_mode and token_manager is None:
+        raise RuntimeError(
+            "JWT auth mode requires a token_manager; "
+            "build_container() must construct one when "
+            "RAGENT_AUTH_DISABLED=false and RAGENT_TRUST_X_USER_ID_HEADER=false."
+        )
 
     def _inject_header(request: Request, value: str) -> None:
         """Overwrite ``user_id_header`` in the ASGI scope.
@@ -195,7 +211,7 @@ def _x_user_id_middleware(
 
         token = request.headers.get(jwt_header_lower) or ""
         try:
-            user_id = decode_jwt_payload(token, claim_user_id=jwt_claim, now=int(time.time()))
+            user_id = verify_jwt(token, claim_user_id=jwt_claim, token_manager=token_manager)
         except JwtAuthError as exc:
             logger.warning(
                 "api.jwt_invalid",
@@ -384,6 +400,7 @@ def create_app() -> FastAPI:
         jwt_claim=str_env("RAGENT_JWT_CLAIM_USER_ID", _DEFAULT_JWT_CLAIM),
         trust_header=bool_env("RAGENT_TRUST_X_USER_ID_HEADER", False),
         auth_disabled=bool_env("RAGENT_AUTH_DISABLED", False),
+        token_manager=container.auth_token_manager,
     )
     # CORSMiddleware is registered after _x_user_id_middleware so it runs
     # BEFORE the user-ID check (Starlette wraps in reverse order). This lets

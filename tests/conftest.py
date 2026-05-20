@@ -43,26 +43,17 @@ import ragent.workers.ingest  # noqa: E402, F401
 def armasec_token_manager(rs256_domain, rs256_domain_config, mock_openid_server):
     """A verifying ``TokenManager`` wired against the in-process mock OIDC server.
 
-    Constructed inside ``with mock_openid_server():`` so ``OpenidConfigLoader``
-    lazy-fetches the OIDC config + JWKS through respx-mocked routes. The fixture
-    yields the manager AFTER exiting the mock context: any subsequent JWKS
-    refetch attempt would hit real network and fail, which pins the §3.5 cache-
-    reuse contract (``extract_token_payload`` must reuse the cached JWKS).
+    ``mock_openid_server`` (from ``armasec.pytest_extension``) enters its respx
+    context itself and stays active for the test's lifetime — we just request
+    it as a fixture dependency and construct the manager normally.
     """
-    from armasec.openid_config_loader import OpenidConfigLoader
-    from armasec.token_decoder import TokenDecoder
-    from armasec.token_manager import TokenManager
+    from ragent.auth.jwt import build_token_manager
 
-    with mock_openid_server():
-        loader = OpenidConfigLoader(rs256_domain, use_https=True)
-        _ = loader.config  # force lazy fetch while mock active
-        decoder = TokenDecoder(loader.jwks)  # caches JWKS on the decoder
-        manager = TokenManager(
-            loader.config,
-            decoder,
-            audience=rs256_domain_config.audience,
-        )
-    yield manager
+    return build_token_manager(
+        domain=rs256_domain,
+        audience=rs256_domain_config.audience,
+        use_https=True,
+    )
 
 
 @pytest.fixture

@@ -38,10 +38,12 @@ def test_verify_jwt_custom_claim_override(armasec_token_manager, make_token) -> 
 
 def test_verify_jwt_bad_signature(armasec_token_manager, make_token) -> None:
     token = make_token(preferred_username="alice")
-    # Flip the last char of the signature segment — preserves base64url length
-    # and alphabet (matches the tamper idiom in tests/unit/test_feedback_token.py).
+    # Replace the signature segment with a same-length string of `A`s. A single-
+    # byte flip can land in the trailing base64url padding bits of an RSA-256
+    # signature and slip through verification; full-segment replacement avoids
+    # that flakiness while preserving JWT segment count + base64url alphabet.
     head, body, sig = token.split(".")
-    tampered = f"{head}.{body}.{sig[:-1]}{'A' if sig[-1] != 'A' else 'B'}"
+    tampered = f"{head}.{body}.{'A' * len(sig)}"
     with pytest.raises(JwtAuthError) as exc:
         verify_jwt(
             tampered,
