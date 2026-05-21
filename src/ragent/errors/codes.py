@@ -22,7 +22,7 @@ for typo-safety.
 
 from __future__ import annotations
 
-from enum import StrEnum
+from ragent.utility.compat import StrEnum
 
 
 class HttpErrorCode(StrEnum):

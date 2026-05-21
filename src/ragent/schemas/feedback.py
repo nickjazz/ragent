@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from ragent.utility.compat import StrEnum
 from typing import Final
 
 from pydantic import BaseModel, Field, field_validator

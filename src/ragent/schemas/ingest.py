@@ -15,7 +15,7 @@ POST /ingest/v1/upload for binary files.
 
 from __future__ import annotations
 
-from enum import StrEnum
+from ragent.utility.compat import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
