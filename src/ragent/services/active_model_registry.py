@@ -31,9 +31,18 @@ class ActiveModelRegistryNotReady(RuntimeError):
 
 
 class ActiveModelRegistry:
-    def __init__(self, settings_repo: Any, ttl_seconds: int = 10) -> None:
+    def __init__(
+        self,
+        settings_repo: Any,
+        ttl_seconds: int = 10,
+        *,
+        chunks_read_alias: str = "chunks_v1_active",
+        chunks_fallback_index: str = "chunks_v1",
+    ) -> None:
         self._repo = settings_repo
         self._ttl = ttl_seconds
+        self._chunks_read_alias = chunks_read_alias
+        self._chunks_fallback_index = chunks_fallback_index
         self._stable: EmbeddingModelConfig | None = None
         self._candidate: EmbeddingModelConfig | None = None
         # Full raw payloads (including transient `promoted_at` etc.) — used
@@ -136,6 +145,27 @@ class ActiveModelRegistry:
     @property
     def retired_list(self) -> list[dict]:
         return list(self._retired)
+
+    @staticmethod
+    def _index_from_raw(raw: dict | None) -> str | None:
+        return raw.get("index_name") if raw else None
+
+    @property
+    def stable_index(self) -> str:
+        """Physical ES index name for the stable model.
+
+        Falls back to `chunks_fallback_index` when `index_name` is absent —
+        covers existing deployments where no migration has yet written it.
+        """
+        return self._index_from_raw(self._stable_raw) or self._chunks_fallback_index
+
+    @property
+    def candidate_index(self) -> str | None:
+        return self._index_from_raw(self._candidate_raw)
+
+    @property
+    def read_alias(self) -> str:
+        return self._chunks_read_alias
 
     def snapshot(self) -> dict:
         self._require_ready()
