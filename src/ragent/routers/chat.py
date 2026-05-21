@@ -32,6 +32,13 @@ logger = structlog.get_logger(__name__)
 _tracer = trace.get_tracer(__name__)
 
 
+def _extract_token_counts(usage: dict) -> tuple[int | None, int | None]:
+    # LLMClient.chat returns camelCase keys; streaming uses snake_case — tolerate both.
+    prompt = usage.get("promptTokens", usage.get("prompt_tokens"))
+    completion = usage.get("completionTokens", usage.get("completion_tokens"))
+    return (int(prompt) if prompt is not None else None, int(completion) if completion is not None else None)
+
+
 def _build_sources(documents: list[Any], max_chars: int) -> list[dict] | None:
     if not documents:
         return None
@@ -154,14 +161,11 @@ def create_chat_router(
                     max_tokens=body.max_tokens,
                 )
                 usage = result.get("usage") or {}
-                # LLMClient.chat returns camelCase usage keys; tolerate snake_case from
-                # alternative providers as well.
-                prompt_tokens = usage.get("promptTokens", usage.get("prompt_tokens"))
-                completion_tokens = usage.get("completionTokens", usage.get("completion_tokens"))
+                prompt_tokens, completion_tokens = _extract_token_counts(usage)
                 if prompt_tokens is not None:
-                    l_span.set_attribute("prompt_tokens", int(prompt_tokens))
+                    l_span.set_attribute("prompt_tokens", prompt_tokens)
                 if completion_tokens is not None:
-                    l_span.set_attribute("completion_tokens", int(completion_tokens))
+                    l_span.set_attribute("completion_tokens", completion_tokens)
                 logger.info(
                     "chat.llm",
                     model=body.model,
@@ -220,11 +224,13 @@ def create_chat_router(
                 l_span.set_attribute("model", body.model)
                 try:
                     full_content = []
+                    usage_out: list = []
                     for delta in llm_client.stream(
                         messages=messages,
                         model=body.model,
                         temperature=body.temperature,
                         max_tokens=body.max_tokens,
+                        usage_out=usage_out,
                     ):
                         full_content.append(delta)
                         yield f"data: {json.dumps({'type': 'delta', 'content': delta})}\n\n"
@@ -237,10 +243,19 @@ def create_chat_router(
                         **_maybe_mint_feedback_envelope(feedback_hmac_secret, x_user_id, sources),
                     }
                     yield f"data: {json.dumps(done_payload)}\n\n"
+                    prompt_tokens, completion_tokens = _extract_token_counts(
+                        usage_out[0] if usage_out else {}
+                    )
+                    if prompt_tokens is not None:
+                        l_span.set_attribute("prompt_tokens", prompt_tokens)
+                    if completion_tokens is not None:
+                        l_span.set_attribute("completion_tokens", completion_tokens)
                     logger.info(
                         "chat.llm",
                         model=body.model,
                         completion_chars=sum(len(c) for c in full_content),
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
                     )
                 except Exception as exc:
                     l_span.record_exception(exc)

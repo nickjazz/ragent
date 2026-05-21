@@ -143,6 +143,47 @@ def test_chat_business_log_has_safe_attributes_only(exporter, monkeypatch):
     assert "supersecret-query" not in serialized
 
 
+def test_chat_stream_llm_log_includes_token_counts(monkeypatch):
+    """The streaming path logs prompt_tokens and completion_tokens in chat.llm."""
+    usage = {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}
+
+    class _StubStreamLLM:
+        def stream(self, *, usage_out=None, **_kwargs):
+            if usage_out is not None:
+                usage_out.append(usage)
+            yield "hello"
+            yield " world"
+
+        def chat(self, **_kwargs):  # pragma: no cover
+            return {"content": "", "usage": {}}
+
+    docs = [_make_doc()]
+    _patch_pipelines(monkeypatch, docs)
+    app = FastAPI()
+    app.include_router(
+        create_chat_router(retrieval_pipeline=_StubPipeline(docs), llm_client=_StubStreamLLM())
+    )
+    client = TestClient(app)
+    with structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/chat/v1/stream",
+            json={
+                "messages": [{"role": "user", "content": "hi"}],
+                "model": "m",
+                "provider": "openai",
+                "temperature": 0.0,
+                "max_tokens": 16,
+            },
+        )
+    assert resp.status_code == 200
+    llm_logs = [e for e in logs if e.get("event") == "chat.llm"]
+    assert llm_logs, "expected chat.llm log"
+    rec = llm_logs[0]
+    assert rec.get("prompt_tokens") == 8
+    assert rec.get("completion_tokens") == 3
+    assert "completion_chars" in rec
+
+
 def test_retrieve_dedupe_log_records_count(exporter, monkeypatch):
     docs = [_make_doc("d1"), _make_doc("d1"), _make_doc("d2")]
     app = _build_retrieve_app(monkeypatch, docs)

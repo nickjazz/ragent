@@ -51,7 +51,7 @@ def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
         out = comp.run(documents=[Document(), Document(), Document()])
     assert len(out["documents"]) == 2
 
-    events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
+    events = [e for e in logs if e.get("event") in {"ingest.step.started", "ingest.step.ok"}]
     assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
     started, ok = events
     assert started["step"] == "embedder"

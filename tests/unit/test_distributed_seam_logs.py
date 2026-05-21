@@ -189,7 +189,9 @@ def test_hydrator_logs_dropped_count_when_chunks_filtered(monkeypatch: pytest.Mo
     repo = MagicMock()
     repo.get_sources_by_document_ids = lambda _ids: {"R1": ("app", "DOC-R", "Title")}
 
-    monkeypatch.setattr(retrieve_mod.anyio.from_thread, "run", lambda fn, *args, **kw: fn(*args, **kw))
+    monkeypatch.setattr(
+        retrieve_mod.anyio.from_thread, "run", lambda fn, *args, **kw: fn(*args, **kw)
+    )
 
     docs = [
         Document(content="a", meta={"document_id": "R1"}),  # kept
@@ -220,7 +222,9 @@ def test_hydrator_does_not_log_when_no_drop(monkeypatch: pytest.MonkeyPatch):
         "R1": ("app", "DOC-R", "Title"),
         "R2": ("app", "DOC-R", "Title"),
     }
-    monkeypatch.setattr(retrieve_mod.anyio.from_thread, "run", lambda fn, *args, **kw: fn(*args, **kw))
+    monkeypatch.setattr(
+        retrieve_mod.anyio.from_thread, "run", lambda fn, *args, **kw: fn(*args, **kw)
+    )
 
     docs = [
         Document(content="a", meta={"document_id": "R1"}),
