@@ -170,6 +170,29 @@ def to_async_dsn(dsn: str) -> str:
     return dsn.replace("mysql+pymysql://", "mysql+aiomysql://")
 
 
+def _wrap_ping(dbapi_conn: object) -> None:
+    # aiomysql ping(reconnect: bool) has no default; do_ping omits it on
+    # the _send_false_to_ping=False path, raising TypeError.
+    # Patch the class (not the instance) — AsyncAdapt_aiomysql_connection
+    # uses __slots__ so instance attribute assignment raises AttributeError.
+    cls = type(dbapi_conn)
+    if getattr(cls, "_ragent_ping_patched", False):
+        return
+    _orig = cls.ping  # type: ignore[attr-defined]
+    cls.ping = lambda self, reconnect=False: _orig(self, reconnect)  # type: ignore[attr-defined]
+    cls._ragent_ping_patched = True  # type: ignore[attr-defined]
+
+
+def patch_aiomysql_ping(engine: object) -> None:
+    from sqlalchemy import event
+
+    event.listen(
+        engine.sync_engine,  # type: ignore[attr-defined]
+        "connect",
+        lambda dbapi_conn, _: _wrap_ping(dbapi_conn),
+    )
+
+
 def auto_init(db_url: str, es_url: str) -> None:
     from sqlalchemy import create_engine
 
