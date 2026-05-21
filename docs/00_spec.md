@@ -840,12 +840,12 @@ Inventory of every `error_code` emitted by P1 (API responses + log events). New 
 | `.md`   | `MarkdownToDocument`     | `text/markdown`           | front-matter stripped | **P1** |
 | `.html` | `HTMLToDocument`         | `text/html`               | visible text, script/style stripped | **P1** |
 | `.csv`  | `CSVToDocument`          | `text/csv`                | row-as-document; rows packed by `RowMerger` to ~2 000 chars (B24); bounded by global 50 MB file limit (B2) | **P1** |
-| `.pdf`  | `_PdfASTSplitter`        | `application/pdf`         | one atom per page; fast MuPDF text extraction; RapidOCR (ONNX) on image-bearing pages; batch-safe for large files | **P1** |
+| `.pdf`  | `_PdfASTSplitter`        | `application/pdf`         | per-page `pymupdf4llm.to_markdown` → `_MarkdownASTSplitter`; RapidOCR auto-selected for image-bearing pages; structured atoms (headings, tables, paragraphs) | **P1** |
 | `.docx` | `_DocxASTSplitter`       | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | paragraphs + tables (python-docx) | **P1** |
 | `.pptx` | `_PptxASTSplitter`       | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | one atom per slide (python-pptx) | **P1** |
 | `.xlsx` | `XLSXToDocument`         | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | active sheets | P2 |
 
-> 415 on unsupported MIME; 413 on > 50 MB. PDF ingest supports scanned / image-bearing pages via RapidOCR (ONNX, pure-Python, no OS-level dependency); pages with no raster images use the fast MuPDF text path (no OCR cost).
+> 415 on unsupported MIME; 413 on > 50 MB. PDF ingest uses `pymupdf4llm.to_markdown` per page to produce structured markdown atoms (headings, tables, paragraphs); `rapidocr-onnxruntime` is auto-selected by pymupdf4llm for image-bearing pages (no OS-level dependency).
 
 ### 4.3 Pipeline Catalog
 

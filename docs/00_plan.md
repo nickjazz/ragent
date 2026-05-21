@@ -557,6 +557,7 @@ v2 replaces the underlying behavior in C2–C6):
 | T-OCR.1 | Red | Update `tests/unit/test_pdf_ast_splitter.py` OCR tests to mock `_get_rapidocr_engine` instead of `page.get_textpage_ocr`; add `test_pdf_page_text_ocr_engine_receives_pixmap` asserting pixmap is passed to engine. Confirm tests fail before impl. | §4.2 | [x] | QA |
 | T-OCR.2 | Green | `pyproject.toml` — add `rapidocr-onnxruntime`; `src/ragent/pipelines/ingest.py` — remove `PDF_OCR_LANGUAGES`; add `_get_rapidocr_engine()` lazy singleton; rewrite `_pdf_page_text()` to render pixmap + call RapidOCR; update docstrings. | §4.2 | [x] | Dev |
 | T-OCR.3 | Refactor | `docs/00_spec.md` L843/848/1006 — replace Tesseract wording; remove `PDF_OCR_LANGUAGES` env-var row. `.env.example` — remove `PDF_OCR_LANGUAGES` line. | §4.6 | [x] | Dev |
+| T-OCR.4 | Refactor | Use `pymupdf4llm.to_markdown(pdf, pages=[i], use_ocr=True)` per page instead of custom `_pdf_page_text()`; feed result to `_MarkdownASTSplitter`; remove `_rapidocr_engine` singleton and `_pdf_page_text`; update tests and spec §4.2. | §4.2 | [x] | Dev |
 
 ### Embedding-model lifecycle (branch `claude/design-embedding-model-switch-5N3Uh`) — 2026-05-15
 
