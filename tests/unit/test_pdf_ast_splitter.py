@@ -126,6 +126,19 @@ def test_pdf_empty_markdown_page_skipped(monkeypatch):
     assert atoms == []
 
 
+def test_pdf_to_markdown_fallback_on_failure(monkeypatch):
+    """When to_markdown raises, falls back to plain fitz text; page is still ingested."""
+    from unittest.mock import patch
+
+    with patch("ragent.pipelines.ingest.pymupdf4llm") as mock_module:
+        mock_module.to_markdown.side_effect = RuntimeError("rapidocr internal error")
+        data = _make_pdf_bytes(["Fallback text"])
+        atoms = _run_splitter(data)
+
+    assert len(atoms) >= 1
+    assert any("Fallback text" in a.content for a in atoms)
+
+
 def test_pdf_store_shrink_called_once_per_page(monkeypatch):
     """MuPDF LRU cache is evicted after every page to bound peak RSS."""
     import fitz

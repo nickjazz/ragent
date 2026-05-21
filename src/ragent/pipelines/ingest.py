@@ -428,7 +428,11 @@ class _PdfASTSplitter:
             with fitz.open(stream=raw_bytes, filetype="pdf") as pdf:
                 assert_safe_pdf_page_count(pdf.page_count, max_pages=INGEST_MAX_PDF_PAGES)
                 for page_idx in range(pdf.page_count):
-                    md = pymupdf4llm.to_markdown(pdf, pages=[page_idx], use_ocr=True)
+                    try:
+                        md = pymupdf4llm.to_markdown(pdf, pages=[page_idx], use_ocr=True)
+                    except Exception:
+                        _logger.warning("pdf_to_markdown_fallback", page=page_idx + 1, exc_info=True)
+                        md = pdf[page_idx].get_text("text").strip()
                     fitz.TOOLS.store_shrink(100)
                     if not md.strip():
                         continue
