@@ -9,13 +9,14 @@ import base64
 import json
 import os
 import ssl
-from collections.abc import Iterator
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import structlog
 from sqlalchemy import text
+
+from ragent.utility.sql_script import iter_sql_statements
 
 logger = structlog.get_logger(__name__)
 
@@ -61,40 +62,8 @@ def _es_request(url: str, method: str = "GET", body: dict | None = None) -> dict
         raise
 
 
-def _strip_comments(sql: str) -> str:
-    """Drop `--` line comments — both whole-line (`^--`) and trailing
-    (`<sql> -- tail`). Preserves blank lines so multi-line statements stay
-    intact after the `;` split. Does NOT handle `--` inside string literals
-    because the project's migrations contain no such literals (the JSON
-    seed in 009_system_settings uses `JSON_OBJECT(...)`, not string lits).
-    Adding tokenizer support is a future change if that invariant breaks.
-    """
-    out: list[str] = []
-    for ln in sql.splitlines():
-        stripped = ln.lstrip()
-        if stripped.startswith("--"):
-            continue
-        idx = ln.find("--")
-        if idx >= 0:
-            ln = ln[:idx].rstrip()
-        out.append(ln)
-    return "\n".join(out).strip()
-
-
-def _iter_statements(sql: str) -> Iterator[str]:
-    """Yield non-empty SQL statements from a multi-statement script.
-
-    Strips `--` line comments FIRST, then splits on `;`. The reverse order
-    (split-then-strip — the historical pattern across init_schema and the
-    alembic wrappers) tears a `--` comment in half whenever it contains a
-    `;` mid-line, leaving the trailing portion without its `--` prefix and
-    fed to the engine as broken SQL (PR #86 hit this twice, once on
-    schema.sql and once on migrations/010_feedback.sql).
-    """
-    for raw in _strip_comments(sql).split(";"):
-        stmt = raw.strip()
-        if stmt:
-            yield stmt
+def _iter_statements(sql: str):
+    return iter_sql_statements(sql)
 
 
 def init_mariadb(engine) -> None:
