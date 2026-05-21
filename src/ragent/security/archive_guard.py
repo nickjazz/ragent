@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import io
 import zipfile
-from enum import StrEnum
+from ragent.utility.compat import StrEnum
 from typing import Final
 
 from ragent.bootstrap.metrics import record_ingest_rejection
