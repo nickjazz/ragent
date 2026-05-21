@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import structlog
+from haystack.dataclasses import Document
 from opentelemetry import trace
 
 _INGEST_LOGGER = structlog.get_logger("ragent.ingest")
@@ -53,7 +54,7 @@ def _ctx() -> dict[str, Any]:
 
 
 def _count_documents(value: Any) -> int | None:
-    if isinstance(value, list):
+    if isinstance(value, list) and (not value or isinstance(value[0], Document)):
         return len(value)
     return None
 

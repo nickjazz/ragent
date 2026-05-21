@@ -737,11 +737,15 @@ class DocumentEmbedder:
                 results = list(pool.map(lambda m: self._embed(m, texts), models))
 
         stable_vectors = results[0]
+        stable_field = models[0].field
         extra_vectors = [(m.field, vecs) for m, vecs in zip(models[1:], results[1:], strict=True)]
 
         out: list[Document] = []
         for i, doc in enumerate(documents):
             new_meta = dict(doc.meta or {})
+            # Also store in the model-specific meta field so _DynamicFieldEmbeddingRetriever
+            # can target it via kNN — the ES "embedding" field name doesn't match stable.field.
+            new_meta[stable_field] = stable_vectors[i]
             for field, vectors in extra_vectors:
                 new_meta[field] = vectors[i]
             out.append(dataclasses.replace(doc, embedding=stable_vectors[i], meta=new_meta))
