@@ -11,7 +11,7 @@ from ragent.repositories.document_repository import DocumentRow
 from tests.conftest import make_ingest_container
 
 
-def _doc(mime_type: str | None = None) -> DocumentRow:
+def _doc(mime_type: str | None = None, ingest_type: str = "file") -> DocumentRow:
     now = datetime.datetime.now(datetime.UTC)
     return DocumentRow(
         document_id="DOC-UP-1",
@@ -26,6 +26,7 @@ def _doc(mime_type: str | None = None) -> DocumentRow:
         created_at=now,
         updated_at=now,
         mime_type=mime_type,
+        ingest_type=ingest_type,
     )
 
 
@@ -132,6 +133,7 @@ async def test_unprotect_filename_skips_duplicate_extension():
         created_at=now,
         updated_at=now,
         mime_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ingest_type="file",
     )
     container = make_ingest_container(doc, unprotect_client=unprotect_mock)
 
@@ -142,3 +144,44 @@ async def test_unprotect_filename_skips_duplicate_extension():
 
     call_kwargs = unprotect_mock.unprotect.call_args[1]
     assert call_kwargs["filename"] == "report.pptx"
+
+
+@pytest.mark.asyncio
+async def test_unprotect_skipped_for_inline_ingest_type():
+    """inline ingest_type bypasses unprotect even when the client is configured."""
+    unprotect_mock = MagicMock()
+    unprotect_mock.unprotect.return_value = b"should-not-be-used"
+    container = make_ingest_container(
+        _doc(ingest_type="inline"),
+        unprotect_client=unprotect_mock,
+        minio_bytes=b"original-inline",
+    )
+
+    from ragent.workers import ingest as worker_mod
+
+    with patch("ragent.bootstrap.composition.get_container", return_value=container):
+        await worker_mod.ingest_pipeline_task("DOC-UP-1")
+
+    unprotect_mock.unprotect.assert_not_called()
+    loader_kwargs = container.ingest_pipeline.run.call_args[0][0]["loader"]
+    assert loader_kwargs["content"] == "original-inline"
+
+
+@pytest.mark.asyncio
+async def test_unprotect_failure_falls_back_to_original_bytes():
+    """When unprotect raises, the pipeline continues with the original MinIO bytes."""
+    unprotect_mock = MagicMock()
+    unprotect_mock.unprotect.side_effect = RuntimeError("unprotect service unavailable")
+    container = make_ingest_container(
+        _doc(ingest_type="file"),
+        unprotect_client=unprotect_mock,
+        minio_bytes=b"original-fallback",
+    )
+
+    from ragent.workers import ingest as worker_mod
+
+    with patch("ragent.bootstrap.composition.get_container", return_value=container):
+        await worker_mod.ingest_pipeline_task("DOC-UP-1")
+
+    loader_kwargs = container.ingest_pipeline.run.call_args[0][0]["loader"]
+    assert loader_kwargs["content"] == "original-fallback"

@@ -95,12 +95,19 @@ async def ingest_pipeline_task(document_id: str) -> None:
         data = registry.get_object(site, doc.object_key, expected_size=expected_size)
         structlog.contextvars.bind_contextvars(file_size_bytes=len(data), mime_type=mime)
 
-        if container.unprotect_client is not None:
-            data = container.unprotect_client.unprotect(
-                file_bytes=data,
-                user_id=doc.create_user,
-                filename=_unprotect_filename(doc.object_key, mime),
-            )
+        if container.unprotect_client is not None and (doc.ingest_type or "inline") != "inline":
+            try:
+                data = container.unprotect_client.unprotect(
+                    file_bytes=data,
+                    user_id=doc.create_user,
+                    filename=_unprotect_filename(doc.object_key, mime),
+                )
+            except Exception:
+                logger.warning(
+                    "ingest.unprotect_failed_fallback",
+                    document_id=document_id,
+                    exc_info=True,
+                )
 
         if mime in BINARY_MIMES:
             loader_kwargs: dict = {
