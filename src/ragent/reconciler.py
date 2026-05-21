@@ -234,9 +234,15 @@ class _PerTickRunner:
         from ragent.bootstrap.broker import broker as taskiq_broker
         from ragent.bootstrap.composition import get_container
         from ragent.bootstrap.dispatcher import TaskiqDispatcher
-        from ragent.bootstrap.init_schema import to_async_dsn
+        from ragent.bootstrap.init_schema import patch_aiomysql_ping, to_async_dsn
+        from ragent.utility.env import int_env
 
-        engine = create_async_engine(to_async_dsn(os.environ["MARIADB_DSN"]))
+        engine = create_async_engine(
+            to_async_dsn(os.environ["MARIADB_DSN"]),
+            pool_pre_ping=True,
+            pool_recycle=int_env("MARIADB_POOL_RECYCLE_SECONDS", 280),
+        )
+        patch_aiomysql_ping(engine)
         try:
             await taskiq_broker.startup()
             try:

@@ -43,7 +43,7 @@ def test_runner_builds_fresh_engine_each_tick(
 
     engines: list[MagicMock] = []
 
-    def _fake_engine(_dsn: str) -> MagicMock:
+    def _fake_engine(_dsn: str, **_kwargs: object) -> MagicMock:
         engine = MagicMock(name=f"engine{len(engines)}")
         engine.dispose = AsyncMock()
         engines.append(engine)
@@ -60,6 +60,7 @@ def test_runner_builds_fresh_engine_each_tick(
         "ragent.bootstrap.composition.get_container",
         lambda: MagicMock(registry=MagicMock()),
     )
+    monkeypatch.setattr("ragent.bootstrap.init_schema.patch_aiomysql_ping", lambda engine: None)
 
     runner = rec_mod._build_from_env()
     runner.run()

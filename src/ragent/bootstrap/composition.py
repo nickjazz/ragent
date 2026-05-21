@@ -170,7 +170,7 @@ def build_container() -> Container:
     )
 
     # MARIADB_DSN may use either pymysql:// or aiomysql:// — async engine needs aiomysql.
-    from ragent.bootstrap.init_schema import to_async_dsn
+    from ragent.bootstrap.init_schema import patch_aiomysql_ping, to_async_dsn
 
     # pool_pre_ping reconnects transparently when the server closed an idle
     # connection; pool_recycle must stay below the server-side wait_timeout.
@@ -179,6 +179,7 @@ def build_container() -> Container:
         pool_pre_ping=True,
         pool_recycle=_int_env("MARIADB_POOL_RECYCLE_SECONDS", 280),
     )
+    patch_aiomysql_ping(engine)
 
     doc_repo = DocumentRepository(engine=engine)
 

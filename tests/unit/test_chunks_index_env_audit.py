@@ -66,6 +66,7 @@ def test_composition_threads_es_chunks_index_to_vector_extractor(
 
     with (
         patch("ragent.plugins.vector.VectorExtractor", vector_spy),
+        patch("ragent.bootstrap.init_schema.patch_aiomysql_ping"),
         patch("sqlalchemy.ext.asyncio.create_async_engine", MagicMock()),
         patch("ragent.clients.embedding.EmbeddingClient", MagicMock()),
         patch("ragent.clients.llm.LLMClient", MagicMock()),
@@ -114,6 +115,7 @@ def test_composition_threads_es_chunks_index_to_feedback_retriever(
 
     with (
         patch("ragent.pipelines.chat._FeedbackMemoryRetriever", feedback_spy),
+        patch("ragent.bootstrap.init_schema.patch_aiomysql_ping"),
         patch("sqlalchemy.ext.asyncio.create_async_engine", MagicMock()),
         patch("ragent.clients.embedding.EmbeddingClient", MagicMock()),
         patch("ragent.clients.llm.LLMClient", MagicMock()),

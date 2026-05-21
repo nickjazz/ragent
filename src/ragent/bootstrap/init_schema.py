@@ -170,6 +170,23 @@ def to_async_dsn(dsn: str) -> str:
     return dsn.replace("mysql+pymysql://", "mysql+aiomysql://")
 
 
+def _wrap_ping(dbapi_conn: object) -> None:
+    # aiomysql ping(reconnect: bool) has no default; do_ping omits it on
+    # the _send_false_to_ping=False path, raising TypeError.
+    _orig = dbapi_conn.ping  # type: ignore[attr-defined]
+    dbapi_conn.ping = lambda reconnect=False: _orig(reconnect)  # type: ignore[attr-defined]
+
+
+def patch_aiomysql_ping(engine: object) -> None:
+    from sqlalchemy import event
+
+    event.listen(
+        engine.sync_engine,  # type: ignore[attr-defined]
+        "connect",
+        lambda dbapi_conn, _: _wrap_ping(dbapi_conn),
+    )
+
+
 def auto_init(db_url: str, es_url: str) -> None:
     from sqlalchemy import create_engine
 
