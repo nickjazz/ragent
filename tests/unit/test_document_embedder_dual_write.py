@@ -2,12 +2,14 @@
 
 Contract:
 - IDLE state: `registry.write_models()` returns `[stable]`; embedder writes
-  the stable model's vector to `doc.embedding` (legacy chunks_v1 field).
+  the stable model's vector to `doc.embedding` (legacy chunks_v1 field) AND
+  to `doc.meta[stable.field]` (model-specific field) so
+  `_DynamicFieldEmbeddingRetriever` can target it via kNN.
 - CANDIDATE/CUTOVER state: `write_models()` returns `[stable, candidate]`;
-  stable vector still lands on `doc.embedding`, candidate vector lands on
-  `doc.meta[candidate.field]` (Haystack ES writer expands meta keys to
-  top-level ES fields, so the chunk doc ends up with both
-  `embedding` AND `embedding_<cand>_<dim>` populated).
+  stable vector lands on `doc.embedding` AND `doc.meta[stable.field]`;
+  candidate vector lands on `doc.meta[candidate.field]` (Haystack ES writer
+  expands meta keys to top-level ES fields, so the chunk doc ends up with
+  `embedding`, `embedding_<stable>_<dim>`, AND `embedding_<cand>_<dim>`).
 - Embed callable is called once per model (one batch per model), not once
   per text. Stable always called first to preserve `doc.embedding`.
 - Empty document list short-circuits — no embed calls.
@@ -56,6 +58,9 @@ def test_idle_state_writes_stable_vector_to_doc_embedding() -> None:
     assert len(out) == 2
     assert out[0].embedding == [0.1] * 1024
     assert out[1].embedding == [0.1] * 1024
+    # Stable field MUST be in meta so _DynamicFieldEmbeddingRetriever can target it.
+    assert out[0].meta[stable.field] == [0.1] * 1024
+    assert out[1].meta[stable.field] == [0.1] * 1024
     # No candidate field in IDLE.
     assert "embedding_bgem3v2_768" not in (out[0].meta or {})
     # Embed called exactly once with the stable model and both texts.
@@ -87,6 +92,8 @@ def test_dual_write_state_writes_stable_to_embedding_and_candidate_to_meta() -> 
 
     # Stable vector lands on the legacy `doc.embedding` field.
     assert out[0].embedding == [1024.0] * 1024
+    # Stable vector ALSO in doc.meta[stable.field] for _DynamicFieldEmbeddingRetriever.
+    assert out[0].meta[stable.field] == [1024.0] * 1024
     # Candidate vector lands on `doc.meta[candidate.field]`.
     assert out[0].meta[candidate.field] == [768.0] * 768
     # Both models invoked, stable first.
@@ -118,6 +125,7 @@ def test_dual_write_preserves_existing_meta() -> None:
 
     assert out[0].meta["document_id"] == "DOCID-1"
     assert out[0].meta["source_app"] == "confluence"
+    assert out[0].meta[stable.field] == [1.0] * 1024
     assert out[0].meta[candidate.field] == [1.0] * 768
 
 

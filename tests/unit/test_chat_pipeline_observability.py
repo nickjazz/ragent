@@ -26,14 +26,14 @@ from ragent.pipelines.observability import wrap_pipeline_component
 
 class _FakeComponent:
     def run(self, documents: list) -> dict:
-        return {"documents": [{"out": True} for _ in range(len(documents) + 1)]}
+        return {"documents": [Document() for _ in range(len(documents) + 1)]}
 
 
 def test_wrap_pipeline_component_emits_namespaced_events() -> None:
     comp = _FakeComponent()
     wrap_pipeline_component(comp, namespace="chat", step="reranker")
     with structlog.testing.capture_logs() as logs:
-        comp.run(documents=[1, 2, 3])
+        comp.run(documents=[Document(), Document(), Document()])
     events = [e for e in logs if e.get("event", "").startswith("chat.step.")]
     assert [e["event"] for e in events] == ["chat.step.started", "chat.step.ok"]
     ok = events[1]
@@ -67,7 +67,7 @@ def test_wrap_pipeline_component_ingest_namespace_still_emits_ingest_events() ->
     comp = _FakeComponent()
     wrap_pipeline_component(comp, namespace="ingest", step="splitter")
     with structlog.testing.capture_logs() as logs:
-        comp.run(documents=[1])
+        comp.run(documents=[Document()])
     events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
     assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
 
@@ -136,6 +136,27 @@ def test_wrap_pipeline_component_otel_span_records_failure(otel_exporter) -> Non
     spans = [s for s in otel_exporter.get_finished_spans() if s.name == "chat.step.reranker"]
     assert len(spans) == 1
     assert spans[0].status.status_code == StatusCode.ERROR
+
+
+def test_count_documents_only_counts_actual_document_lists() -> None:
+    """atoms_in must not be set for embedding vectors, int lists, or list-of-lists.
+
+    Misleading atoms_in=1024 (embedding dim) or atoms_in=2 (number of joiner
+    inputs) produced nonsense log output and masked real document counts.
+    """
+    from ragent.pipelines.observability import _count_documents
+
+    # Legitimate document lists → counted.
+    assert _count_documents([Document(), Document(), Document()]) == 3
+    assert _count_documents([]) == 0
+    # Embedding-vector list (floats) → None, not 1024.
+    assert _count_documents([0.1] * 1024) is None
+    # list-of-lists from DocumentJoiner → None, not number-of-streams.
+    assert _count_documents([[Document()], [Document()]]) is None
+    # Dicts (ingest pipeline stubs) → None.
+    assert _count_documents([{"a": 1}, {"b": 2}]) is None
+    # Integers → None.
+    assert _count_documents([1, 2, 3, 4]) is None
 
 
 def test_build_retrieval_pipeline_wraps_each_component_with_chat_namespace() -> None:

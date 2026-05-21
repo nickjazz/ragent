@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 
 import structlog
+from haystack.dataclasses import Document
 
 from ragent.pipelines.observability import (
     IngestStepError,
@@ -37,7 +38,7 @@ class _FakeComponent:
 
     def run(self, documents: list, **kwargs) -> dict:
         self.called_with = {"documents": documents, **kwargs}
-        return {"documents": [{"out": True} for _ in range(2)]}
+        return {"documents": [Document() for _ in range(2)]}
 
 
 def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
@@ -47,8 +48,8 @@ def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-1", mime_type="text/markdown"),
     ):
-        out = comp.run(documents=[{"a": 1}, {"a": 2}, {"a": 3}])
-    assert out == {"documents": [{"out": True}, {"out": True}]}
+        out = comp.run(documents=[Document(), Document(), Document()])
+    assert len(out["documents"]) == 2
 
     events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
     assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
@@ -190,7 +191,7 @@ def test_wrap_writer_chunks_out_uses_int_documents_written() -> None:
         structlog.testing.capture_logs() as logs,
         bind_ingest_context(document_id="DOC-W", mime_type="text/plain"),
     ):
-        comp.run(documents=[1, 2, 3, 4])
+        comp.run(documents=[Document() for _ in range(4)])
 
     ok = [e for e in logs if e.get("event") == "ingest.step.ok"][0]
     assert ok["chunks_out"] == 4
