@@ -10,6 +10,17 @@ from ragent.mcp_hub.mcp_hub import HubBundle
 from ragent.mcp_hub.server import build_app, main
 
 
+class _FakeHub:
+    def __init__(self) -> None:
+        self.kwargs = None
+
+    def http_app(self, **kwargs):
+        from fastmcp import FastMCP
+
+        self.kwargs = kwargs
+        return FastMCP("fake").http_app(path="/mcp")
+
+
 def test_non_numeric_port_exits_with_clear_message(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
@@ -60,3 +71,19 @@ async def test_build_app_closes_all_clients_and_isolates_failures():
     shutdown_events = [e for e in captured if e.get("event") == "mcp_hub.shutdown_error"]
     assert len(shutdown_events) == 1
     assert shutdown_events[0]["system"] == "bad"
+
+
+def test_build_app_forwards_stateless_and_json_response_flags() -> None:
+    """Hub must explicitly support non-session JSON response mode so MCP
+    clients that cannot keep session state or parse SSE can still call tools
+    over plain JSON HTTP."""
+    fake_hub = _FakeHub()
+    bundle = HubBundle(hub=fake_hub, clients={}, failures=[])
+
+    _ = build_app(bundle, path="/mcp", json_response=True, stateless_http=True)
+
+    assert fake_hub.kwargs is not None
+    assert fake_hub.kwargs["path"] == "/mcp"
+    assert fake_hub.kwargs["transport"] == "streamable-http"
+    assert fake_hub.kwargs["json_response"] is True
+    assert fake_hub.kwargs["stateless_http"] is True

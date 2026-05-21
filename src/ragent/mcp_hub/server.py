@@ -6,6 +6,8 @@ Environment variables:
     MCP_HUB_HOST        Bind host (default: 0.0.0.0).
     MCP_HUB_PORT        Bind port (default: 9000).
     MCP_HUB_PATH        Streamable HTTP mount path (default: /mcp).
+    MCP_HUB_STATELESS_HTTP  Use stateless HTTP mode (default: false).
+    MCP_HUB_JSON_RESPONSE   Return JSON responses instead of SSE (default: false).
 
 Run:
     uv run python -m ragent.mcp_hub.server
@@ -56,13 +58,24 @@ class HeaderForwardMiddleware:
             _INCOMING_HEADERS.reset(token)
 
 
-def build_app(bundle: HubBundle, *, path: str = "/mcp") -> Any:
+def build_app(
+    bundle: HubBundle,
+    *,
+    path: str = "/mcp",
+    json_response: bool = False,
+    stateless_http: bool = False,
+) -> Any:
     """Compose the ASGI app that `main()` serves so integration tests can boot
     the same code path without subprocessing. FastMCP 3.x owns the Streamable
     HTTP lifespan (session manager); we wrap it so our per-system httpx
     clients are closed on shutdown, then layer `HeaderForwardMiddleware` on
     the outside."""
-    fastmcp_app = bundle.hub.http_app(path=path)
+    fastmcp_app = bundle.hub.http_app(
+        path=path,
+        transport="streamable-http",
+        json_response=json_response,
+        stateless_http=stateless_http,
+    )
 
     async def _metrics(_request: Request) -> Response:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -102,8 +115,21 @@ def main() -> None:
         raise SystemExit(f"MCP_HUB_PORT must be an integer, got {exc.args[0]!r}") from exc
     path = os.environ.get("MCP_HUB_PATH", "/mcp")
 
+    truthy = {"1", "true", "yes", "on"}
+    stateless_http = os.environ.get("MCP_HUB_STATELESS_HTTP", "false").lower() in truthy
+    json_response = os.environ.get("MCP_HUB_JSON_RESPONSE", "false").lower() in truthy
+
     bundle = build_hub(yaml_path, name=name)
-    uvicorn.run(build_app(bundle, path=path), host=host, port=port)
+    uvicorn.run(
+        build_app(
+            bundle,
+            path=path,
+            json_response=json_response,
+            stateless_http=stateless_http,
+        ),
+        host=host,
+        port=port,
+    )
 
 
 if __name__ == "__main__":
