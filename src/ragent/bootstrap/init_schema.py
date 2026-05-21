@@ -173,8 +173,14 @@ def to_async_dsn(dsn: str) -> str:
 def _wrap_ping(dbapi_conn: object) -> None:
     # aiomysql ping(reconnect: bool) has no default; do_ping omits it on
     # the _send_false_to_ping=False path, raising TypeError.
-    _orig = dbapi_conn.ping  # type: ignore[attr-defined]
-    dbapi_conn.ping = lambda reconnect=False: _orig(reconnect)  # type: ignore[attr-defined]
+    # Patch the class (not the instance) — AsyncAdapt_aiomysql_connection
+    # uses __slots__ so instance attribute assignment raises AttributeError.
+    cls = type(dbapi_conn)
+    if getattr(cls, "_ragent_ping_patched", False):
+        return
+    _orig = cls.ping  # type: ignore[attr-defined]
+    cls.ping = lambda self, reconnect=False: _orig(self, reconnect)  # type: ignore[attr-defined]
+    cls._ragent_ping_patched = True  # type: ignore[attr-defined]
 
 
 def patch_aiomysql_ping(engine: object) -> None:
