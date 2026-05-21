@@ -53,7 +53,9 @@ class LLMClient:
                     self._sleep(2.0)
                 try:
                     span.set_attribute("retry_attempt", attempt)
-                    yield from self._do_stream(messages, model, temperature, max_tokens, usage_out=usage_out)
+                    yield from self._do_stream(
+                        messages, model, temperature, max_tokens, usage_out=usage_out
+                    )
                     logger.info("llm.call", peer_service="llm", model=model, retry_attempt=attempt)
                     return
                 except Exception as exc:
@@ -77,7 +79,9 @@ class LLMClient:
                 error_code=error_code,
             ) from last_exc
 
-    def _do_stream(self, messages, model, temperature, max_tokens, usage_out: list | None = None) -> Generator[str, None, None]:
+    def _do_stream(
+        self, messages, model, temperature, max_tokens, usage_out: list | None = None
+    ) -> Generator[str, None, None]:
         with self._http.post(
             self._url,
             json={

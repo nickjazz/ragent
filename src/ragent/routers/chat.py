@@ -36,7 +36,10 @@ def _extract_token_counts(usage: dict) -> tuple[int | None, int | None]:
     # LLMClient.chat returns camelCase keys; streaming uses snake_case — tolerate both.
     prompt = usage.get("promptTokens", usage.get("prompt_tokens"))
     completion = usage.get("completionTokens", usage.get("completion_tokens"))
-    return (int(prompt) if prompt is not None else None, int(completion) if completion is not None else None)
+    return (
+        int(prompt) if prompt is not None else None,
+        int(completion) if completion is not None else None,
+    )
 
 
 def _build_sources(documents: list[Any], max_chars: int) -> list[dict] | None:
