@@ -95,9 +95,8 @@ def test_pdf_page_number_in_meta():
 
 def test_pdf_splitter_calls_to_markdown_per_page(monkeypatch):
     """to_markdown is called once per page with pages=[i] and use_ocr=True."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
-    import ragent.pipelines.ingest as ingest_mod
 
     calls = []
 
