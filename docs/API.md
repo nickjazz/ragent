@@ -158,7 +158,7 @@ curl -X DELETE http://localhost:8000/ingest/v1/01J9ABCDEFGHJKMNPQRSTVWXYZ \
 
 ### `POST /ingest/v1/{document_id}/rerun` — Manually re-dispatch the pipeline
 
-Operator escape hatch for documents that need another pipeline pass without re-uploading. Accepts any source status in `{UPLOADED, PENDING, FAILED}`; flips the row back to `PENDING` (clearing `error_code`/`error_reason`) and re-enqueues `ingest.pipeline`. Does **not** bump `attempt` — the worker's claim path does that on pickup.
+Operator escape hatch for documents that need another pipeline pass without re-uploading. Accepts any source status in `{UPLOADED, PENDING, FAILED}`; flips the row back to `PENDING`, **resets `attempt` to 0** (so an exhausted FAILED row isn't immediately re-FAILED by the reconciler's attempt budget check), clears `error_code`/`error_reason`, and re-enqueues `ingest.pipeline`.
 
 ```bash
 curl -X POST http://localhost:8000/ingest/v1/01J9ABCDEFGHJKMNPQRSTVWXYZ/rerun \
@@ -226,7 +226,7 @@ Request schema is shared by both endpoints. Only `messages` is required.
   "provider": "openai",
   "model": "gptoss-120b",
   "temperature": 0.7,
-  "max_tokens": 4096,
+  "maxTokens": 4096,
   "source_app": "confluence",
   "source_meta": "engineering",
   "top_k": 20,
