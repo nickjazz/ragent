@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from ragent.utility.compat import StrEnum
 from typing import Final
 
 from pydantic import BaseModel, Field, field_validator
+
+from ragent.utility.compat import StrEnum
 
 VOTE_LIKE: Final[int] = 1
 VOTE_DISLIKE: Final[int] = -1
