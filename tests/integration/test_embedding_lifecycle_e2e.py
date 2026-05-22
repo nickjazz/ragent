@@ -24,8 +24,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = [pytest.mark.docker, pytest.mark.asyncio]
 
-_STABLE_SEED = {"name": "bge-m3", "dim": 1024, "api_url": "", "model_arg": "bge-m3"}
 _STABLE_INDEX = "chunks_v1"
+_STABLE_SEED = {
+    "name": "bge-m3",
+    "dim": 1024,
+    "api_url": "",
+    "model_arg": "bge-m3",
+    "index_name": _STABLE_INDEX,
+}
 _ALIAS = "chunks_v1_active"
 
 
