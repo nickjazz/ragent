@@ -19,7 +19,16 @@ def _reconciler(*, settings_repo=None, es_client=None, broker=None, chunks_index
 async def test_backfill_enqueued_when_candidate_under_covered() -> None:
     """CANDIDATE state + coverage < 0.99 → broker.enqueue called with index names."""
     settings = AsyncMock()
-    settings.get.return_value = {"name": "bge-m3-v2", "dim": 768, "index_name": "chunks_v2"}
+    settings.get_many.return_value = {
+        "embedding.stable": {
+            "name": "bge-m3",
+            "dim": 1024,
+            "api_url": "",
+            "model_arg": "bge-m3",
+            "index_name": "chunks_v1",
+        },
+        "embedding.candidate": {"name": "bge-m3-v2", "dim": 768, "index_name": "chunks_v2"},
+    }
     es = AsyncMock()
     es.count.side_effect = [{"count": 100}, {"count": 50}]
     broker = AsyncMock()
@@ -37,7 +46,7 @@ async def test_backfill_enqueued_when_candidate_under_covered() -> None:
 async def test_backfill_not_enqueued_when_idle_state() -> None:
     """IDLE state (no candidate) → no enqueue, no ES count calls."""
     settings = AsyncMock()
-    settings.get.return_value = None
+    settings.get_many.return_value = {}
     es = AsyncMock()
     broker = AsyncMock()
 
@@ -51,7 +60,16 @@ async def test_backfill_not_enqueued_when_idle_state() -> None:
 async def test_backfill_not_enqueued_when_coverage_sufficient() -> None:
     """Coverage ≥ 0.99 → no enqueue (candidate already fully backfilled)."""
     settings = AsyncMock()
-    settings.get.return_value = {"name": "bge-m3-v2", "dim": 768, "index_name": "chunks_v2"}
+    settings.get_many.return_value = {
+        "embedding.stable": {
+            "name": "bge-m3",
+            "dim": 1024,
+            "api_url": "",
+            "model_arg": "bge-m3",
+            "index_name": "chunks_v1",
+        },
+        "embedding.candidate": {"name": "bge-m3-v2", "dim": 768, "index_name": "chunks_v2"},
+    }
     es = AsyncMock()
     es.count.side_effect = [{"count": 100}, {"count": 99}]
     broker = AsyncMock()

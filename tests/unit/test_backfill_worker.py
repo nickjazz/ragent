@@ -20,7 +20,7 @@ def _scroll_page(ids: list[str], scroll_id: str = "scroll-1") -> dict:
                 {
                     "_id": id_,
                     "_source": {
-                        "content": f"text {id_}",
+                        "text": f"text {id_}",
                         "title": f"Title {id_}",
                         "document_id": f"doc-{id_}",
                     },
@@ -100,7 +100,7 @@ def test_backfill_scrolls_and_embeds_missing_chunks() -> None:
     )
 
     assert total == 2
-    assert embed_calls == [["Title id-1\n\ntext id-1", "Title id-2\n\ntext id-2"]]
+    assert embed_calls == [["text id-1", "text id-2"]]
     es.bulk.assert_called_once()
     assert es.bulk.call_args.kwargs["index"] == "chunks_v2"
 

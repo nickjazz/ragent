@@ -53,7 +53,6 @@ class EmbeddingModelConfig:
             "dim": self.dim,
             "api_url": self.api_url,
             "model_arg": self.model_arg,
-            "field": self.field,
         }
         if self.index_name is not None:
             d["index_name"] = self.index_name

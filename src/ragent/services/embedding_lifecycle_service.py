@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +43,15 @@ class EmbeddingFieldCollision(Exception):
     """Kept for router + test compatibility; promote no longer raises it (index-per-model)."""
 
 
+_VERSION_SUFFIX_RE = re.compile(r"_v(\d+)$")
+
+
 def _next_index_name(current: str) -> str:
-    """'chunks_v1' → 'chunks_v2', 'chunks_v10' → 'chunks_v11'."""
-    prefix, _, version = current.rpartition("_v")
-    return f"{prefix}_v{int(version) + 1}"
+    """'chunks_v1' → 'chunks_v2', 'chunks_v10' → 'chunks_v11', 'chunks' → 'chunks_v2'."""
+    m = _VERSION_SUFFIX_RE.search(current)
+    if not m:
+        return f"{current}_v2"
+    return f"{current[: m.start()]}_v{int(m.group(1)) + 1}"
 
 
 def _chunk_index_body(dim: int) -> dict:
@@ -312,9 +318,10 @@ class EmbeddingLifecycleService:
             candidate_index = self._registry.candidate_index
             if not candidate_index:
                 raise IllegalEmbeddingTransition("backfill: candidate has no index_name")
+            stable_index = self._registry.stable_index
             await broker.enqueue(
                 "ingest.backfill_candidate",
-                stable_index=self._index,
+                stable_index=stable_index,
                 candidate_index=candidate_index,
             )
         except Exception as exc:
@@ -324,7 +331,7 @@ class EmbeddingLifecycleService:
         return {
             "state": state,
             "queued": True,
-            "stable_index": self._index,
+            "stable_index": stable_index,
             "candidate_index": candidate_index,
         }
 

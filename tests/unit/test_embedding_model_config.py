@@ -81,7 +81,7 @@ def test_roundtrip_to_from_dict() -> None:
     assert restored == src
     assert payload["name"] == "bge-m3"
     assert payload["dim"] == 1024
-    assert payload["field"] == "embedding_bgem3_1024"
+    assert "field" not in payload
 
 
 # ---------------------------------------------------------------------------

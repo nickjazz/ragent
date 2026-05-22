@@ -147,15 +147,19 @@ class Reconciler:
         if self._settings_repo is None or self._es_client is None:
             return
         try:
-            candidate = await self._settings_repo.get("embedding.candidate")
+            settings = await self._settings_repo.get_many(
+                ["embedding.stable", "embedding.candidate"]
+            )
         except Exception:
             logger.exception("reconciler.backfill.read_error")
             return
+        stable = settings.get("embedding.stable")
+        candidate = settings.get("embedding.candidate")
         if not candidate or not candidate.get("index_name"):
             return
 
         candidate_index = candidate["index_name"]
-        stable_index = self._chunks_index
+        stable_index = (stable or {}).get("index_name") or self._chunks_index
         try:
             stable_resp, candidate_resp = await asyncio.gather(
                 self._es_client.count(index=stable_index),
@@ -292,8 +296,9 @@ class _PerTickRunner:
 
 
 def _build_from_env() -> _PerTickRunner:
-    # Importing the workers module triggers `@broker.task` registration
+    # Importing the workers modules triggers `@broker.task` registration
     # so dispatcher.enqueue() can resolve task labels (B25).
+    import ragent.workers.backfill  # noqa: F401
     import ragent.workers.ingest  # noqa: F401
 
     return _PerTickRunner()

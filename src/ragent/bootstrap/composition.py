@@ -210,6 +210,8 @@ def build_container() -> Container:
     embedding_registry = ActiveModelRegistry(
         settings_repo=system_settings_repo,
         ttl_seconds=_int_env("EMBEDDING_REGISTRY_TTL_SECONDS", 10),
+        chunks_read_alias=chunks_read_alias,
+        chunks_fallback_index=chunks_index_name,
     )
     embedding_lifecycle_service = EmbeddingLifecycleService(
         settings_repo=system_settings_repo,

@@ -416,6 +416,7 @@ async def test_next_index_name_increments_version() -> None:
     assert _next_index_name("chunks_v1") == "chunks_v2"
     assert _next_index_name("chunks_v2") == "chunks_v3"
     assert _next_index_name("my_index_v10") == "my_index_v11"
+    assert _next_index_name("chunks") == "chunks_v2"
 
 
 async def test_promote_creates_new_physical_index_not_put_mapping() -> None:

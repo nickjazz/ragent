@@ -1,9 +1,9 @@
 """T-EM-R.9 — Backfill worker: embed missing chunks into candidate_index.
 
 Per-batch algorithm (batch_size chunks):
-1. ES scroll stable_index — fetch _id + _source (content, title, document_id)
+1. ES scroll stable_index — fetch _id + _source (all fields except embedding)
 2. _mget candidate_index — keep only _ids where found=False
-3. Embed missing chunks with candidate model (title + "\\n\\n" + content)
+3. Embed missing chunks with candidate model (text field)
 4. ES bulk index → candidate_index with field "embedding"
 5. Repeat until scroll exhausted
 
@@ -23,7 +23,6 @@ logger = structlog.get_logger(__name__)
 
 _BATCH_SIZE = 256
 _SCROLL_TTL = "2m"
-_SOURCE_FIELDS = ["content", "title", "document_id", "chunk_id"]
 
 
 def _run_backfill(
@@ -42,7 +41,7 @@ def _run_backfill(
     total = 0
     resp = es.search(
         index=stable_index,
-        body={"query": {"match_all": {}}, "_source": _SOURCE_FIELDS},
+        body={"query": {"match_all": {}}, "_source": {"excludes": ["embedding"]}},
         size=batch_size,
         scroll=_SCROLL_TTL,
     )
@@ -56,10 +55,7 @@ def _run_backfill(
             missing = [h for h, doc in zip(hits, mget["docs"], strict=True) if not doc.get("found")]
 
             if missing:
-                texts = [
-                    (h["_source"].get("title") or "") + "\n\n" + (h["_source"].get("content") or "")
-                    for h in missing
-                ]
+                texts = [h["_source"].get("text") or "" for h in missing]
                 vectors = embed_fn(candidate_model, texts)
                 ops = []
                 for hit, vec in zip(missing, vectors, strict=True):
