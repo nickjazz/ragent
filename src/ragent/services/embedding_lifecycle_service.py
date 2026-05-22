@@ -188,7 +188,6 @@ class EmbeddingLifecycleService:
         report = await _preflight(
             registry=self._registry,
             es_client=self._es,
-            index_name=self._index,
             promoted_at=promoted_at,
             cache_ttl_seconds=self._ttl,
         )

@@ -1,14 +1,13 @@
 """Cutover preflight (T-EM.11, B50 §6).
 
-Pure-ish function: takes the registry, ES client, index name, and the
-candidate's `promoted_at` timestamp; returns a structured report. The
+Pure-ish function: takes the registry, ES client, and the candidate's
+`promoted_at` timestamp; returns a structured report. The
 lifecycle service maps `pass=False` (with any hard gate failing) to a
 409 problem-details response on the admin router.
 
 Hard gates:
 - state_is_candidate
-- field_dim_matches
-- candidate_coverage (≥ 99%, with empty-index escape)
+- candidate_coverage (≥ 99%, with empty-stable-index escape)
 - dual_write_warmup  (now - promoted_at ≥ 2 × cache_ttl)
 """
 
@@ -26,32 +25,11 @@ def _gate(name: str, level: str, passed: bool, **detail: Any) -> dict:
     return {"name": name, "level": level, "pass": passed, "detail": detail}
 
 
-async def _gate_field_dim(
-    es_client: Any, index_name: str, field: str | None, expected_dim: int | None
-) -> dict:
-    actual_dim: int | None = None
-    if field is not None:
-        mapping = await es_client.indices.get_mapping(index=index_name)
-        try:
-            actual_dim = mapping[index_name]["mappings"]["properties"][field]["dims"]
-        except (KeyError, TypeError):
-            actual_dim = None
-    return _gate(
-        "field_dim_matches",
-        "hard",
-        actual_dim is not None and actual_dim == expected_dim,
-        expected_dim=expected_dim,
-        actual_dim=actual_dim,
-    )
-
-
-async def _gate_coverage(es_client: Any, index_name: str, field: str | None) -> dict:
-    if field is None:
-        return _gate("candidate_coverage", "hard", False, detail="no_candidate")
-    total = (await es_client.count(index=index_name))["count"]
-    covered = (
-        await es_client.count(index=index_name, body={"query": {"exists": {"field": field}}})
-    )["count"]
+async def _gate_coverage(es_client: Any, stable_index: str, candidate_index: str | None) -> dict:
+    if candidate_index is None:
+        return _gate("candidate_coverage", "hard", False, detail="no_candidate_index")
+    total = (await es_client.count(index=stable_index))["count"]
+    covered = (await es_client.count(index=candidate_index))["count"]
     ratio = 1.0 if total == 0 else covered / total
     passed = total == 0 or ratio >= _COVERAGE_THRESHOLD
     return _gate(
@@ -81,7 +59,6 @@ async def preflight(
     *,
     registry: Any,
     es_client: Any,
-    index_name: str,
     promoted_at: datetime,
     cache_ttl_seconds: int,
 ) -> dict:
@@ -91,12 +68,7 @@ async def preflight(
     if not state_ok:
         return {"pass": False, "gates": gates}
 
-    candidate = registry.candidate_model()
-    field = candidate.field if candidate else None
-    expected_dim = candidate.dim if candidate else None
-
-    gates.append(await _gate_field_dim(es_client, index_name, field, expected_dim))
-    gates.append(await _gate_coverage(es_client, index_name, field))
+    gates.append(await _gate_coverage(es_client, registry.stable_index, registry.candidate_index))
     gates.append(_gate_warmup(promoted_at, cache_ttl_seconds))
 
     overall = all(g["pass"] for g in gates if g["level"] == "hard")

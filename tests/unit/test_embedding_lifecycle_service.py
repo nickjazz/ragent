@@ -86,22 +86,6 @@ class _FakeRegistry:
         """Service force-refreshes after every mutation; no-op for the fake."""
         return None
 
-    def candidate_model(self):
-        if self._candidate_dict is None:
-            return None
-        from ragent.clients.embedding_model_config import EmbeddingModelConfig
-
-        keys = ("name", "dim", "api_url", "model_arg")
-        return EmbeddingModelConfig(**{k: self._candidate_dict[k] for k in keys})
-
-    def stable_model(self):
-        if self._stable_dict is None:
-            return None
-        from ragent.clients.embedding_model_config import EmbeddingModelConfig
-
-        keys = ("name", "dim", "api_url", "model_arg")
-        return EmbeddingModelConfig(**{k: self._stable_dict[k] for k in keys})
-
 
 # ---------------------------------------------------------------------------
 # promote
@@ -194,16 +178,9 @@ async def test_cutover_passes_preflight_and_flips_read() -> None:
     from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
 
     repo = AsyncMock()
-    es = AsyncMock()
-    es.indices.get_mapping.return_value = {
-        "chunks_v1": {
-            "mappings": {
-                "properties": {"embedding_bgem3v2_768": {"type": "dense_vector", "dims": 768}}
-            }
-        }
-    }
-    es.count.side_effect = [{"count": 100}, {"count": 100}]
-    reg = _FakeRegistry(state="CANDIDATE", candidate=_bgem3v2_with_promoted_at(secs_ago=60))
+    es = _passing_preflight_es()
+    cand = {**_bgem3v2_with_promoted_at(secs_ago=60), "index_name": "chunks_v2"}
+    reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
 
     svc = EmbeddingLifecycleService(
         repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
@@ -223,16 +200,10 @@ async def test_cutover_blocked_by_hard_gate_failure() -> None:
     )
 
     es = AsyncMock()
-    es.indices.get_mapping.return_value = {
-        "chunks_v1": {
-            "mappings": {
-                "properties": {"embedding_bgem3v2_768": {"type": "dense_vector", "dims": 768}}
-            }
-        }
-    }
-    # coverage too low.
+    # coverage too low: stable=100, candidate=50 → ratio 50% < 99%
     es.count.side_effect = [{"count": 100}, {"count": 50}]
-    reg = _FakeRegistry(state="CANDIDATE", candidate=_bgem3v2_with_promoted_at(secs_ago=60))
+    cand = {**_bgem3v2_with_promoted_at(secs_ago=60), "index_name": "chunks_v2"}
+    reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
 
     svc = EmbeddingLifecycleService(
         AsyncMock(), es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
@@ -257,15 +228,9 @@ async def test_cutover_warmup_gate_reads_promoted_at_from_registry_raw() -> None
     # then we'll force coverage to fail to verify the gate ran and
     # picked up the real timestamp (not utcnow).
     es = AsyncMock()
-    es.indices.get_mapping.return_value = {
-        "chunks_v1": {
-            "mappings": {
-                "properties": {"embedding_bgem3v2_768": {"type": "dense_vector", "dims": 768}}
-            }
-        }
-    }
     es.count.side_effect = [{"count": 100}, {"count": 50}]  # 50% coverage → fail
-    reg = _FakeRegistry(state="CANDIDATE", candidate=_bgem3v2_with_promoted_at(secs_ago=600))
+    cand = {**_bgem3v2_with_promoted_at(secs_ago=600), "index_name": "chunks_v2"}
+    reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
     svc = EmbeddingLifecycleService(
         AsyncMock(), es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
     )
@@ -532,15 +497,8 @@ async def test_promote_compensating_delete_on_transition_failure() -> None:
 
 
 def _passing_preflight_es() -> AsyncMock:
-    """ES mock pre-configured so the existing field-dim + coverage preflight gates pass."""
+    """ES mock pre-configured so the coverage + warmup preflight gates pass."""
     es = AsyncMock()
-    es.indices.get_mapping.return_value = {
-        "chunks_v1": {
-            "mappings": {
-                "properties": {"embedding_bgem3v2_768": {"type": "dense_vector", "dims": 768}}
-            }
-        }
-    }
     es.count.side_effect = [{"count": 100}, {"count": 100}]
     return es
 
@@ -588,18 +546,18 @@ async def test_rollback_performs_alias_swap_candidate_to_stable() -> None:
 
 
 async def test_cutover_skips_alias_swap_for_legacy_candidate() -> None:
-    """T-EM-R.4 — legacy candidates (no index_name) skip the alias swap silently."""
+    """T-EM-R.4 — legacy candidates (no index_name) skip alias swap; force=True bypasses."""
     from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
 
     repo = AsyncMock()
-    es = _passing_preflight_es()
+    es = AsyncMock()
     cand = _bgem3v2_with_promoted_at(secs_ago=60)
     reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
     svc = EmbeddingLifecycleService(
         repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
     )
 
-    await svc.cutover()
+    await svc.cutover(force=True)
 
     es.indices.update_aliases.assert_not_awaited()
 
