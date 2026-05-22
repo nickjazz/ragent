@@ -78,6 +78,10 @@ class _FakeRegistry:
             return None
         return self._candidate_dict.get("index_name")
 
+    @property
+    def read_alias(self) -> str:
+        return "chunks_v1_active"
+
     async def refresh(self, *, force: bool = False) -> None:
         """Service force-refreshes after every mutation; no-op for the fake."""
         return None
@@ -520,3 +524,98 @@ async def test_promote_compensating_delete_on_transition_failure() -> None:
     es.indices.create.assert_awaited_once()
     es.indices.delete.assert_awaited_once()
     assert es.indices.delete.call_args.kwargs["index"] == "chunks_v2"
+
+
+# ---------------------------------------------------------------------------
+# T-EM-R.4 — cutover / rollback perform ES alias swap
+# ---------------------------------------------------------------------------
+
+
+def _passing_preflight_es() -> AsyncMock:
+    """ES mock pre-configured so the existing field-dim + coverage preflight gates pass."""
+    es = AsyncMock()
+    es.indices.get_mapping.return_value = {
+        "chunks_v1": {
+            "mappings": {
+                "properties": {"embedding_bgem3v2_768": {"type": "dense_vector", "dims": 768}}
+            }
+        }
+    }
+    es.count.side_effect = [{"count": 100}, {"count": 100}]
+    return es
+
+
+async def test_cutover_performs_alias_swap_stable_to_candidate() -> None:
+    """T-EM-R.4 — cutover must atomically swap the read alias from stable to candidate index."""
+    from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
+
+    repo = AsyncMock()
+    es = _passing_preflight_es()
+    cand = {**_bgem3v2_with_promoted_at(secs_ago=60), "index_name": "chunks_v2"}
+    reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
+    svc = EmbeddingLifecycleService(
+        repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
+    )
+
+    await svc.cutover()
+
+    es.indices.update_aliases.assert_awaited_once()
+    body = es.indices.update_aliases.call_args.kwargs["body"]
+    actions = body["actions"]
+    assert {"remove": {"index": "chunks_v1", "alias": "chunks_v1_active"}} in actions
+    assert {"add": {"index": "chunks_v2", "alias": "chunks_v1_active"}} in actions
+
+
+async def test_rollback_performs_alias_swap_candidate_to_stable() -> None:
+    """T-EM-R.4 — rollback must atomically swap the read alias back to stable index."""
+    from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
+
+    repo = AsyncMock()
+    es = AsyncMock()
+    cand = {**_bgem3v2_with_promoted_at(), "index_name": "chunks_v2"}
+    reg = _FakeRegistry(state="CUTOVER", candidate=cand)
+    svc = EmbeddingLifecycleService(
+        repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
+    )
+
+    await svc.rollback()
+
+    es.indices.update_aliases.assert_awaited_once()
+    body = es.indices.update_aliases.call_args.kwargs["body"]
+    actions = body["actions"]
+    assert {"remove": {"index": "chunks_v2", "alias": "chunks_v1_active"}} in actions
+    assert {"add": {"index": "chunks_v1", "alias": "chunks_v1_active"}} in actions
+
+
+async def test_cutover_skips_alias_swap_for_legacy_candidate() -> None:
+    """T-EM-R.4 — legacy candidates (no index_name) skip the alias swap silently."""
+    from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
+
+    repo = AsyncMock()
+    es = _passing_preflight_es()
+    cand = _bgem3v2_with_promoted_at(secs_ago=60)
+    reg = _FakeRegistry(state="CANDIDATE", candidate=cand)
+    svc = EmbeddingLifecycleService(
+        repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
+    )
+
+    await svc.cutover()
+
+    es.indices.update_aliases.assert_not_awaited()
+
+
+async def test_rollback_skips_alias_swap_for_legacy_candidate() -> None:
+    """T-EM-R.4 — legacy candidates (no index_name) skip the alias swap on rollback."""
+    from ragent.services.embedding_lifecycle_service import EmbeddingLifecycleService
+
+    repo = AsyncMock()
+    es = AsyncMock()
+    cand = _bgem3v2_with_promoted_at()
+    reg = _FakeRegistry(state="CUTOVER", candidate=cand)
+    svc = EmbeddingLifecycleService(
+        repo, es, index_name="chunks_v1", registry=reg, cache_ttl_seconds=10
+    )
+
+    await svc.rollback()
+
+    es.indices.update_aliases.assert_not_awaited()

@@ -105,6 +105,17 @@ class EmbeddingLifecycleService:
         self._registry = registry
         self._ttl = cache_ttl_seconds
 
+    async def _swap_read_alias(self, *, remove_from: str, add_to: str) -> None:
+        alias = self._registry.read_alias
+        await self._es.indices.update_aliases(
+            body={
+                "actions": [
+                    {"remove": {"index": remove_from, "alias": alias}},
+                    {"add": {"index": add_to, "alias": alias}},
+                ]
+            }
+        )
+
     # ------------------------------------------------------------------
     # promote
     # ------------------------------------------------------------------
@@ -188,6 +199,12 @@ class EmbeddingLifecycleService:
             {"embedding.read": "candidate"},
             expect={"embedding.read": "stable"},
         )
+        candidate_index = self._registry.candidate_index
+        if candidate_index:
+            await self._swap_read_alias(
+                remove_from=self._registry.stable_index,
+                add_to=candidate_index,
+            )
         await self._registry.refresh(force=True)
         return {
             "state": "CUTOVER",
@@ -208,6 +225,12 @@ class EmbeddingLifecycleService:
                 {"embedding.read": "stable"},
                 expect={"embedding.read": "candidate"},
             )
+            candidate_index = self._registry.candidate_index
+            if candidate_index:
+                await self._swap_read_alias(
+                    remove_from=candidate_index,
+                    add_to=self._registry.stable_index,
+                )
             await self._registry.refresh(force=True)
         except Exception as exc:
             _log_failure("rollback", exc)
