@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import io
 import zipfile
-from enum import StrEnum
 from typing import Final
 
 from ragent.bootstrap.metrics import record_ingest_rejection
 from ragent.errors.codes import HttpErrorCode
+from ragent.utility.compat import StrEnum
 from ragent.utility.env import int_env
 
 INGEST_MAX_ARCHIVE_MEMBERS: Final[int] = int_env("INGEST_MAX_ARCHIVE_MEMBERS", 5000)

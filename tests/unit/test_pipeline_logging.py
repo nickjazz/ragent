@@ -51,7 +51,7 @@ def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
         out = comp.run(documents=[Document(), Document(), Document()])
     assert len(out["documents"]) == 2
 
-    events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
+    events = [e for e in logs if e.get("event") in {"ingest.step.started", "ingest.step.ok"}]
     assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
     started, ok = events
     assert started["step"] == "embedder"
@@ -128,14 +128,21 @@ def test_wrap_failure_with_explicit_error_code_via_exception() -> None:
 
 def test_build_ingest_pipeline_wraps_steps_in_order(monkeypatch) -> None:
     """Run the v2 pipeline end-to-end with mocks; assert step events emitted in order."""
-    from ragent.pipelines.factory import DocumentEmbedder, build_ingest_pipeline
+    from unittest.mock import MagicMock
+
+    from haystack_integrations.document_stores.elasticsearch import ElasticsearchDocumentStore
+
+    from ragent.pipelines.ingest import DocumentEmbedder, build_ingest_pipeline
 
     class _StubEmbedder:
         def embed(self, texts):
             return [[0.1] * 4 for _ in texts]
 
     embedder = DocumentEmbedder(_StubEmbedder())
-    pipe = build_ingest_pipeline(embedder=embedder)
+    document_store = MagicMock(spec=ElasticsearchDocumentStore)
+    document_store.write_documents.return_value = 0
+
+    pipe = build_ingest_pipeline(embedder=embedder, document_store=document_store)
 
     with (
         structlog.testing.capture_logs() as logs,
@@ -157,8 +164,8 @@ def test_build_ingest_pipeline_wraps_steps_in_order(monkeypatch) -> None:
         pairs.append((ev["event"].split(".")[-1], ev["step"]))
     started_steps = [s for k, s in pairs if k == "started"]
     ok_steps = [s for k, s in pairs if k == "ok"]
-    # v2 graph: load → split → chunker → embedder (embedder is sole ES writer).
-    expected = ["load", "split", "chunker", "embedder"]
+    # v2 graph: load → split → chunker → embedder → writer.
+    expected = ["load", "split", "chunker", "embedder", "writer"]
     assert started_steps == expected
     assert ok_steps == expected
     for ev in step_events:
@@ -243,7 +250,7 @@ def test_splitter_context_var_appears_in_split_step_log() -> None:
     from pptx import Presentation
     from pptx.util import Inches
 
-    from ragent.pipelines.factory import _MimeAwareSplitter
+    from ragent.pipelines.ingest import _MimeAwareSplitter
     from ragent.schemas.ingest import IngestMime
 
     prs = Presentation()

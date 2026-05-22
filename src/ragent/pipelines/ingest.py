@@ -7,7 +7,7 @@ Splitter dispatches per ``meta["mime_type"]``:
 - ``text/plain``      → Haystack ``DocumentSplitter`` (passage)
 - ``text/markdown``   → ``_MarkdownASTSplitter`` (mistletoe)
 - ``text/html``       → ``_HtmlASTSplitter`` (selectolax)
-- ``application/pdf`` → ``_PdfASTSplitter`` (PyMuPDF + Tesseract OCR)
+- ``application/pdf`` → ``_PdfASTSplitter`` (pymupdf4llm to_markdown + RapidOCR auto)
 
 Each splitter emits atoms whose ``meta["raw_content"]`` is the original
 byte slice (markdown fences / HTML fragments preserved). ``_BudgetChunker``
@@ -23,6 +23,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pymupdf4llm
 import structlog
 from haystack.components.preprocessors import DocumentSplitter
 from haystack.core.component import component
@@ -33,7 +34,7 @@ from ragent.errors.codes import TaskErrorCode
 from ragent.pipelines.observability import IngestStepError, wrap_pipeline_component
 from ragent.schemas.ingest import IngestMime
 from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES
-from ragent.utility.env import int_env, str_env
+from ragent.utility.env import float_env, int_env
 
 _logger = structlog.get_logger(__name__)
 
@@ -45,8 +46,12 @@ CHUNK_OVERLAP_CHARS = int_env("CHUNK_OVERLAP_CHARS", 100)
 # treated as misconfiguration (overlap ≥ target produces tiny advance steps
 # and can blow up to millions of chunks on a 1 MB atom).
 CHUNK_MAX_PIECES_PER_ATOM = int_env("CHUNK_MAX_PIECES_PER_ATOM", 10_000)
-
-PDF_OCR_LANGUAGES = str_env("PDF_OCR_LANGUAGES", "eng+chi_sim+chi_tra+jpn+deu")
+# PDF page margin in points (1 pt ≈ 0.35 mm). Header/footer zones at the
+# top and bottom of each page are excluded from extraction when > 0.
+INGEST_PDF_MARGIN_PTS = float_env("INGEST_PDF_MARGIN_PTS", 0.0)
+# PPTX placeholder types to exclude (header=14, footer=15, date=16, slide_number=13).
+# Integer values used so python-pptx stays a lazy import inside run().
+_PPTX_SKIP_PH: frozenset[int] = frozenset({13, 14, 15, 16})
 
 
 def validate_chunk_config() -> None:
@@ -371,6 +376,8 @@ class _PptxASTSplitter:
             for idx, slide in enumerate(prs.slides, start=1):
                 texts = []
                 for shape in slide.shapes:
+                    if shape.is_placeholder and shape.placeholder_format.type in _PPTX_SKIP_PH:
+                        continue
                     if shape.has_text_frame:
                         for para in shape.text_frame.paragraphs:
                             line = para.text.strip()
@@ -399,42 +406,24 @@ class _PptxASTSplitter:
 # ---------------------------------------------------------------------------
 
 
-def _pdf_page_text(page: Any) -> str:
-    """Return extracted text for one fitz page.
-
-    Image-free pages skip Tesseract entirely. Image-bearing pages attempt OCR;
-    on any failure (Tesseract absent, language pack missing, etc.) falls back to
-    plain text extraction.
-    """
-    if not page.get_images(full=False):
-        return page.get_text("text").strip()
-    try:
-        tp = page.get_textpage_ocr(language=PDF_OCR_LANGUAGES, full=True)
-        return page.get_text(textpage=tp).strip()
-    except Exception:
-        _logger.warning("pdf_ocr_fallback_to_plain_text", exc_info=True)
-        return page.get_text("text").strip()
-
-
 @component
 class _PdfASTSplitter:
-    """PDF binary → one atom per page (PyMuPDF; Tesseract OCR for image pages).
+    """PDF binary → markdown atoms via pymupdf4llm (RapidOCR auto-selected for image pages).
 
-    Reads raw bytes from ``meta["raw_bytes"]``. Empty pages are skipped.
-    ``meta["page_number"]`` carries the 1-based page index.
+    Per page: ``pymupdf4llm.to_markdown(pdf, pages=[i], use_ocr=True)`` → markdown string
+    → ``_MarkdownASTSplitter`` → structured atoms (headings, paragraphs, tables).
+    Empty pages produce no atoms. ``meta["page_number"]`` carries the 1-based index.
 
-    Text-based pages use fast MuPDF extraction (no Tesseract cost).
-    Image-bearing pages trigger OCR for that page only, capturing text
-    embedded in graphics without burning CPU on purely textual pages.
-
-    After each page ``fitz.TOOLS.store_shrink(100)`` evicts MuPDF's 256 MB
-    LRU cache (decompressed streams, OCR pixmaps, font data), bounding peak
-    RSS to roughly one page's worth of intermediate data at a time.
+    ``fitz.TOOLS.store_shrink(100)`` after each page evicts MuPDF's 256 MB LRU cache,
+    bounding peak RSS to one page's worth of intermediate data at a time.
     """
+
+    def __init__(self) -> None:
+        self._md_splitter = _MarkdownASTSplitter()
 
     @component.output_types(documents=list[Document])
     def run(self, documents: list[Document]) -> dict:
-        import fitz  # PyMuPDF — bundled engine of pymupdf4llm
+        import fitz
 
         from ragent.security.archive_guard import assert_safe_pdf_page_count
 
@@ -443,25 +432,24 @@ class _PdfASTSplitter:
             if not (raw_bytes := doc.meta.get("raw_bytes")):
                 continue
             base_meta = {k: v for k, v in doc.meta.items() if k != "raw_bytes"}
+            margins = (0, INGEST_PDF_MARGIN_PTS, 0, INGEST_PDF_MARGIN_PTS)
             with fitz.open(stream=raw_bytes, filetype="pdf") as pdf:
                 assert_safe_pdf_page_count(pdf.page_count, max_pages=INGEST_MAX_PDF_PAGES)
                 for page_idx in range(pdf.page_count):
-                    page = pdf[page_idx]
-                    text = _pdf_page_text(page)
-                    del page  # drop Python ref; triggers fz_drop_page
-                    fitz.TOOLS.store_shrink(100)  # evict MuPDF LRU cache
-                    if not text:
-                        continue
-                    atoms.append(
-                        Document(
-                            content=text,
-                            meta={
-                                **base_meta,
-                                "raw_content": text,
-                                "page_number": page_idx + 1,
-                            },
+                    try:
+                        md = pymupdf4llm.to_markdown(
+                            pdf, pages=[page_idx], use_ocr=True, margins=margins
                         )
-                    )
+                    except Exception:
+                        _logger.warning(
+                            "pdf_to_markdown_fallback", page=page_idx + 1, exc_info=True
+                        )
+                        md = pdf[page_idx].get_text("text").strip()
+                    fitz.TOOLS.store_shrink(100)
+                    if not md.strip():
+                        continue
+                    page_doc = Document(content=md, meta={**base_meta, "page_number": page_idx + 1})
+                    atoms.extend(self._md_splitter.run([page_doc])["documents"])
         return {"documents": atoms}
 
 
@@ -689,8 +677,6 @@ class DocumentEmbedder:
         if registry is not None:
             if embed_callable is None:
                 raise ValueError("registry mode requires embed_callable")
-            if es_client is None:
-                raise ValueError("registry mode requires es_client")
             self._mode = "dual"
             self._registry = registry
             self._embed = embed_callable
@@ -733,25 +719,14 @@ class DocumentEmbedder:
             with ThreadPoolExecutor(max_workers=len(models)) as pool:
                 results = list(pool.map(lambda m: self._embed(m, texts), models))
 
-        index_names = [self._registry.stable_index]
+        out = [dataclasses.replace(d, meta=dict(d.meta or {})) for d in documents]
+        for idx, vec in enumerate(results[0]):
+            out[idx] = dataclasses.replace(out[idx], embedding=vec)
+            out[idx].meta[models[0].field] = vec
         if len(models) > 1:
-            candidate_idx = self._registry.candidate_index
-            if candidate_idx is None:
-                raise RuntimeError("write_models() returned 2 models but candidate_index is None")
-            index_names.append(candidate_idx)
-
-        for vectors, index_name in zip(results, index_names, strict=True):
-            ops: list[dict] = []
-            for doc, vec in zip(documents, vectors, strict=True):
-                ops.append({"index": {"_id": doc.id}})
-                # meta is written first so that "embedding" and "content" always win.
-                body: dict = {**(doc.meta or {}), "embedding": vec}
-                if doc.content is not None:
-                    body["content"] = doc.content
-                ops.append(body)
-            self._es.bulk(index=index_name, operations=ops)
-
-        return {"documents": []}
+            for idx, vec in enumerate(results[1]):
+                out[idx].meta[models[1].field] = vec
+        return {"documents": out}
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +734,18 @@ class DocumentEmbedder:
 # ---------------------------------------------------------------------------
 
 
-def build_ingest_pipeline(embedder: Any) -> Pipeline:
+@component
+class _StoreWriter:
+    def __init__(self, document_store: Any) -> None:
+        self._store = document_store
+
+    @component.output_types(documents_written=int)
+    def run(self, documents: list[Document]) -> dict:
+        written = self._store.write_documents(documents)
+        return {"documents_written": int(written)}
+
+
+def build_ingest_pipeline(embedder: Any, document_store: Any | None = None) -> Pipeline:
     """V2 ingest pipeline.
 
     Run input shape::
@@ -797,9 +783,18 @@ def build_ingest_pipeline(embedder: Any) -> Pipeline:
     )
     _add("chunker", _BudgetChunker(), step="chunker")
     _add("embedder", embedder, step="embedder", error_code=TaskErrorCode.EMBEDDER_ERROR)
+    if document_store is not None:
+        _add(
+            "writer",
+            _StoreWriter(document_store),
+            step="writer",
+            error_code=TaskErrorCode.ES_WRITE_ERROR,
+        )
 
     pipeline.connect("loader.documents", "splitter.documents")
     pipeline.connect("splitter.documents", "chunker.documents")
     pipeline.connect("chunker.documents", "embedder.documents")
+    if document_store is not None:
+        pipeline.connect("embedder.documents", "writer.documents")
 
     return pipeline

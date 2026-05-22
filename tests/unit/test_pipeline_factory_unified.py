@@ -2,31 +2,28 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from haystack.core.component import component
 from haystack.dataclasses import Document
+
+from ragent.pipelines.ingest import build_ingest_pipeline
+from tests.conftest import FakeDocumentStore as _FakeStore
 
 
 @component
 class _MockEmbedder:
-    """Stand-in embedder that records received documents and returns [] (T-EM-R.6 contract)."""
-
-    def __init__(self) -> None:
-        self.received: list[Document] = []
-
     @component.output_types(documents=list[Document])
     def run(self, documents: list[Document]) -> dict:
-        self.received.extend(documents)
-        return {"documents": []}
+        return {"documents": [dataclasses.replace(d, embedding=[0.0, 1.0]) for d in documents]}
 
 
 def test_v2_builder_basic_graph_has_v2_nodes() -> None:
-    from ragent.pipelines.factory import build_ingest_pipeline
-
-    pipeline = build_ingest_pipeline(embedder=_MockEmbedder())
+    store = _FakeStore()
+    pipeline = build_ingest_pipeline(embedder=_MockEmbedder(), document_store=store)
 
     nodes = set(pipeline.graph.nodes)
-    assert {"loader", "splitter", "chunker", "embedder"} <= nodes
-    assert "writer" not in nodes
+    assert {"loader", "splitter", "chunker", "embedder", "writer"} <= nodes
     # v1 graph names are gone
     assert "converter" not in nodes
     assert "cleaner" not in nodes
@@ -36,17 +33,14 @@ def test_v2_builder_basic_graph_has_v2_nodes() -> None:
 
 def test_v2_builder_no_idempotency_clean_node() -> None:
     """C6 dropped _IdempotencyClean — retry idempotency is via OVERWRITE policy."""
-    from ragent.pipelines.factory import build_ingest_pipeline
-
-    pipeline = build_ingest_pipeline(embedder=_MockEmbedder())
+    store = _FakeStore()
+    pipeline = build_ingest_pipeline(embedder=_MockEmbedder(), document_store=store)
     assert "idempotency_clean" not in pipeline.graph.nodes
 
 
-def test_v2_builder_runs_end_to_end_and_reaches_embedder() -> None:
-    from ragent.pipelines.factory import build_ingest_pipeline
-
-    embedder = _MockEmbedder()
-    pipeline = build_ingest_pipeline(embedder=embedder)
+def test_v2_builder_runs_end_to_end_and_writes() -> None:
+    store = _FakeStore()
+    pipeline = build_ingest_pipeline(embedder=_MockEmbedder(), document_store=store)
 
     text = "Hello world. " * 200
     pipeline.run(
@@ -59,7 +53,8 @@ def test_v2_builder_runs_end_to_end_and_reaches_embedder() -> None:
         }
     )
 
-    assert len(embedder.received) >= 1
-    for doc in embedder.received:
+    assert len(store.written) >= 1
+    for doc in store.written:
+        assert doc.embedding == [0.0, 1.0]
         assert doc.meta.get("split_id") is not None
         assert doc.meta.get("raw_content")

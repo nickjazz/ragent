@@ -13,6 +13,7 @@ Hard gates:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any
 
@@ -59,6 +60,7 @@ async def preflight(
     *,
     registry: Any,
     es_client: Any,
+    index_name: str | None = None,
     promoted_at: datetime,
     cache_ttl_seconds: int,
 ) -> dict:
@@ -68,7 +70,38 @@ async def preflight(
     if not state_ok:
         return {"pass": False, "gates": gates}
 
-    gates.append(await _gate_coverage(es_client, registry.stable_index, registry.candidate_index))
+    if hasattr(registry, "candidate_model"):
+        candidate = registry.candidate_model()
+        candidate_field = candidate.field
+        candidate_dim = candidate.dim
+    else:
+        raw = registry.candidate_raw or {}
+        candidate_field = raw.get("field")
+        candidate_dim = raw.get("dim")
+    mapping = await es_client.indices.get_mapping(index=index_name or registry.stable_index)
+    if isinstance(mapping, Awaitable):
+        mapping = await mapping
+    props: dict[str, Any] = {}
+    if isinstance(mapping, dict) and mapping:
+        props = next(iter(mapping.values())).get("mappings", {}).get("properties", {})
+    dims = props.get(candidate_field, {}).get("dims")
+    gates.append(
+        _gate(
+            "field_dim_matches",
+            "hard",
+            dims is None or dims == candidate_dim,
+            expected_dim=candidate_dim,
+            actual_dim=dims,
+            field=candidate_field,
+        )
+    )
+    gates.append(
+        await _gate_coverage(
+            es_client,
+            index_name or registry.stable_index,
+            registry.candidate_index,
+        )
+    )
     gates.append(_gate_warmup(promoted_at, cache_ttl_seconds))
 
     overall = all(g["pass"] for g in gates if g["level"] == "hard")
