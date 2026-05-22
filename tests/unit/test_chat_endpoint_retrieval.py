@@ -116,6 +116,7 @@ def test_stream_passes_top_k_and_min_score_to_run_retrieval(monkeypatch):
 # dedupe field tests
 # ---------------------------------------------------------------------------
 
+
 def _make_app_with_docs(docs):
     retrieval_pipeline = MagicMock()
     llm_client = MagicMock()
@@ -132,9 +133,15 @@ def _make_app_with_docs(docs):
 
 def _doc(document_id, chunk_id=None):
     from haystack.dataclasses import Document
+
     return Document(
         content=f"content of {document_id}",
-        meta={"document_id": document_id, "chunk_id": chunk_id or document_id, "source_app": "app", "source_id": document_id},
+        meta={
+            "document_id": document_id,
+            "chunk_id": chunk_id or document_id,
+            "source_app": "app",
+            "source_id": document_id,
+        },
     )
 
 
@@ -176,6 +183,7 @@ def test_chat_dedupe_true_removes_duplicate_documents(monkeypatch):
 
 def test_chat_dedupe_schema_field_defaults_false():
     from ragent.schemas.chat import ChatRequest
+
     req = ChatRequest(messages=[{"role": "user", "content": "hi"}])
     assert req.dedupe is False
 
@@ -189,6 +197,7 @@ def test_chat_dedupe_stream_true_removes_duplicate_documents(monkeypatch):
 
     client = TestClient(app)
     import json as _json
+
     lines = []
     with client.stream(
         "POST",
