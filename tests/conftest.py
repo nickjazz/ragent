@@ -383,7 +383,7 @@ def mariadb_container():
     with MySqlContainer(
         image=tc_image("mariadb:10.6"),
         username="ragent",
-        password="ragent",
+        password="ragent_pass",  # pragma: allowlist secret
         dbname="ragent",
     ) as container:
         yield container
@@ -393,7 +393,8 @@ def mariadb_container():
 def mariadb_dsn(mariadb_container) -> str:
     host = mariadb_container.get_container_host_ip()
     port = mariadb_container.get_exposed_port(3306)
-    return f"mysql+aiomysql://ragent:ragent@{host}:{port}/ragent?charset=utf8mb4"
+    dsn = f"mysql+aiomysql://ragent:ragent_pass@{host}:{port}/ragent?charset=utf8mb4"
+    return dsn  # pragma: allowlist secret
 
 
 @pytest.fixture(scope="session")
@@ -505,7 +506,7 @@ def dev_env(
         "EMBEDDER_BATCH_SIZE": "1",
         "MINIO_ENDPOINT": minio_endpoint,
         "MINIO_ACCESS_KEY": "minioadmin",
-        "MINIO_SECRET_KEY": "minioadmin",
+        "MINIO_SECRET_KEY": "example_minio_secret_not_real",  # pragma: allowlist secret
         "ES_HOSTS": es_url,
         "ES_VERIFY_CERTS": "false",
         "MARIADB_DSN": mariadb_dsn,

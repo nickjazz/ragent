@@ -23,7 +23,7 @@ from haystack.dataclasses import Document
 from ragent.routers.chat import create_chat_router
 from ragent.routers.feedback import create_feedback_router
 
-SECRET = "loop-integration-secret"
+SECRET = "loop-integration-signing-key"  # pragma: allowlist secret
 
 DOC_A = Document(
     content="OKR planning chunk",

@@ -13,7 +13,7 @@ from haystack.dataclasses import Document
 from ragent.routers.chat import create_chat_router
 from ragent.utility.feedback_token import verify as verify_token
 
-SECRET = "test-secret"
+SECRET = "test-signing-key"  # pragma: allowlist secret
 
 
 def _doc(document_id: str, source_id: str, source_app: str = "confluence") -> Document:

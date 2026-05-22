@@ -48,7 +48,7 @@ def test_readyz_200_when_all_deps_up(
     raw_minio = Minio(
         endpoint=f"{minio_host}:{minio_port}",
         access_key="minioadmin",
-        secret_key="minioadmin",
+        secret_key="example_minio_secret_not_real",  # pragma: allowlist secret
         secure=False,
     )
 

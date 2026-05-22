@@ -50,8 +50,11 @@ def _composition_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ES_HOSTS", "http://es.example:9200")
     monkeypatch.setenv(
         "MINIO_SITES",
-        '[{"name":"__default__","endpoint":"minio.example:9000",'
-        '"access_key":"ak","secret_key":"sk","bucket":"b"}]',
+        (
+            '[{"name":"__default__","endpoint":"minio.example:9000",'
+            '"access_key":"ak","secret_key":"example_minio_secret_not_real",'
+            '"bucket":"b"}]'
+        ),  # pragma: allowlist secret
     )
     monkeypatch.setenv("ES_CHUNKS_INDEX", _CUSTOM_INDEX)
 

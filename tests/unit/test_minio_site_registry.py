@@ -19,7 +19,7 @@ def _site(name="__default__", bucket="b", read_only=False):
         "name": name,
         "endpoint": "minio:9000",
         "access_key": "ak",
-        "secret_key": "sk",
+        "secret_key": "example_minio_secret_not_real",  # pragma: allowlist secret
         "bucket": bucket,
         "read_only": read_only,
     }

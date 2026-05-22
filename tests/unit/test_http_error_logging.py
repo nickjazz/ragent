@@ -176,14 +176,17 @@ def test_apikey_and_cookie_headers_are_redacted() -> None:
         client.post(
             "/unprotect",
             content=b"file-bytes",
-            headers={"apikey": "secret-apikey", "Cookie": "session=abc"},
+            headers={
+                "apikey": "example-apikey-not-real",
+                "Cookie": "session=abc",
+            },  # pragma: allowlist secret
         )
     rec = _find_error_log(logs)
     assert rec is not None
     headers = {k.lower(): v for k, v in rec["headers"].items()}
     assert headers["apikey"] == "***"
     assert headers["cookie"] == "***"
-    assert "secret-apikey" not in json.dumps(rec["headers"])
+    assert "example-apikey-not-real" not in json.dumps(rec["headers"])
     assert "session=abc" not in json.dumps(rec["headers"])
 
 

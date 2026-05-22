@@ -108,7 +108,9 @@ async def test_4xx_html_body_is_dropped():
 
 @pytest.mark.asyncio
 async def test_5xx_raises_tool_error_without_body():
-    sensitive = {"sql": "SELECT * FROM users WHERE password='hunter2'"}
+    sensitive = {
+        "sql": "SELECT * FROM users WHERE pwd='example_password_not_real'"
+    }  # pragma: allowlist secret
 
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json=sensitive)

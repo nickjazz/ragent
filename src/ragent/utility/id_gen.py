@@ -3,7 +3,7 @@
 import uuid_utils
 
 # Crockford's Base32 alphabet: 0-9, A-Z minus I, L, O, U
-_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # pragma: allowlist secret
 
 
 def new_id() -> str:
