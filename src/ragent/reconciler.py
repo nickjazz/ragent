@@ -94,7 +94,7 @@ class Reconciler:
     async def _redispatch_pending(self) -> None:
         stale_seconds = int(os.environ.get("RECONCILER_PENDING_STALE_SECONDS", "300"))
         max_attempts = int(os.environ.get("WORKER_MAX_ATTEMPTS", "5"))
-        updated_before = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        updated_before = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
             seconds=stale_seconds
         )
         stale = await self._repo.list_pending_stale(
@@ -111,7 +111,7 @@ class Reconciler:
 
     async def _redispatch_uploaded(self) -> None:
         stale_seconds = int(os.environ.get("RECONCILER_UPLOADED_STALE_SECONDS", "300"))
-        updated_before = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        updated_before = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
             seconds=stale_seconds
         )
         stale = await self._repo.list_uploaded_stale(updated_before=updated_before)
@@ -124,7 +124,7 @@ class Reconciler:
 
     async def _resume_deleting(self) -> None:
         stale_seconds = int(os.environ.get("RECONCILER_DELETING_STALE_SECONDS", "300"))
-        updated_before = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        updated_before = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
             seconds=stale_seconds
         )
         stale = await self._repo.list_deleting_stale(updated_before=updated_before)

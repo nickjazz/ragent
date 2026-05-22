@@ -51,7 +51,7 @@ def test_wrap_emits_started_and_ok_with_expected_fields() -> None:
         out = comp.run(documents=[Document(), Document(), Document()])
     assert len(out["documents"]) == 2
 
-    events = [e for e in logs if e.get("event", "").startswith("ingest.step.")]
+    events = [e for e in logs if e.get("event") in {"ingest.step.started", "ingest.step.ok"}]
     assert [e["event"] for e in events] == ["ingest.step.started", "ingest.step.ok"]
     started, ok = events
     assert started["step"] == "embedder"
@@ -128,7 +128,7 @@ def test_wrap_failure_with_explicit_error_code_via_exception() -> None:
 
 def test_build_ingest_pipeline_wraps_steps_in_order(monkeypatch) -> None:
     """Run the v2 pipeline end-to-end with mocks; assert step events emitted in order."""
-    from ragent.pipelines.factory import DocumentEmbedder, build_ingest_pipeline
+    from ragent.pipelines.ingest import DocumentEmbedder, build_ingest_pipeline
 
     class _StubEmbedder:
         def embed(self, texts):
@@ -243,7 +243,7 @@ def test_splitter_context_var_appears_in_split_step_log() -> None:
     from pptx import Presentation
     from pptx.util import Inches
 
-    from ragent.pipelines.factory import _MimeAwareSplitter
+    from ragent.pipelines.ingest import _MimeAwareSplitter
     from ragent.schemas.ingest import IngestMime
 
     prs = Presentation()

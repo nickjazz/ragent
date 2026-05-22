@@ -15,10 +15,11 @@ POST /ingest/v1/upload for binary files.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ragent.utility.compat import StrEnum
 
 SOURCE_URL_MAX = 2048
 SOURCE_META_MAX = 1024

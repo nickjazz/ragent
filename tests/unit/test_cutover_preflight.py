@@ -9,7 +9,7 @@ Hard gates (cutover refuses if any fails):
 `pass` boolean. The lifecycle service maps pass=False to 409 Conflict.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -44,7 +44,7 @@ async def test_preflight_passes_when_state_is_candidate_and_all_gates_ok() -> No
     report = await preflight(
         registry=_make_registry(),
         es_client=_passing_es(),
-        promoted_at=datetime.now(UTC) - timedelta(seconds=60),
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=60),
         cache_ttl_seconds=10,
     )
 
@@ -59,7 +59,7 @@ async def test_preflight_fails_when_state_is_not_candidate() -> None:
     report = await preflight(
         registry=reg,
         es_client=AsyncMock(),
-        promoted_at=datetime.now(UTC),
+        promoted_at=datetime.now(timezone.utc),
         cache_ttl_seconds=10,
     )
 
@@ -88,7 +88,7 @@ async def test_preflight_coverage_counts_candidate_index_not_field_exists() -> N
     await preflight(
         registry=reg,
         es_client=es,
-        promoted_at=datetime.now(UTC) - timedelta(seconds=60),
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=60),
         cache_ttl_seconds=10,
     )
 
@@ -113,7 +113,7 @@ async def test_preflight_fails_when_candidate_coverage_below_threshold() -> None
     report = await preflight(
         registry=_make_registry(),
         es_client=es,
-        promoted_at=datetime.now(UTC) - timedelta(seconds=60),
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=60),
         cache_ttl_seconds=10,
     )
 
@@ -133,7 +133,7 @@ async def test_preflight_coverage_treats_empty_stable_index_as_pass() -> None:
     report = await preflight(
         registry=_make_registry(),
         es_client=es,
-        promoted_at=datetime.now(UTC) - timedelta(seconds=60),
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=60),
         cache_ttl_seconds=10,
     )
 
@@ -151,7 +151,7 @@ async def test_preflight_coverage_fails_when_candidate_index_is_none() -> None:
     report = await preflight(
         registry=reg,
         es_client=es,
-        promoted_at=datetime.now(UTC) - timedelta(seconds=60),
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=60),
         cache_ttl_seconds=10,
     )
 
@@ -171,7 +171,7 @@ async def test_preflight_fails_when_dual_write_warmup_too_short() -> None:
     report = await preflight(
         registry=_make_registry(),
         es_client=_passing_es(),
-        promoted_at=datetime.now(UTC) - timedelta(seconds=5),  # < 2 × ttl(10) = 20
+        promoted_at=datetime.now(timezone.utc) - timedelta(seconds=5),  # < 2 × ttl(10) = 20
         cache_ttl_seconds=10,
     )
 

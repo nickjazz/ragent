@@ -20,7 +20,7 @@ class _MockEmbedder:
 
 
 def test_v2_builder_basic_graph_has_v2_nodes() -> None:
-    from ragent.pipelines.factory import build_ingest_pipeline
+    from ragent.pipelines.ingest import build_ingest_pipeline
 
     pipeline = build_ingest_pipeline(embedder=_MockEmbedder())
 
@@ -36,14 +36,14 @@ def test_v2_builder_basic_graph_has_v2_nodes() -> None:
 
 def test_v2_builder_no_idempotency_clean_node() -> None:
     """C6 dropped _IdempotencyClean — retry idempotency is via OVERWRITE policy."""
-    from ragent.pipelines.factory import build_ingest_pipeline
+    from ragent.pipelines.ingest import build_ingest_pipeline
 
     pipeline = build_ingest_pipeline(embedder=_MockEmbedder())
     assert "idempotency_clean" not in pipeline.graph.nodes
 
 
 def test_v2_builder_runs_end_to_end_and_reaches_embedder() -> None:
-    from ragent.pipelines.factory import build_ingest_pipeline
+    from ragent.pipelines.ingest import build_ingest_pipeline
 
     embedder = _MockEmbedder()
     pipeline = build_ingest_pipeline(embedder=embedder)

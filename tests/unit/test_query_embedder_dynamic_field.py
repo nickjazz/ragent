@@ -33,7 +33,7 @@ def _registry(read: EmbeddingModelConfig) -> MagicMock:
 
 def test_registry_mode_always_emits_static_embedding_field_idle() -> None:
     """T-EM-R.7 — IDLE: stable model used, but embedding_field is always 'embedding'."""
-    from ragent.pipelines.chat import _QueryEmbedder
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     stable = _model("bge-m3", 1024)
 
@@ -50,7 +50,7 @@ def test_registry_mode_always_emits_static_embedding_field_idle() -> None:
 
 def test_registry_mode_always_emits_static_embedding_field_cutover() -> None:
     """T-EM-R.7 — CUTOVER: candidate model used, embedding_field still 'embedding'."""
-    from ragent.pipelines.chat import _QueryEmbedder
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     candidate = _model("bge-m3-v2", 768)
 
@@ -66,7 +66,7 @@ def test_registry_mode_always_emits_static_embedding_field_cutover() -> None:
 
 def test_registry_mode_embeds_with_read_model() -> None:
     """The model used to embed the query comes from registry.read_model()."""
-    from ragent.pipelines.chat import _QueryEmbedder
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     stable = _model("bge-m3", 1024)
     calls: list[tuple[str, list[str]]] = []
@@ -83,7 +83,7 @@ def test_registry_mode_embeds_with_read_model() -> None:
 
 def test_registry_mode_refreshes_read_model_per_call() -> None:
     """read_model() is called fresh per run() so a live cutover takes effect."""
-    from ragent.pipelines.chat import _QueryEmbedder
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     stable = _model("bge-m3", 1024)
     candidate = _model("bge-m3-v2", 768)
@@ -112,7 +112,9 @@ def test_registry_mode_refreshes_read_model_per_call() -> None:
 
 
 def test_legacy_mode_preserves_pre_em_signature() -> None:
-    from ragent.pipelines.chat import _QueryEmbedder
+    """The (`embedder`)-only constructor must continue to work for the
+    existing single-model integration tests during the registry rollout."""
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     client = MagicMock()
     client.embed.return_value = [[0.25] * 1024]
@@ -126,7 +128,9 @@ def test_legacy_mode_preserves_pre_em_signature() -> None:
 
 
 def test_legacy_mode_does_not_emit_embedding_field() -> None:
-    from ragent.pipelines.chat import _QueryEmbedder
+    """Legacy mode does not know about field names — that's the registry's
+    job. Output stays at the original two-key shape."""
+    from ragent.pipelines.retrieve import _QueryEmbedder
 
     client = MagicMock()
     client.embed.return_value = [[0.0] * 1024]
@@ -144,7 +148,7 @@ def test_legacy_mode_does_not_emit_embedding_field() -> None:
 
 def test_dynamic_retriever_uses_embedding_field_from_query_embedder() -> None:
     """T-EM-R.7 — downstream retriever receives 'embedding' from _QueryEmbedder."""
-    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+    from ragent.pipelines.retrieve import _DynamicFieldEmbeddingRetriever
 
     store = MagicMock()
     store._search_documents.return_value = [MagicMock()]
@@ -159,7 +163,7 @@ def test_dynamic_retriever_uses_embedding_field_from_query_embedder() -> None:
 
 
 def test_dynamic_retriever_defaults_field_to_embedding_when_omitted() -> None:
-    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+    from ragent.pipelines.retrieve import _DynamicFieldEmbeddingRetriever
 
     store = MagicMock()
     store._search_documents.return_value = []
@@ -172,7 +176,8 @@ def test_dynamic_retriever_defaults_field_to_embedding_when_omitted() -> None:
 
 
 def test_dynamic_retriever_passes_top_k_override_and_filters() -> None:
-    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+    """Filters are normalised to ES DSL before reaching `_search_documents`."""
+    from ragent.pipelines.retrieve import _DynamicFieldEmbeddingRetriever
 
     store = MagicMock()
     store._search_documents.return_value = []
@@ -191,7 +196,10 @@ def test_dynamic_retriever_passes_top_k_override_and_filters() -> None:
 
 
 def test_dynamic_retriever_normalises_composite_filters() -> None:
-    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+    """Composite AND filters (source_app + source_meta) must also be
+    normalised — `build_es_filters` emits this shape when both router params
+    are present."""
+    from ragent.pipelines.retrieve import _DynamicFieldEmbeddingRetriever
 
     store = MagicMock()
     store._search_documents.return_value = []
@@ -223,7 +231,7 @@ def test_dynamic_retriever_normalises_composite_filters() -> None:
 def test_dynamic_retriever_rejects_empty_embedding() -> None:
     import pytest
 
-    from ragent.pipelines.chat import _DynamicFieldEmbeddingRetriever
+    from ragent.pipelines.retrieve import _DynamicFieldEmbeddingRetriever
 
     retriever = _DynamicFieldEmbeddingRetriever(document_store=MagicMock(), top_k=10)
     with pytest.raises(ValueError, match="non-empty"):
@@ -239,7 +247,7 @@ def test_feedback_retriever_queries_es_with_provided_chunks_index() -> None:
     """T-EM-R.7 — when constructed with a read alias, ES queries use that alias."""
     from unittest.mock import AsyncMock
 
-    from ragent.pipelines.chat import _FeedbackMemoryRetriever
+    from ragent.pipelines.retrieve import _FeedbackMemoryRetriever
 
     es = MagicMock()
     doc_repo = AsyncMock()

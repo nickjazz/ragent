@@ -45,7 +45,7 @@ def _es() -> MagicMock:
 
 
 def test_idle_writes_to_stable_index_via_bulk() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     es = _es()
@@ -70,7 +70,7 @@ def test_idle_writes_to_stable_index_via_bulk() -> None:
 
 def test_idle_bulk_body_uses_embedding_field_not_model_field() -> None:
     """T-EM-R.6 — bulk body uses 'embedding' key, not embedding_{model}_{dim}."""
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     es = _es()
@@ -97,7 +97,7 @@ def test_idle_bulk_body_uses_embedding_field_not_model_field() -> None:
 
 
 def test_candidate_writes_to_stable_and_candidate_index() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     cand = _model("bge-m3-v2", 768)
@@ -117,7 +117,7 @@ def test_candidate_writes_to_stable_and_candidate_index() -> None:
 
 
 def test_candidate_both_bulk_calls_use_embedding_field() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     cand = _model("bge-m3-v2", 768)
@@ -139,7 +139,7 @@ def test_candidate_both_bulk_calls_use_embedding_field() -> None:
 
 def test_bulk_action_uses_doc_id_as_es_id() -> None:
     """Each bulk action must set _id from doc.id for idempotent overwrite."""
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     es = _es()
@@ -163,7 +163,7 @@ def test_bulk_action_uses_doc_id_as_es_id() -> None:
 
 
 def test_empty_documents_skips_embed_and_bulk() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     calls: list[str] = []
@@ -182,7 +182,7 @@ def test_empty_documents_skips_embed_and_bulk() -> None:
 
 
 def test_empty_write_models_raises() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     reg = MagicMock()
     reg.write_models.return_value = []
@@ -197,7 +197,7 @@ def test_empty_write_models_raises() -> None:
 
 
 def test_registry_mode_requires_es_client() -> None:
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     with pytest.raises(ValueError, match="es_client"):
         DocumentEmbedder(
@@ -209,7 +209,7 @@ def test_registry_mode_requires_es_client() -> None:
 
 def test_two_models_with_no_candidate_index_raises() -> None:
     """write_models() returns 2 models but candidate_index is None — must fail loudly."""
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     cand = _model("bge-m3-v2", 768)
@@ -225,7 +225,7 @@ def test_two_models_with_no_candidate_index_raises() -> None:
 
 def test_each_model_embedded_once_not_per_text() -> None:
     """Batching invariant: many texts → one embed call per model."""
-    from ragent.pipelines.factory import DocumentEmbedder
+    from ragent.pipelines.ingest import DocumentEmbedder
 
     stable = _model("bge-m3", 1024)
     cand = _model("bge-m3-v2", 768)
@@ -252,7 +252,7 @@ def test_each_model_embedded_once_not_per_text() -> None:
 
 def test_build_ingest_pipeline_has_no_writer_component() -> None:
     """T-EM-R.6 — DocumentEmbedder is the sole ES writer; no DocumentWriter in pipeline."""
-    from ragent.pipelines.factory import DocumentEmbedder, build_ingest_pipeline
+    from ragent.pipelines.ingest import DocumentEmbedder, build_ingest_pipeline
 
     stable = _model("bge-m3", 1024)
     embedder = DocumentEmbedder(

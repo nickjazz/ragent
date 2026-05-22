@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from ragent.pipelines.chat import _FeedbackMemoryRetriever
+from ragent.pipelines.retrieve import _FeedbackMemoryRetriever
 
 
 def _hit(source_app: str, source_id: str, vote: int, ts: datetime) -> dict:
@@ -47,7 +47,7 @@ def _make_retriever(
 
 
 def _fresh_ts(days_ago: int = 0) -> datetime:
-    return datetime.now(UTC) - timedelta(days=days_ago)
+    return datetime.now(timezone.utc) - timedelta(days=days_ago)
 
 
 @patch("anyio.from_thread.run")
@@ -271,7 +271,7 @@ def test_scope_from_haystack_filters_extracts_source_app_and_meta():
     filters (the shape build_es_filters emits) into the flat shape the
     feedback retriever consumes — otherwise the chat-side scope is silently
     bypassed by the feedback boost."""
-    from ragent.pipelines.chat import _scope_from_haystack_filters
+    from ragent.pipelines.retrieve import _scope_from_haystack_filters
 
     # leaf shape (single filter)
     leaf = {"field": "source_app", "operator": "==", "value": "confluence"}
