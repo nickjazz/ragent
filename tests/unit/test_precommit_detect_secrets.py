@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 
 
-def test_precommit_includes_detect_secrets_hook_with_baseline_only() -> None:
+def test_precommit_includes_detect_secrets_hook_with_baseline_and_excludes() -> None:
     config_path = Path('.pre-commit-config.yaml')
     assert config_path.exists()
 
@@ -24,10 +24,10 @@ def test_precommit_includes_detect_secrets_hook_with_baseline_only() -> None:
     args = detect_hook.get('args', [])
     assert '--baseline' in args
     assert '.secrets.baseline' in args
-    assert 'exclude' not in detect_hook
+    assert '--exclude-files' in args
 
 
-def test_secrets_baseline_is_valid_json_with_expected_shape() -> None:
+def test_secrets_baseline_is_valid_json_and_has_no_tracked_findings() -> None:
     baseline_path = Path('.secrets.baseline')
     assert baseline_path.exists()
 
@@ -35,4 +35,4 @@ def test_secrets_baseline_is_valid_json_with_expected_shape() -> None:
     assert parsed.get('version') == '1.5.0'
     assert isinstance(parsed.get('plugins_used'), list)
     assert isinstance(parsed.get('filters_used'), list)
-    assert isinstance(parsed.get('results'), dict)
+    assert parsed.get('results') == {}
