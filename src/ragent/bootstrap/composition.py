@@ -38,7 +38,9 @@ class Container:
     embedding_registry: Any  # ActiveModelRegistry — refresh() in lifespan startup
     embedding_lifecycle_service: Any  # EmbeddingLifecycleService — admin router backend
     chunks_index_name: str  # physical ES index name (write path / VectorExtractor / lifecycle)
-    embed_fn: Any  # (EmbeddingModelConfig, list[str]) -> list[list[float]] — used by backfill worker
+    embed_fn: (
+        Any  # (EmbeddingModelConfig, list[str]) -> list[list[float]] — used by backfill worker
+    )
     # B54/B55 T-FB.8 — feedback retrieval signal (renumbered from B50/B51)
     feedback_repository: Any  # FeedbackRepository | None
     feedback_hmac_secret: str | None  # None when CHAT_FEEDBACK_ENABLED=false

@@ -24,9 +24,7 @@ async def test_backfill_enqueued_when_candidate_under_covered() -> None:
     es.count.side_effect = [{"count": 100}, {"count": 50}]
     broker = AsyncMock()
 
-    rec = _reconciler(
-        settings_repo=settings, es_client=es, broker=broker, chunks_index="chunks_v1"
-    )
+    rec = _reconciler(settings_repo=settings, es_client=es, broker=broker, chunks_index="chunks_v1")
     await rec._backfill_candidate_embeddings()
 
     broker.enqueue.assert_awaited_once_with(
