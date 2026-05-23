@@ -144,6 +144,11 @@ def _render_context(docs: list[Any] | None) -> str:
         # Prefer the original byte-faithful slice for LLM display; fall back
         # to normalized content when chunks predate the raw_content field.
         body = meta.get("raw_content") or (getattr(doc, "content", "") or "")
+        # Escape delimiter tokens so corpus text can never close the <context> wrapper
+        # early or inject a nested block (HTML/XML/code docs commonly contain these).
+        body = body.replace("<context>", "&lt;context&gt;").replace(
+            "</context>", "&lt;/context&gt;"
+        )
         parts.append(f"[資料來源 #{i}]\n{body}\n---")
     return "\n".join(parts)
 
