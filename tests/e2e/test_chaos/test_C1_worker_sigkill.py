@@ -21,7 +21,6 @@ requirement for C1.
 from __future__ import annotations
 
 import json
-import signal
 import time
 import urllib.request
 
@@ -146,7 +145,7 @@ def test_C1_worker_sigkill_recovers_to_ready(
             "(pipeline ran faster than poll interval — transient skip)"
         )
 
-    worker.send_signal(signal.SIGKILL)
+    worker.kill()
     worker.wait(timeout=5)
     spawn_module("ragent.worker")  # fresh consumer for the reconciler's re-kiq
 

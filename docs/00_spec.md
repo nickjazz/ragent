@@ -46,12 +46,15 @@
 
 **Source fields:** `source_id` + `source_app` (logical identity, mandatory) · `source_title VARCHAR(256) NOT NULL` · `source_meta VARCHAR(1024) NULL` (free-format, B35) · `source_url VARCHAR(2048) NULL` (display-only).
 
-**Cleanup by `ingest_type`:**
-| `ingest_type` | Post-READY auto-delete | `DELETE /ingest/{id}` reclaims |
+**MinIO retention by `ingest_type`:**
+MinIO source objects are retained for audit/replay. Cleanup paths delete derived
+stores such as ES chunks; they do not delete MinIO bytes.
+
+| `ingest_type` | Post-READY MinIO delete | `DELETE /ingest/{id}` MinIO delete |
 |---|---|---|
-| `inline`  | yes | yes (if pre-READY; blob already gone at READY) |
-| `file`    | no (caller-owned) | no |
-| `upload`  | no | yes (any status) |
+| `inline`  | no | no |
+| `file`    | no | no |
+| `upload`  | no | no |
 
 **Locking:** atomic conditional `UPDATE … WHERE status IN (:accept_set)`; `rowcount=1` = won; `rowcount=0` = lost, no-op. No `SELECT FOR UPDATE` on single-row transitions. Pipeline body runs **outside any DB tx** — no row locks held during external calls (B16). Heartbeat: `updated_at=NOW()` every 30 s; Reconciler scans `updated_at < NOW() − 5 min`.
 
@@ -60,9 +63,9 @@
 **Create flow:**
 1. Validation → MinIO stage → `documents(UPLOADED)` → kiq `ingest.pipeline` → `202 { task_id }`.
 2. Worker TX-A (atomic claim) → heartbeat starts → pipeline body (idempotency clean → §3.2 → `fan_out`) → TX-B (READY or FAILED; FAILED also runs `fan_out_delete` + cleanup first).
-3. Post-commit: MinIO delete (best-effort); on READY kiq `ingest.supersede`.
+3. Post-commit: no MinIO delete; on READY kiq `ingest.supersede`.
 
-**Delete flow:** atomic claim → DELETING → outside-tx cascade: `fan_out_delete` → `delete_by_document_id` → optional MinIO delete → delete row → `204`. Mid-cascade failure: Reconciler resumes idempotently.
+**Delete flow:** atomic claim -> DELETING -> outside-tx cascade: `fan_out_delete` -> `delete_by_document_id` -> delete row -> `204`. Mid-cascade failure: Reconciler resumes idempotently. MinIO objects are retained.
 
 ---
 

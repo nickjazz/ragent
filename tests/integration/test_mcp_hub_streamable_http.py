@@ -67,7 +67,7 @@ async def _serve(tools_dir: Path):
                     resp = await http.get(f"{base_url}/metrics", timeout=0.5)
                     if resp.status_code == 200:
                         break
-                except (httpx.ConnectError, httpx.ReadTimeout):
+                except (httpx.ConnectError, httpx.TimeoutException):
                     pass
                 await asyncio.sleep(0.05)
             else:

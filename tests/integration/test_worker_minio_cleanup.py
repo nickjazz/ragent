@@ -1,4 +1,4 @@
-"""T3.2a — Worker: terminal status committed before MinIO delete; orphan logged on error."""
+"""Worker MinIO retention policy."""
 
 import datetime
 from unittest.mock import patch
@@ -25,47 +25,17 @@ def _make_doc(doc_status: str = "UPLOADED", ingest_type: str = "inline") -> Docu
     )
 
 
-async def test_terminal_status_committed_before_minio_delete():
-    """READY status must be committed before MinIO.delete_object is called (S16).
-
-    B39: the READY transition is now `promote_to_ready_and_demote_siblings`,
-    so the ordering check pivots on that call.
-    """
+async def test_inline_type_ingest_does_not_delete_minio_object():
+    """MinIO is retained for audit/replay even after a successful READY transition."""
     from ragent.workers.ingest import ingest_pipeline_task
 
     doc = _make_doc()
     container = make_ingest_container(doc)
 
-    call_order: list[str] = []
-
-    async def _record_promote(**kwargs):
-        call_order.append("status_READY")
-        return True
-
-    container.doc_repo.promote_to_ready_and_demote_siblings.side_effect = _record_promote
-    container.minio_registry.delete_object.side_effect = lambda *a: call_order.append(
-        "minio_delete"
-    )
-
     with patch("ragent.bootstrap.composition.get_container", return_value=container):
         await ingest_pipeline_task("DOC001")
 
-    assert "status_READY" in call_order
-    assert "minio_delete" in call_order
-    assert call_order.index("status_READY") < call_order.index("minio_delete")
-
-
-async def test_minio_delete_error_does_not_prevent_ready_status():
-    """If MinIO delete raises, row is still READY and orphan is tolerated (S21)."""
-    from ragent.workers.ingest import ingest_pipeline_task
-
-    doc = _make_doc()
-    container = make_ingest_container(doc)
-    container.minio_registry.delete_object.side_effect = Exception("minio error")
-
-    with patch("ragent.bootstrap.composition.get_container", return_value=container):
-        await ingest_pipeline_task("DOC001")
-
+    container.minio_registry.delete_object.assert_not_called()
     container.doc_repo.promote_to_ready_and_demote_siblings.assert_awaited_once()
 
 
@@ -83,10 +53,7 @@ async def test_pending_retry_does_not_delete_minio():
 
 
 async def test_self_demote_skips_post_ready_fan_out():
-    """B41: when promote loses arbitration (older worker, newer revision exists),
-    the worker self-demotes to DELETING — post-READY enrichment (`fan_out`) must
-    NOT run for a non-READY doc.
-    """
+    """A self-demoted worker must not run post-READY enrichment."""
     from ragent.workers.ingest import ingest_pipeline_task
 
     doc = _make_doc()
@@ -100,10 +67,7 @@ async def test_self_demote_skips_post_ready_fan_out():
 
 
 async def test_file_type_ingest_does_not_delete_minio_object():
-    """ingest_type='file': caller owns the object — worker must NEVER call
-    delete_object, even after a successful READY transition (S spec §3.1).
-    This is the negative counterpart to the inline-delete ordering test.
-    """
+    """ingest_type='file': caller owns the object; worker must never delete it."""
     from ragent.workers.ingest import ingest_pipeline_task
 
     doc = _make_doc(ingest_type="file")
@@ -117,10 +81,7 @@ async def test_file_type_ingest_does_not_delete_minio_object():
 
 
 async def test_upload_type_ingest_does_not_delete_minio_object():
-    """ingest_type='upload': server staged the bytes but the contract reserves
-    deletion for the explicit DELETE API path (parallel to file). Worker must
-    NOT auto-delete the staged object on READY — otherwise the blob is gone
-    before an operator can re-issue rerun against the same row."""
+    """ingest_type='upload': server-staged bytes are also retained."""
     from ragent.workers.ingest import ingest_pipeline_task
 
     doc = _make_doc(ingest_type="upload")

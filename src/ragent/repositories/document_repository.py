@@ -130,33 +130,40 @@ class DocumentRepository:
         minio_site: str | None = None,
         mime_type: str | None = None,
     ) -> str:
-        await self._execute(
-            text(
-                """
-                INSERT INTO documents
-                    (document_id, create_user, source_id, source_app, source_title,
-                     source_meta, source_url, object_key, ingest_type, minio_site,
-                     mime_type, status, attempt, created_at, updated_at)
-                VALUES
-                    (:document_id, :create_user, :source_id, :source_app, :source_title,
-                     :source_meta, :source_url, :object_key, :ingest_type, :minio_site,
-                     :mime_type, 'UPLOADED', 0, NOW(6), NOW(6))
-                """
-            ),
-            {
-                "document_id": document_id,
-                "create_user": create_user,
-                "source_id": source_id,
-                "source_app": source_app,
-                "source_title": source_title,
-                "source_meta": source_meta,
-                "source_url": source_url,
-                "object_key": object_key,
-                "ingest_type": ingest_type,
-                "minio_site": minio_site,
-                "mime_type": mime_type,
-            },
+        stmt = text(
+            """
+            INSERT INTO documents
+                (document_id, create_user, source_id, source_app, source_title,
+                 source_meta, source_url, object_key, ingest_type, minio_site,
+                 mime_type, status, attempt, created_at, updated_at)
+            VALUES
+                (:document_id, :create_user, :source_id, :source_app, :source_title,
+                 :source_meta, :source_url, :object_key, :ingest_type, :minio_site,
+                 :mime_type, 'UPLOADED', 0, NOW(6), NOW(6))
+            """
         )
+        params = {
+            "document_id": document_id,
+            "create_user": create_user,
+            "source_id": source_id,
+            "source_app": source_app,
+            "source_title": source_title,
+            "source_meta": source_meta,
+            "source_url": source_url,
+            "object_key": object_key,
+            "ingest_type": ingest_type,
+            "minio_site": minio_site,
+            "mime_type": mime_type,
+        }
+        for attempt in range(3):
+            try:
+                await self._execute(stmt, params)
+                break
+            except OperationalError as exc:
+                if attempt < 2 and _is_deadlock(exc):
+                    await asyncio.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
         return document_id
 
     # ------------------------------------------------------------------

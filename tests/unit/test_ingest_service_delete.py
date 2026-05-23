@@ -1,4 +1,4 @@
-"""T2.9 — IngestService.delete: cascade order, idempotent re-delete (S12, S13, S14, P-E)."""
+"""IngestService.delete cascade order and MinIO retention policy."""
 
 import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -48,7 +48,7 @@ def _make_service(doc=None, not_claimable=False):
 
 
 async def test_delete_ready_doc_calls_cascade_in_order():
-    """claim_for_deletion atomically sets DELETING before any external calls (spec §3.1)."""
+    """claim_for_deletion atomically sets DELETING before external cleanup."""
     call_order = []
     doc = _make_doc()
     svc, repo, storage, registry = _make_service(doc=doc)
@@ -66,80 +66,41 @@ async def test_delete_ready_doc_calls_cascade_in_order():
 
     await svc.delete("DOCID001")
 
-    assert call_order[0] == "claim_for_deletion"
-    assert call_order[-1] == "delete_row"
+    assert call_order == ["claim_for_deletion", "fan_out_delete", "delete_row"]
+    storage.delete_object.assert_not_called()
 
 
 async def test_delete_idempotent_on_missing_doc():
-    """Re-DELETE of already-deleted/in-progress document returns without error (S14).
-
-    claim_for_deletion returns None when the WHERE clause matches no row
-    (already DELETING, or row missing).
-    """
+    """Re-DELETE of an already-deleted/in-progress document returns without error."""
     repo = AsyncMock()
     repo.claim_for_deletion.return_value = None
     registry = MagicMock()
     registry.fan_out_delete = AsyncMock(return_value=[])
     svc = IngestService(repo=repo, storage=MagicMock(), broker=registry, registry=registry)
-    await svc.delete("NONEXISTENT")  # must not raise
+    await svc.delete("NONEXISTENT")
     repo.delete.assert_not_called()
 
 
-async def test_delete_uploaded_doc_deletes_minio_object():
-    """UPLOADED status → MinIO staging object is deleted as part of cascade (S12)."""
-    doc = _make_doc(status="UPLOADED")
-    svc, repo, storage, _ = _make_service(doc=doc)
-    await svc.delete("DOCID001")
-    storage.delete_object.assert_called_once_with("confluence_S1_DOCID001")
+async def test_delete_never_deletes_minio_for_any_ingest_type_or_status():
+    for status in ("UPLOADED", "PENDING", "READY", "FAILED"):
+        for ingest_type in ("inline", "upload", "file"):
+            doc = _make_doc(
+                status=status,
+                ingest_type=ingest_type,
+                minio_site="tenant-eu-1" if ingest_type == "file" else None,
+            )
+            svc, repo, storage, _ = _make_service(doc=doc)
 
+            await svc.delete("DOCID001")
 
-async def test_delete_pending_doc_deletes_minio_object():
-    """PENDING status → MinIO staging object deleted (file still in staging)."""
-    doc = _make_doc(status="PENDING")
-    svc, repo, storage, _ = _make_service(doc=doc)
-    await svc.delete("DOCID001")
-    storage.delete_object.assert_called_once()
-
-
-async def test_delete_ready_doc_does_not_delete_minio():
-    """READY status → MinIO already cleared at pipeline terminal; no delete call."""
-    doc = _make_doc(status="READY")
-    svc, repo, storage, _ = _make_service(doc=doc)
-    await svc.delete("DOCID001")
-    storage.delete_object.assert_not_called()
-
-
-async def test_delete_minio_failure_does_not_stop_cascade():
-    """Fan_out_delete runs outside tx; storage error tolerated (P-E)."""
-    doc = _make_doc(status="UPLOADED")
-    svc, repo, storage, _ = _make_service(doc=doc)
-    storage.delete_object.side_effect = Exception("storage error")
-    await svc.delete("DOCID001")  # must not raise
-    repo.delete.assert_called_once()
+            storage.delete_object.assert_not_called()
+            repo.delete.assert_called_once_with("DOCID001")
 
 
 async def test_delete_calls_fan_out_delete_outside_tx():
-    """fan_out_delete is called with no DB tx open — only structural verification here."""
+    """fan_out_delete is called with no DB tx open; structural verification only."""
     svc, repo, storage, registry = _make_service()
     registry.fan_out_delete = AsyncMock(return_value=[])
     await svc.delete("DOCID001")
     registry.fan_out_delete.assert_awaited_once_with("DOCID001")
-
-
-async def test_delete_upload_ready_deletes_default_site_object():
-    """`upload` rows are server-staged but the worker never auto-deletes —
-    DELETE API is the only reclaim path, so it must call `delete_object`
-    even at status=READY."""
-    doc = _make_doc(status="READY", ingest_type="upload")
-    svc, _, storage, _ = _make_service(doc=doc)
-    await svc.delete("DOCID001")
-    storage.delete_object.assert_called_once()
-    assert "confluence_S1_DOCID001" in storage.delete_object.call_args.args
-
-
-async def test_delete_file_ready_skips_storage_delete():
-    """Caller-owned bytes; never touched by the server regardless of status."""
-    doc = _make_doc(status="READY", ingest_type="file", minio_site="tenant-eu-1")
-    svc, _, storage, _ = _make_service(doc=doc)
-    await svc.delete("DOCID001")
     storage.delete_object.assert_not_called()
