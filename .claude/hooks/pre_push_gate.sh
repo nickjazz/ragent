@@ -30,6 +30,54 @@ fi
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$ROOT"
 
+# High-risk full-review gate — if a pre-commit risk classification wrote
+# .pending_full_review, require /simplify --mode full + /review --mode full
+# before push is allowed. The check uses the audit log (freshness 30 min);
+# no diff_sha binding is enforced here because the diff is now committed and
+# the agent reviews the branch range. Consuming the marker on success prevents
+# the same marker from satisfying a later unrelated push.
+PENDING="$ROOT/.claude/.pending_full_review"
+if [[ -s "$PENDING" ]]; then
+    FULL_FRESHNESS=1800  # 30 minutes
+    FULL_NOW=$(date +%s)
+    FULL_CUTOFF=$(( FULL_NOW - FULL_FRESHNESS ))
+    AUDIT="$ROOT/.claude/.stamp_audit.log"
+    FULL_HITS=$(python3 - "${AUDIT:-/dev/null}" "$FULL_CUTOFF" <<'PY' 2>/dev/null
+import json, sys
+log, cutoff = sys.argv[1], int(sys.argv[2])
+hits = {"simplify": "no", "review": "no"}
+try:
+    with open(log) as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+                if int(row.get("ts", 0)) >= cutoff:
+                    by = row.get("by", "")
+                    if by in ("simplify:full", "simplify"):
+                        hits["simplify"] = "yes"
+                    elif by in ("review:full", "review"):
+                        hits["review"] = "yes"
+            except Exception:
+                continue
+except FileNotFoundError:
+    pass
+print(hits["simplify"], hits["review"])
+PY
+) || FULL_HITS="no no"
+    read -r SIM_FULL REV_FULL <<<"$FULL_HITS"
+    if [[ "$SIM_FULL" != yes || "$REV_FULL" != yes ]]; then
+        REASON=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("reason","?"))' "$PENDING" 2>/dev/null || echo "?")
+        block "high-risk full-review gate: .pending_full_review exists (reason: ${REASON}).
+  Before pushing, run BOTH:
+    /simplify --mode full
+    /review --mode full
+  (within the last 30 minutes). Got simplify:full=${SIM_FULL} review:full=${REV_FULL}."
+    fi
+    # Full review satisfied — consume the marker.
+    rm -f "$PENDING"
+    printf 'Pre-push gate: full-review requirement satisfied — proceeding.\n' >&2
+fi
+
 # Determine the diff range being pushed. Prefer the upstream tracking ref;
 # fall back to origin/<current-branch>, then origin/HEAD. If we can resolve
 # a base AND every changed path is a markdown file, skip docker+test — the

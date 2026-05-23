@@ -22,11 +22,16 @@
 #   RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh review
 set -euo pipefail
 
-SKILL="${1:-}"
-case "$SKILL" in
-    simplify | review) ;;
+RAW_SKILL="${1:-}"
+# Normalise bare names to :full for backward-compat (old skill bodies that
+# call `stamp_pre_commit_approved.sh simplify` continue to work).
+case "$RAW_SKILL" in
+    simplify)       SKILL="simplify:full" ;;
+    review)         SKILL="review:full"   ;;
+    simplify:fast | simplify:full | review:fast | review:full)
+                    SKILL="$RAW_SKILL"    ;;
     *)
-        printf 'stamp script: invalid skill name %q (expected simplify|review)\n' "$SKILL" >&2
+        printf 'stamp script: invalid skill name %q (expected simplify|simplify:fast|simplify:full|review|review:fast|review:full)\n' "$RAW_SKILL" >&2
         exit 2 ;;
 esac
 

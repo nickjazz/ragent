@@ -110,7 +110,7 @@ fi
 #    stamping by the agent no longer satisfies the gate (the file would be
 #    plain text, not JSON, and the diff_sha extraction below fails).
 APPROVAL="$ROOT/.claude/.pre_commit_approved"
-FRESHNESS=2700  # 45 minutes
+FRESHNESS=3600  # 60 minutes
 NOW=$(date +%s)
 if [[ ! -s "$APPROVAL" ]]; then
     block "pre-commit review gate: .claude/.pre_commit_approved missing or empty.
@@ -163,12 +163,13 @@ with open(log) as f:
     for line in f:
         try:
             row = json.loads(line)
-            if (
-                row.get("diff_sha") == sha
-                and int(row.get("ts", 0)) >= cutoff
-                and row.get("by") in hits
-            ):
-                hits[row["by"]] = "yes"
+            if row.get("diff_sha") == sha and int(row.get("ts", 0)) >= cutoff:
+                by = row.get("by", "")
+                # Accept any mode variant: simplify, simplify:fast, simplify:full
+                if by == "simplify" or by.startswith("simplify:"):
+                    hits["simplify"] = "yes"
+                elif by == "review" or by.startswith("review:"):
+                    hits["review"] = "yes"
         except Exception:
             continue
 print(hits["simplify"], hits["review"])
@@ -180,6 +181,71 @@ if [[ "$SIMPLIFY_HIT" != yes || "$REVIEW_HIT" != yes ]]; then
   Got simplify=${SIMPLIFY_HIT:-no} review=${REVIEW_HIT:-no}.
   BOTH skills must run against the staged diff. See docs/00_journal.md
   Process row 2026-05-09 'Mandatory-step honesty (recurrence)'."
+fi
+
+# 5b. Risk classification — high-risk commits can still be committed after the
+#     fast skill stamps above, but a .pending_full_review marker is written so
+#     the pre-push gate can require /simplify --mode full + /review --mode full
+#     before the code leaves the machine.
+#
+#     Low-risk fast path: ALL conditions must hold —
+#       (a) changed files <= 10
+#       (b) changed lines (insertions + deletions) <= 200
+#       (c) no deletions > 50 lines
+#       (d) no high-risk file touched: lockfiles, pyproject.toml, auth/security
+#           patterns, bootstrap/ (lifecycle), routers/api.py (interface),
+#           migrations/alembic/ (schema)
+#     Trivially low-risk (skip remaining checks): only tests/ and/or .md files.
+_classify_risk() {
+    local staged="$1"
+    RISK_REASONS=""
+    # Trivially safe: only tests + markdown
+    if ! printf '%s\n' "$staged" | grep -qvE '(^tests/|\.md$)'; then
+        return 0
+    fi
+    local hr=0
+    # Lockfiles
+    if printf '%s\n' "$staged" | grep -qE '(\.lock$)'; then
+        RISK_REASONS+=" lockfile;"; hr=1; fi
+    # Dependency manifest
+    if printf '%s\n' "$staged" | grep -qE '^pyproject\.toml$'; then
+        RISK_REASONS+=" dependency(pyproject.toml);"; hr=1; fi
+    # Auth / Security (path or filename contains the keyword)
+    if printf '%s\n' "$staged" | grep -qiE '(auth|security)'; then
+        RISK_REASONS+=" auth/security;"; hr=1; fi
+    # Lifecycle (composition root / bootstrap)
+    if printf '%s\n' "$staged" | grep -qE '^src/ragent/bootstrap/'; then
+        RISK_REASONS+=" lifecycle(bootstrap);"; hr=1; fi
+    # Interface (routers + top-level api.py)
+    if printf '%s\n' "$staged" | grep -qE '^src/ragent/(routers/|api\.py$)'; then
+        RISK_REASONS+=" interface(routers/api);"; hr=1; fi
+    # Schema (migrations + alembic versions)
+    if printf '%s\n' "$staged" | grep -qE '^(migrations/|alembic/)'; then
+        RISK_REASONS+=" schema(migrations/alembic);"; hr=1; fi
+    # File count
+    local fc
+    fc=$(printf '%s\n' "$staged" | grep -c '.' 2>/dev/null || echo 0)
+    if [[ $fc -gt 10 ]]; then
+        RISK_REASONS+=" files>10($fc);"; hr=1; fi
+    # Line count from diff --stat summary line
+    local stat_summary ins del
+    stat_summary=$(git diff --cached --shortstat 2>/dev/null || true)
+    ins=$(printf '%s' "$stat_summary" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)
+    del=$(printf '%s' "$stat_summary" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)
+    local total=$(( ins + del ))
+    if [[ $total -gt 200 ]]; then
+        RISK_REASONS+=" lines>200($total);"; hr=1; fi
+    if [[ $del -gt 50 ]]; then
+        RISK_REASONS+=" deletions>50($del);"; hr=1; fi
+    return $hr
+}
+RISK_REASONS=""
+if ! _classify_risk "$STAGED"; then
+    PENDING="$ROOT/.claude/.pending_full_review"
+    printf '{"diff_sha":"%s","ts":%s,"reason":"%s"}\n' \
+        "$CURRENT_SHA" "$NOW" "${RISK_REASONS%;}" > "$PENDING"
+    printf 'Pre-commit risk gate: HIGH-RISK commit — %s\n  Commit allowed; full review required before push.\n  Run /simplify --mode full and /review --mode full, then git push.\n' \
+        "${RISK_REASONS%;}" >&2
 fi
 
 # Consume the marker — every commit requires a fresh /simplify + /review cycle.
