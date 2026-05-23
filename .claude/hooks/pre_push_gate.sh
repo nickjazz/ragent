@@ -30,6 +30,73 @@ fi
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$ROOT"
 
+# High-risk full-review gate — if a pre-commit risk classification wrote
+# .pending_full_review, require /simplify --mode full + /review --mode full
+# before push is allowed.
+#
+# Stamp freshness: 30 minutes AND the stamp must be newer than the pending
+# marker itself — this prevents a full-review run that predates the high-risk
+# commit from satisfying the gate (fix for review finding P1: timing).
+#
+# Marker consumption: deferred until ALL pre-push checks pass via an EXIT
+# trap. If tests fail and the push is blocked the marker remains, so the
+# next retry still requires full review (fix for review finding P1: consume).
+PENDING="$ROOT/.claude/.pending_full_review"
+_CONSUME_PENDING=0
+_consume_on_success() {
+    local code=$?
+    if [[ $_CONSUME_PENDING -eq 1 && $code -eq 0 ]]; then
+        rm -f "$PENDING"
+        printf 'Pre-push gate: .pending_full_review consumed — full review satisfied.\n' >&2
+    fi
+}
+if [[ -s "$PENDING" ]]; then
+    FULL_FRESHNESS=1800  # 30 minutes
+    FULL_NOW=$(date +%s)
+    FULL_CUTOFF=$(( FULL_NOW - FULL_FRESHNESS ))
+    # The stamp must also be newer than the pending marker (commit time)
+    # so a pre-commit full review cannot satisfy a post-commit push gate.
+    PENDING_TS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ts",0))' "$PENDING" 2>/dev/null || echo 0)
+    AUDIT="$ROOT/.claude/.stamp_audit.log"
+    FULL_HITS=$(python3 - "${AUDIT:-/dev/null}" "$FULL_CUTOFF" "$PENDING_TS" <<'PY' 2>/dev/null
+import json, sys
+log, cutoff, pending_ts = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+hits = {"simplify": "no", "review": "no"}
+try:
+    with open(log) as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+                ts = int(row.get("ts", 0))
+                # Must be within freshness window AND after the pending marker
+                if ts >= cutoff and ts > pending_ts:
+                    by = row.get("by", "")
+                    if by in ("simplify:full", "simplify"):
+                        hits["simplify"] = "yes"
+                    elif by in ("review:full", "review"):
+                        hits["review"] = "yes"
+            except Exception:
+                continue
+except FileNotFoundError:
+    pass
+print(hits["simplify"], hits["review"])
+PY
+) || FULL_HITS="no no"
+    read -r SIM_FULL REV_FULL <<<"$FULL_HITS"
+    if [[ "$SIM_FULL" != yes || "$REV_FULL" != yes ]]; then
+        REASON=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("reason","?"))' "$PENDING" 2>/dev/null || echo "?")
+        block "high-risk full-review gate: .pending_full_review exists (reason: ${REASON}).
+  Before pushing, run BOTH skills AFTER your last high-risk commit:
+    /simplify --mode full
+    /review --mode full
+  (stamps must be within 30 min and newer than the commit). Got simplify:full=${SIM_FULL} review:full=${REV_FULL}."
+    fi
+    # Mark for consumption — actual rm happens in the EXIT trap after all
+    # remaining pre-push checks (markdown/tests) also pass.
+    _CONSUME_PENDING=1
+    printf 'Pre-push gate: full-review requirement satisfied — proceeding to test gate.\n' >&2
+fi
+
 # Determine the diff range being pushed. Prefer the upstream tracking ref;
 # fall back to origin/<current-branch>, then origin/HEAD. If we can resolve
 # a base AND every changed path is a markdown file, skip docker+test — the
@@ -52,7 +119,8 @@ if [[ -n "$BASE" ]]; then
 fi
 
 LOG_DIR="$(mktemp -d -t ragent-prepush-XXXXXX)"
-trap 'rm -rf "$LOG_DIR"' EXIT
+# Combine cleanup: remove temp dir AND conditionally consume pending marker.
+trap '_consume_on_success; rm -rf "$LOG_DIR"' EXIT
 
 FULL="${RAGENT_PREPUSH_FULL:-}"
 
