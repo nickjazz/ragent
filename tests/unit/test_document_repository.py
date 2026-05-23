@@ -4,6 +4,7 @@ import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from ragent.repositories.document_repository import (
     DocumentRepository,
@@ -76,6 +77,29 @@ async def test_create_returns_document_id():
         object_key="confluence_DOC-1_DOCID001",
     )
     assert doc_id == "DOCID001"
+
+
+async def test_create_retries_mariadb_deadlock():
+    engine, conn = _mock_engine()
+    deadlock = OperationalError(
+        "INSERT",
+        {},
+        MagicMock(args=(1213, "Deadlock found when trying to get lock")),
+    )
+    conn.execute.side_effect = [deadlock, MagicMock(rowcount=1)]
+    repo = DocumentRepository(engine)
+
+    doc_id = await repo.create(
+        document_id="DOCID001",
+        create_user="alice",
+        source_id="DOC-1",
+        source_app="confluence",
+        source_title="Title",
+        object_key="confluence_DOC-1_DOCID001",
+    )
+
+    assert doc_id == "DOCID001"
+    assert conn.execute.await_count == 2
 
 
 async def test_create_inserts_all_mandatory_fields():
@@ -375,7 +399,7 @@ async def test_claim_for_deletion_returns_prior_status_for_cascade_branching():
     repo = DocumentRepository(engine)
     doc = await repo.claim_for_deletion("ID1")
     assert doc is not None
-    assert doc.status == "UPLOADED"  # pre-state, drives MinIO delete branch
+    assert doc.status == "UPLOADED"  # pre-state drives delete/supersede cleanup decisions
 
 
 # ---------------------------------------------------------------------------

@@ -2,8 +2,9 @@
 
 A site record exposes (endpoint, auth, bucket, read_only). Inline ingest
 always stages to `__default__`; file ingest reads from caller-supplied
-`(minio_site, object_key)` and HEAD-probes via `stat_object`. `read_only`
-sites suppress post-READY delete unconditionally.
+`(minio_site, object_key)` and HEAD-probes via `stat_object`. Ingest lifecycle
+code retains MinIO objects for audit/replay; `delete_object` remains a low-level
+administrative primitive.
 """
 
 from __future__ import annotations

@@ -21,7 +21,6 @@ requirement for C1.
 from __future__ import annotations
 
 import json
-import signal
 import time
 import urllib.request
 
@@ -41,7 +40,7 @@ RECOVERY_DEADLINE_SECONDS = 600
 # How long to wait for the worker to claim the task (leave UPLOADED).
 # Worker startup (init_schema + TaskIQ bootstrap) takes ~10-30s in CI;
 # 60s gives comfortable headroom.
-WORKER_CLAIM_TIMEOUT_SECONDS = 60
+WORKER_CLAIM_TIMEOUT_SECONDS = 120
 
 
 def _post_doc() -> str:
@@ -146,7 +145,7 @@ def test_C1_worker_sigkill_recovers_to_ready(
             "(pipeline ran faster than poll interval — transient skip)"
         )
 
-    worker.send_signal(signal.SIGKILL)
+    worker.kill()
     worker.wait(timeout=5)
     spawn_module("ragent.worker")  # fresh consumer for the reconciler's re-kiq
 

@@ -2,13 +2,12 @@
 
 Inline path stages bytes to the `__default__` MinIO site under a server-built
 object key; file path records the caller's `(minio_site, object_key)` after a
-HEAD probe and never copies. Cleanup branches on `documents.ingest_type` and
-the site's `read_only` flag.
+HEAD probe and never copies. MinIO objects are retained for audit/replay;
+delete and supersede cleanup only derived stores such as ES chunks.
 """
 
 from __future__ import annotations
 
-import contextlib
 import io
 from dataclasses import dataclass
 from typing import Any
@@ -211,15 +210,6 @@ class IngestService:
         # to /chat between this call and reconciler reclaim.
         await self._registry.fan_out_delete(document_id)
 
-        # Blob lifecycle by ingest_type:
-        #   inline → worker deletes on READY (only pre-READY rows still hold the blob)
-        #   upload → worker NEVER auto-deletes; DELETE API is the only reclaim path
-        #   file   → caller-owned; _delete_object short-circuits
-        ingest_type = getattr(doc, "ingest_type", "inline")
-        if doc.status in ("UPLOADED", "PENDING") or ingest_type == "upload":
-            with contextlib.suppress(Exception):
-                self._delete_object(doc)
-
         await self._repo.delete(document_id)
         logger.info(
             "ingest.deleted",
@@ -228,25 +218,6 @@ class IngestService:
             source_app=getattr(doc, "source_app", None),
             prior_status=getattr(doc, "status", None),
         )
-
-    def _delete_object(self, doc: Any) -> None:
-        ingest_type = getattr(doc, "ingest_type", "inline")
-        if ingest_type == "file":
-            return  # caller owns the bytes
-        site = getattr(doc, "minio_site", None)
-        if hasattr(self._storage, "delete_object"):
-            try:
-                if site:
-                    self._storage.delete_object(site, doc.object_key)
-                else:
-                    # v1 MinIOClient takes only object_key; v2 registry requires
-                    # (site, key). TypeError from v2 is the disambiguator.
-                    try:
-                        self._storage.delete_object(doc.object_key)
-                    except TypeError:
-                        self._storage.delete_object("__default__", doc.object_key)
-            except UnknownMinioSite:
-                return
 
     async def create_from_upload(
         self,

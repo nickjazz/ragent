@@ -26,7 +26,10 @@ def test_embed_single_batch_returns_vectors():
     vecs = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
     http = _mock_http(vecs)
     client = EmbeddingClient(
-        api_url="https://embed.example.com", http=http, get_token=lambda: "tok"
+        api_url="https://embed.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        batch_size=32,
     )
     result = client.embed(["hello", "world"])
     assert result == vecs
@@ -35,7 +38,10 @@ def test_embed_single_batch_returns_vectors():
 def test_embed_post_shape():
     http = _mock_http([[0.1]])
     client = EmbeddingClient(
-        api_url="https://embed.example.com", http=http, get_token=lambda: "tok"
+        api_url="https://embed.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        batch_size=32,
     )
     client.embed(["text"])
     body = http.post.call_args[1]["json"]
@@ -196,7 +202,10 @@ def test_embed_batches_by_batch_size(monkeypatch):
     http = MagicMock()
     http.post.side_effect = fake_post
     client = EmbeddingClient(
-        api_url="https://embed.example.com", http=http, get_token=lambda: "tok"
+        api_url="https://embed.example.com",
+        http=http,
+        get_token=lambda: "tok",
+        batch_size=32,
     )
 
     texts_32 = [f"t{i}" for i in range(32)]

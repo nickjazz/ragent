@@ -7,14 +7,12 @@ worker fetches bytes from the right MinIO site, decodes UTF-8 for text
 mimes or passes raw bytes for binary mimes (DOCX/PPTX), feeds the v2
 pipeline (``loader → splitter → [idempotency_clean] → chunker →
 embedder → writer``). TX-B: commit terminal status. For ``ingest_type ==
-'inline'`` the staging object is best-effort deleted; ``ingest_type ==
-'file'`` is caller-owned, never deleted.
+'inline'``/``upload``/``file`` MinIO objects are retained for audit/replay.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import time
 
@@ -222,14 +220,6 @@ async def ingest_pipeline_task(document_id: str) -> None:
         source_app=doc.source_app,
     )
     record_pipeline_outcome(source_app=doc.source_app, mime_type=doc.mime_type, outcome="success")
-
-    # Only inline staging blobs are auto-deleted on READY (chunks are in ES,
-    # so the bytes are no longer needed). `file` is caller-owned; `upload` is
-    # server-staged but reserved for the DELETE API path so admin operators
-    # can rerun against the same row without losing the source bytes.
-    if (doc.ingest_type or "inline") == "inline":
-        with contextlib.suppress(Exception):
-            registry.delete_object(site, doc.object_key)
 
     # Post-READY enrichment only runs for the survivor; a self-demoted doc is
     # now DELETING and reconciler will fan_out_delete it.

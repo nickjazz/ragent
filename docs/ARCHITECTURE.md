@@ -57,7 +57,7 @@ Reconciler:    CronJob → re-dispatches stale PENDING / UPLOADED rows
 
 ## Key Design Decisions
 
-- **JSON-only ingest with discriminator** — `POST /ingest` takes `{ingest_type: "inline"|"file", ...}`; multipart is gone. Inline content is staged to the `__default__` MinIO site and deleted after `READY`. File-type ingests read directly from the caller-owned `(minio_site, object_key)` and are never deleted.
+- **Ingest discriminator** - `POST /ingest` takes `{ingest_type: "inline"|"file", ...}` and `/ingest/v1/upload` records `ingest_type="upload"`. Inline/upload bytes are staged to the `__default__` MinIO site; file ingests read caller-owned `(minio_site, object_key)`. MinIO objects are retained for audit/replay for all ingest types.
 - **MIME-aware AST splitters** — `text/markdown` uses mistletoe (fenced code never split, atoms carry the original markdown); `text/html` uses selectolax (drops `<script>/<nav>/<aside>/<footer>/<header>` boilerplate, preserves `<pre>`/`<table>` atomically); `text/plain` uses Haystack's stock `DocumentSplitter`. CSV is no longer accepted.
 - **Mime-agnostic budget chunker** — single 1000/1500/100 (target/max/overlap) profile across all MIMEs; the v1 EN/CJK/CSV branches and the `langdetect`/`nltk` deps are gone.
 - **Embed clean, return raw** — each ES chunk carries both `content` (normalized text used for BM25 scoring + bge-m3 embedding) and `raw_content` (original byte slice with markdown fences / HTML tags intact). Chat citations and LLM context use `raw_content`; retrieval scoring stays on `content`.

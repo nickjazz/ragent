@@ -62,7 +62,7 @@
 | P2.6 | Quality | • **Achieve:** Continuous answer-quality + load resilience evidence.<br>• **Deliver:** RAGAS eval in CI; large-file streaming; chaos drills (軌三 decomposed into Track T-CHAOS, B49). | [ ] | QA |
 | P2.7 | Behavioral | • **Achieve:** Concurrent component execution for ingest/chat.<br>• **Deliver:** Switch ingest/chat to Haystack `AsyncPipeline`. | [ ] | Dev |
 | P2.8 | Closure | • **Achieve:** Close P2 with synced docs and lessons.<br>• **Deliver:** Updated `00_spec.md` / `00_plan.md` + new entries in `00_journal.md`. | [ ] | Master |
-| P2.9 | Stability | • **Achieve:** Bound MinIO orphan exposure to 24h.<br>• **Deliver:** Orphan MinIO sweeper with TTL 24h on staging objects (`event=minio.orphan_object` audit). | [ ] | SRE |
+| P2.9 | Stability | • **Achieve:** Close prior MinIO orphan-sweeper idea as not-doing.<br>• **Deliver:** MinIO objects are retained for audit/replay; no TTL sweeper is installed. | [x] | SRE |
 
 ## Phase 3 — Graph Enhancement (conditional, +4–6 weeks) — *gated*
 
@@ -150,4 +150,4 @@
 
 | Task | Type | Deliverables | Dep | Status | Owner |
 |---|---|---|---|---|---|
-| T-EI.2 | Red | • **Achieve:** Pin (a) ingest pipeline resource drift, (b) `indexed_at` mapping presence, (c) `default_pipeline` index setting.<br>• **Deliver:** `tests/integration/test_es_resource_drift.py` extended to load `resources/es/pipelines/chunks_default.json` and assert single `set` processor on `_ingest.timestamp → indexed_at`; `tests/unit/test_init_schema.py` extended to assert `chunks_v1.json` has `mappings.properties.indexed_at == {"type":"date"}` and `settings.index.default_pipeline == "chunks_default"`. `tests/integration/test_bootstrap_auto_init.py` extended: `GET _ingest/pipeline/chunks_default` returns 200 AND was created before the index. Tests MUST fail before T-EI.3. | — | [ ] | QA |
+| T-EI.2 | Red | • **Achieve:** Pin (a) ingest pipeline resource drift, (b) `indexed_at` mapping presence, (c) `default_pipeline` index setting.<br>• **Deliver:** `tests/integration/test_es_resource_drift.py` extended to load `resources/es/pipelines/chunks_default.json` and assert single `set` processor on `_ingest.timestamp → indexed_at`; `tests/unit/test_init_schema.py` extended to assert `chunks_v1.json` has `mappings.properties.indexed_at == {"type":"date"}` and `settings.index.default_pipeline == "chunks_default"`. `tests/integration/test_bootstrap_auto_init.py` extended: `GET _ingest/pipeline/chunks_default` returns 200 AND was created before the index. Tests MUST fail before T-EI.3. | — | [x] | QA |

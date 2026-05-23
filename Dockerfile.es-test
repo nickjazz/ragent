@@ -1,9 +1,10 @@
-FROM elasticsearch:9.2.3
+FROM docker.elastic.co/elasticsearch/elasticsearch:9.2.3
 
-# Install analysis-icu; trust any SSL cert to handle corporate/internal CA chains.
-RUN ES_JAVA_OPTS="-Djavax.net.ssl.trustStore=NONE -Djavax.net.ssl.trustStoreType=JKS" \
-    bin/elasticsearch-plugin install --batch analysis-icu || \
-    echo "[ragent] WARNING: analysis-icu install failed; container starts without ICU plugin"
+# Manual/staging CJK BM25 smoke image. Fail the build if the ICU analyzer cannot
+# be installed; otherwise the smoke test can pass against the wrong analyzer.
+RUN bin/elasticsearch-plugin install --batch analysis-icu
 
 ENV discovery.type=single-node
 ENV xpack.security.enabled=false
+ENV cluster.routing.allocation.disk.threshold_enabled=false
+ENV ES_JAVA_OPTS="-Xms512m -Xmx512m"
