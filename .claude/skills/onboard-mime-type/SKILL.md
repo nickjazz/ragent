@@ -87,7 +87,7 @@ recommendations for likely next-onboard targets:
 | `text/csv` (if reintroduced) | stdlib `csv` | Row atom = one record; spec §3.2 / B24 / `RowMerger` precedent |
 | `application/json` | stdlib `json` + custom path-walker | Atoms = top-level array elements or schema-bounded subtrees |
 | `application/xml` | `defusedxml` → ElementTree | XXE-safe; never `xml.etree` directly on untrusted input |
-| `application/pdf` | `pypdf` | Binary — Step 1a worker decode change required |
+| `application/pdf` | `pymupdf4llm` | **Already onboarded** (`_PdfASTSplitter`). Pages→Markdown via RapidOCR; binary decode done in pipeline already. |
 | `…openxmlformats…wordprocessingml.document` | `python-docx` | Binary — Step 1a |
 
 **Two MIME sources of truth** — important to internalize before changing
@@ -244,11 +244,11 @@ Two commits, in this order:
    `tests/unit/test_ingest_request_schema_v2.py::test_ingest_mime_enum_values`
    + a happy-path schema test; extend
    `tests/unit/test_pipeline_routing_v2.py` with
-   `test_<format>_routes_to_<format>_splitter`; if onboarding
-   `application/pdf`, swap the example in
-   `test_unknown_mime_raises_pipeline_unroutable` to a still-unsupported
-   MIME (e.g. `image/png`); same for `text/csv` and the schema/router
-   negative tests in Step 6. Green: in one commit add the `IngestMime`
+   `test_<format>_routes_to_<format>_splitter`; if your new MIME is
+   currently used as the negative example in
+   `test_unknown_mime_raises_pipeline_unroutable` (currently `image/png`),
+   swap the example to another still-unsupported MIME; same rule for
+   `text/csv` and the schema/router negative tests in Step 6. Green: in one commit add the `IngestMime`
    member, append to `ALLOWED_MIMES`, construct the splitter in
    `_MimeAwareSplitter.__init__`, add the `elif` branch, **and** (binary
    only) branch worker decode in `workers/ingest.py:_run_pipeline`. Update
@@ -284,7 +284,7 @@ Two existing tests pin the closed-enum invariant by example:
 |---|---|---|
 | `test_ingest_request_schema_v2.py::test_unknown_mime_rejected` | `image/png` rejected | leave alone (image still rejected) |
 | `test_ingest_request_schema_v2.py::test_csv_mime_rejected_in_v2` | `text/csv` rejected | **update or delete** if onboarding `text/csv`; otherwise leave alone |
-| `test_pipeline_routing_v2.py::test_unknown_mime_raises_pipeline_unroutable` | `application/pdf` raises `PIPELINE_UNROUTABLE` | **change example** if onboarding `application/pdf` |
+| `test_pipeline_routing_v2.py::test_unknown_mime_raises_pipeline_unroutable` | `image/png` raises `PIPELINE_UNROUTABLE` | **change example** if onboarding `image/png` (follow the same swap pattern) |
 
 Likewise `test_ingest_router_v2.py` has `test_post_ingest_unknown_mime_returns_415`
 (`image/png`) and `test_post_ingest_csv_mime_returns_415_in_v2`. The same
@@ -326,7 +326,7 @@ that's two sources of truth and the metric label cardinality stays high.
 - [ ] Five-site update complete: `IngestMime` enum, router `elif`, splitter `@component` + `__init__` construction, `ALLOWED_MIMES` doc constant, factory module + class docstrings
 - [ ] Spec updated: `docs/00_spec.md` §3.1 allow-list line, §3.2 graph (also fix the stale `FileTypeRouter` name while there), §4.2 converter table
 - [ ] New unit test `test_<format>_ast_splitter.py` covers block-type emission, `raw_content` shape, empty + oversize input
-- [ ] `test_pipeline_routing_v2.py` extended with happy-path routing test; if onboarded MIME was the prior `application/pdf` "unknown" example, the negative example is updated to a still-unsupported one
+- [ ] `test_pipeline_routing_v2.py` extended with happy-path routing test; if onboarded MIME was the prior `image/png` "unknown" example, update the negative example to a still-unsupported one
 - [ ] Schema enum test (`test_ingest_mime_enum_values`) updated; remaining unknown / image / (CSV-if-not-onboarded) negatives still pass
 - [ ] Cardinality math: `|source_app| × |IngestMime| × 2` ≤ ~200 series per metric
 - [ ] Two `[BEHAVIORAL]` commits: (1) splitter `@component` alone, (2) atomic wire-up (enum + allow-list + router + `__init__` + binary-decode + docstrings + spec). No mid-state where API accepts a mime that doesn't route.

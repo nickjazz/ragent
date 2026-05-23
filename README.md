@@ -21,57 +21,45 @@ make doctor PROBE_LIVE=1                                 # post-launch — also 
 
 ### MCP Hub
 
-Standalone FastMCP service that turns REST endpoints declared in yaml into
-MCP tools. Independent from the `POST /mcp/v1` JSON-RPC server inside the API
-(which only exposes `retrieve`); Hub federates many third-party APIs into one MCP surface.
+Standalone FastMCP service that federates arbitrary third-party REST APIs as MCP tools.
 
 ```bash
-# 1. Point MCP_HUB_TOOLS_YAML at a single yaml or a directory of yamls
-#    (one file per upstream system; tool names auto-qualified as <system>.<tool>).
 export MCP_HUB_TOOLS_YAML=src/ragent/mcp_hub/tools.example.d   # demo registry
-
-# 2. Validate the registry (fails fast on bad yaml, dup names, dangling path params).
-uv run python -m ragent.mcp_hub.doctor
-
-# 3. Run.
-uv run python -m ragent.mcp_hub.server                         # binds 0.0.0.0:9000/mcp
+uv run python -m ragent.mcp_hub.doctor                          # validate yaml
+uv run python -m ragent.mcp_hub.server                          # binds 0.0.0.0:9000/mcp
 ```
 
 ### Development
 
 ```bash
 make check        # format + lint + test (Linux / macOS)
-make test         # pytest with 92% coverage gate
-make format       # ruff format
-make lint         # ruff check --fix
+make test         # full suite with 92% coverage gate
+make test-gate    # unit + integration only (pre-commit gate)
 ```
 
-Windows (run targets individually via `uv`):
+---
 
-```powershell
-uv run ruff format .
-uv run ruff check . --fix
-uv run pytest --cov=src/ragent --cov-branch --cov-fail-under=92
+## Project Structure
+
 ```
-
-#### PDF OCR (Windows)
-
-PDF ingest uses PyMuPDF for text extraction and Tesseract for image-bearing pages (OCR).
-Tesseract must be installed at the OS level:
-
-```powershell
-winget install UB-Mannheim.TesseractOCR
-# Re-open your terminal, then verify:
-tesseract --version
+src/ragent/
+  api.py / worker.py / reconciler.py  — three process entrypoints
+  bootstrap/        — composition root, app factory, schema init, logging
+  routers/          — FastAPI routers: ingest, chat, retrieve, feedback, mcp, health
+  services/         — business logic: IngestService
+  repositories/     — DB access: DocumentRepository
+  pipelines/        — Haystack pipelines: ingest, retrieval
+  plugins/          — extractor plugins: VectorExtractor, StubGraphExtractor
+  clients/          — 3rd-party clients: EmbeddingClient, LLMClient, RerankClient
+  mcp_hub/          — standalone FastMCP hub (separate process)
+  storage/          — MinIO site registry
+  auth/             — JWT verification, permission deps
+  schemas/          — Pydantic request/response models
+migrations/         — Alembic SQL + schema.sql snapshot
+resources/es/       — Elasticsearch index/pipeline/alias definitions
+tests/{unit,integration,e2e}/
+docs/               — spec, plan, journal, API reference
 ```
-
-Add the Tesseract install directory (e.g. `C:\Program Files\Tesseract-OCR`) to `PATH` and set
-`TESSDATA_PREFIX` to its `tessdata` subfolder if PyMuPDF cannot locate language data at runtime.
-For CJK / Japanese / German documents, install the matching language packs from the same
-UB-Mannheim installer (select additional languages during setup).
-
-On Linux and macOS, install via the system package manager (`apt`, `brew`, etc.).
-The production `Dockerfile` installs `tesseract-ocr-eng`, `-chi-sim`, `-chi-tra`, `-jpn`, `-deu`.
 
 ---
 
@@ -79,11 +67,10 @@ The production `Dockerfile` installs `tesseract-ocr-eng`, `-chi-sim`, `-chi-tra`
 
 | File | Purpose |
 |---|---|
-| [`docs/API.md`](docs/API.md) | API reference (ingest, chat, retrieve, observability, MCP) |
+| [`docs/API.md`](docs/API.md) | API reference (ingest, chat, retrieve, feedback, observability, MCP) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System diagram and key design decisions |
 | [`docs/00_rule.md`](docs/00_rule.md) | Development standards and mandatory workflow |
-| [`docs/00_rule_third_party_api.md`](docs/00_rule_third_party_api.md) | Third-Party API request/response field-name samples (split from `00_rule.md`) |
-| [`docs/00_spec.md`](docs/00_spec.md) | Full technical specification |
-| [`docs/00_plan.md`](docs/00_plan.md) | TDD implementation checklist |
+| [`docs/00_spec.md`](docs/00_spec.md) | Full technical specification (subdocs in `docs/spec/`) |
+| [`docs/00_plan.md`](docs/00_plan.md) | TDD implementation checklist (completed in `docs/completed_plan/`) |
 | [`docs/00_agent_team.md`](docs/00_agent_team.md) | Agent team and workflow |
 | [`docs/00_journal.md`](docs/00_journal.md) | Team reflection and blameless guidelines |
