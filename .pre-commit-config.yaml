@@ -7,4 +7,4 @@ repos:
           - --baseline
           - .secrets.baseline
           - --exclude-files
-          - '(^tests/|^docs/|^resources/|^\.env\.example$|^\.secrets\.baseline$)'
+          - '(^\.secrets\.baseline$)'
