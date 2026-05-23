@@ -110,6 +110,11 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
     - **Boundary**: Repositories accept either an `Engine` (and check out per call) or an injected per-request `Connection` from a `Depends`-driven session factory. Composition root holds the pool, never the connection.
     - **Resilience:** Every `create_async_engine` call MUST set `pool_pre_ping=True` (transparent reconnect when server closes idle connection past `wait_timeout`) and `pool_recycle=int_env("MARIADB_POOL_RECYCLE_SECONDS", <default below server wait_timeout>)`. Both the env var and its default must appear in spec §4.6 in the same commit as the engine wiring. Omission symptom: `OperationalError 2013 (Lost connection)` under low-traffic / long-idle conditions.
 
+- **Rule: Election Queries — Status Set Consistency**
+    - **Action**: Whenever a SQL query scopes election candidates by `status IN (A, B, ...)`, its companion demote/update statement MUST use the **identical status set**. Mismatched filters silently leave losers alive (a loser that enters the set after the election subquery but before the UPDATE is skipped by the narrower WHERE and remains READY/PENDING indefinitely).
+    - **Verification**: Every `_promote_or_demote` or equivalent method MUST have a unit test asserting that the demote UPDATE SQL contains the same status values as the election subquery. A test that only asserts the winner was promoted but not that all prior holders were demoted is insufficient.
+    - **Example**: `_promote_or_demote` electing on `status IN ('PENDING', 'READY')` must also demote with `WHERE status IN ('PENDING', 'READY')` — not `WHERE status = 'READY'` which would miss a concurrent PENDING that later races to READY.
+
 ---
 
 ### ID Generation Strategy: UUIDv7 + Base32

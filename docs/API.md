@@ -453,7 +453,7 @@ curl http://localhost:8000/metrics
 external MCP-aware agents (Claude Desktop, Cursor, in-house agents) can
 invoke the retrieval pipeline through the MCP standard.
 
-Supported methods (full spec: `docs/00_spec.md` §3.8):
+Supported methods (full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md)):
 
 | Method | Direction | Purpose |
 |---|---|---|
