@@ -20,6 +20,7 @@ directly.
 from __future__ import annotations
 
 import pytest
+from ragent.bootstrap.init_schema import patch_aiomysql_ping
 from sqlalchemy.ext.asyncio import create_async_engine
 
 pytestmark = [pytest.mark.docker, pytest.mark.asyncio]
@@ -65,7 +66,12 @@ def lifecycle_dsn():
 
 @pytest.fixture
 async def lifecycle_engine(lifecycle_dsn):
+    """Async SQLAlchemy engine — function-scoped so each test's connections
+    bind to its own asyncio loop (`pytest-asyncio` default loop scope =
+    function). Sharing an AsyncEngine across event loops raises
+    ``RuntimeError('Event loop is closed')`` on the second test."""
     engine = create_async_engine(lifecycle_dsn, pool_pre_ping=True)
+    patch_aiomysql_ping(engine)
     yield engine
     await engine.dispose()
 

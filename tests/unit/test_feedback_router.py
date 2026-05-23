@@ -19,7 +19,7 @@ from ragent.bootstrap.metrics import feedback_es_write_failed_total
 from ragent.routers.feedback import create_feedback_router
 from ragent.utility.feedback_token import sign
 
-SECRET = "test-feedback-hmac-secret"
+SECRET = "test-feedback-hmac-signing-key"  # pragma: allowlist secret
 USER_ID = "alice"
 REQUEST_ID = "01JABCDEFGHIJKLMNOPQRSTUVW"
 SHOWN_PAIRS: list[tuple[str, str]] = [

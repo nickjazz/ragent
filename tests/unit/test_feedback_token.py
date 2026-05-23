@@ -20,11 +20,11 @@ from ragent.utility.feedback_token import (
     verify,
 )
 
-SECRET = "test-secret-do-not-use-in-prod"
+SECRET = "test-signing-key-do-not-use-in-prod"  # pragma: allowlist secret
 PAYLOAD = {
     "request_id": "01JABCDEFGHIJKLMNOPQRSTUVW",
     "user_id": "alice",
-    "sources_hash": "abc123def456" * 4,  # sha256-hex shape, 48 chars
+    "sources_hash": "a1b2c3d4" * 8,  # sha256-hex shape, 48 chars
     "ts": int(time.time()),
 }
 

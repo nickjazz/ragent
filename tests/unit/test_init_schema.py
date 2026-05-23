@@ -449,13 +449,14 @@ def test_init_minio_buckets_propagates_errors() -> None:
 
 
 def test_es_auth_headers_uses_api_key_when_set() -> None:
-    with patch.dict(os.environ, {"ES_API_KEY": "my-key"}, clear=False):
+    env = {"ES_API_KEY": "example-es-api-key-not-real"}  # pragma: allowlist secret
+    with patch.dict(os.environ, env, clear=False):
         headers = _es_auth_headers()
-    assert headers == {"Authorization": "ApiKey my-key"}
+    assert headers == {"Authorization": "ApiKey example-es-api-key-not-real"}
 
 
 def test_es_auth_headers_uses_basic_auth_when_no_api_key() -> None:
-    env = {"ES_USERNAME": "user", "ES_PASSWORD": "pass"}
+    env = {"ES_USERNAME": "user", "ES_PASSWORD": "pass"}  # pragma: allowlist secret
     with patch.dict(os.environ, env, clear=False):
         headers = _es_auth_headers()
     expected = "Basic " + base64.b64encode(b"user:pass").decode()
@@ -463,7 +464,11 @@ def test_es_auth_headers_uses_basic_auth_when_no_api_key() -> None:
 
 
 def test_es_auth_headers_api_key_takes_precedence_over_basic() -> None:
-    env = {"ES_API_KEY": "key", "ES_USERNAME": "u", "ES_PASSWORD": "p"}
+    env = {
+        "ES_API_KEY": "example-key",
+        "ES_USERNAME": "u",
+        "ES_PASSWORD": "p",
+    }  # pragma: allowlist secret
     with patch.dict(os.environ, env, clear=False):
         headers = _es_auth_headers()
     assert headers["Authorization"].startswith("ApiKey ")

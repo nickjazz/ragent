@@ -52,7 +52,7 @@ def test_build_container_succeeds_with_only_minio_sites(
                 "name": "__default__",
                 "endpoint": "minio.example:9000",
                 "access_key": "ak",
-                "secret_key": "sk",
+                "secret_key": "example_minio_secret_not_real",  # pragma: allowlist secret
                 "bucket": "ragent-uploads",
             }
         ]

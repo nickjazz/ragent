@@ -44,7 +44,7 @@ def _ensure_default_bucket(minio_endpoint: str) -> None:
     client = Minio(
         minio_endpoint,
         access_key="minioadmin",
-        secret_key="minioadmin",
+        secret_key="minioadmin",  # pragma: allowlist secret
         secure=False,
     )
     if not client.bucket_exists(bucket):
@@ -135,7 +135,7 @@ def _build_dev_env(
         "EMBEDDER_BATCH_SIZE": "1",
         "MINIO_ENDPOINT": minio_endpoint,
         "MINIO_ACCESS_KEY": "minioadmin",
-        "MINIO_SECRET_KEY": "minioadmin",
+        "MINIO_SECRET_KEY": "minioadmin",  # pragma: allowlist secret
         "ES_HOSTS": es_url,
         "ES_VERIFY_CERTS": "false",
         "MARIADB_DSN": mariadb_dsn,
