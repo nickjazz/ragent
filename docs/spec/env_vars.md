@@ -136,6 +136,8 @@
 | `ES_BULK_TIMEOUT_SECONDS`             | `60`             | `VectorExtractor` bulk index/delete. |
 | `ES_QUERY_TIMEOUT_SECONDS`            | `10`             | chat retrievers (vector + BM25). |
 | `MINIO_GET_TIMEOUT_SECONDS`           | `30`             | worker download from staging. |
+| `MINIO_GET_RETRIES`                   | `3`              | max attempts (including first) for `MinioSiteRegistry.get_object()` transient errors; clamped to ≥ 1. |
+| `MINIO_GET_RETRY_DELAY_SECONDS`       | `2.0`            | sleep between `get_object()` retry attempts (seconds). |
 | `MINIO_PUT_TIMEOUT_SECONDS`           | `60`             | router upload to staging. |
 | `LLM_TIMEOUT_SECONDS`                 | `120`            | `LLMClient.{chat\|stream}`. |
 | `PLUGIN_FAN_OUT_TIMEOUT_SECONDS`      | `60`             | per-plugin `extract`/`delete` ceiling (§3.3). |

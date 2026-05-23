@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import re
 import time as _time
 from collections.abc import Callable
@@ -21,6 +20,8 @@ from typing import Any
 import structlog
 from minio import Minio
 from minio.error import S3Error
+
+from ragent.utility.env import float_env, int_env
 
 _logger = structlog.get_logger(__name__)
 
@@ -202,8 +203,8 @@ class MinioSiteRegistry:
 
     def get_object(self, site: str, object_key: str, *, expected_size: int | None = None) -> bytes:
         rec = self.get(site)
-        max_retries = max(1, int(os.environ.get("MINIO_GET_RETRIES", "3")))
-        retry_delay = float(os.environ.get("MINIO_GET_RETRY_DELAY_SECONDS", "2.0"))
+        max_retries = max(1, int_env("MINIO_GET_RETRIES", 3))
+        retry_delay = float_env("MINIO_GET_RETRY_DELAY_SECONDS", 2.0)
 
         last_exc: Exception | None = None
         for attempt in range(max_retries):

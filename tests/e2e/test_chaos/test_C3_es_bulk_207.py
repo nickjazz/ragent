@@ -114,3 +114,86 @@ def test_C3_es_bulk_partial_failure_retries_failed_items(dev_env) -> None:
     assert (
         chaos_drill_outcome_total.labels(case="C3", outcome="pass")._value.get() >= 1  # noqa: SLF001
     )
+
+
+def test_C3b_es_bulk_retry_also_fails_logs_retry_partial_failure(dev_env) -> None:
+    """Retry bulk also has errors: es.bulk_retry_partial_failure is logged."""
+    from ragent.pipelines.ingest import DocumentEmbedder
+
+    n_docs = 10
+    docs = _make_docs(n_docs)
+
+    class MockRegistry:
+        def write_models(self):
+            return ["model-a"]
+
+        @property
+        def stable_index(self):
+            return "chunks_v1"
+
+        @property
+        def candidate_index(self):
+            return None
+
+    def mock_embed(model: str, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * 4 for _ in texts]
+
+    call_count = [0]
+
+    class MockES:
+        def bulk(self, index, operations):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: 10 docs → 3 failures
+                items = []
+                for i in range(n_docs):
+                    if i < 3:
+                        items.append(
+                            {
+                                "index": {
+                                    "_id": f"doc-{i}",
+                                    "status": 429,
+                                    "error": {"type": "circuit_breaking_exception"},
+                                }
+                            }
+                        )
+                    else:
+                        items.append({"index": {"_id": f"doc-{i}", "status": 200}})
+                return {"errors": True, "items": items}
+            else:
+                # Second call (retry of 3 items): all still fail
+                return {
+                    "errors": True,
+                    "items": [
+                        {
+                            "index": {
+                                "_id": f"doc-{i}",
+                                "status": 503,
+                                "error": {"type": "unavailable"},
+                            }
+                        }
+                        for i in range(3)
+                    ],
+                }
+
+    embedder = DocumentEmbedder(
+        registry=MockRegistry(),
+        embed_callable=mock_embed,
+        es_client=MockES(),
+    )
+
+    with structlog.testing.capture_logs() as cap:
+        result = embedder.run(documents=docs)
+
+    # Bulk called twice: initial + retry
+    assert call_count[0] == 2
+
+    log_events = [entry.get("event") for entry in cap]
+    # First-call partial failure logged
+    assert "es.bulk_partial_failure" in log_events
+    # Retry-call partial failure logged (new path)
+    assert "es.bulk_retry_partial_failure" in log_events, (
+        f"expected 'es.bulk_retry_partial_failure' in log events, got: {log_events}"
+    )
+    # Embedder still returns normally (graceful degradation — alert, don't raise)
+    assert result == {"documents": []}
