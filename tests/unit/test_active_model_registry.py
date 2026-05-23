@@ -242,3 +242,83 @@ async def test_snapshot_carries_state_and_models() -> None:
     assert snap["candidate"]["name"] == "bge-m3-v2"
     assert snap["read"] == "candidate"
     assert snap["retired"] == []
+
+
+# ---------------------------------------------------------------------------
+# T-EM-R.1 — stable_index / candidate_index / read_alias properties
+# ---------------------------------------------------------------------------
+
+
+async def test_stable_index_reads_from_stable_raw_index_name() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    stable_with_index = {**_bgem3(), "index_name": "chunks_v1"}
+    reg = ActiveModelRegistry(
+        _mock_repo(stable=stable_with_index),
+        ttl_seconds=999,
+        chunks_read_alias="chunks_v1_active",
+    )
+    await reg.refresh()
+    assert reg.stable_index == "chunks_v1"
+
+
+async def test_stable_index_falls_back_to_injected_default_when_absent() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    reg = ActiveModelRegistry(
+        _mock_repo(),  # stable has no index_name
+        ttl_seconds=999,
+        chunks_read_alias="chunks_custom_active",
+        chunks_fallback_index="chunks_custom",
+    )
+    await reg.refresh()
+    assert reg.stable_index == "chunks_custom"
+
+
+async def test_candidate_index_reads_from_candidate_raw() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    candidate_with_index = {**_bgem3v2(), "index_name": "chunks_v2"}
+    reg = ActiveModelRegistry(
+        _mock_repo(candidate=candidate_with_index),
+        ttl_seconds=999,
+        chunks_read_alias="chunks_v1_active",
+    )
+    await reg.refresh()
+    assert reg.candidate_index == "chunks_v2"
+
+
+async def test_candidate_index_is_none_when_no_candidate() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    reg = ActiveModelRegistry(
+        _mock_repo(),
+        ttl_seconds=999,
+        chunks_read_alias="chunks_v1_active",
+    )
+    await reg.refresh()
+    assert reg.candidate_index is None
+
+
+async def test_candidate_index_is_none_when_candidate_has_no_index_name() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    reg = ActiveModelRegistry(
+        _mock_repo(candidate=_bgem3v2()),  # no index_name in candidate
+        ttl_seconds=999,
+        chunks_read_alias="chunks_v1_active",
+    )
+    await reg.refresh()
+    assert reg.candidate_index is None
+
+
+async def test_read_alias_returns_injected_value() -> None:
+    from ragent.services.active_model_registry import ActiveModelRegistry
+
+    reg = ActiveModelRegistry(
+        _mock_repo(),
+        ttl_seconds=999,
+        chunks_read_alias="chunks_v1_active",
+    )
+    await reg.refresh()
+    assert reg.read_alias == "chunks_v1_active"

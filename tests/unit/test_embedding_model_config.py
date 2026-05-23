@@ -81,4 +81,65 @@ def test_roundtrip_to_from_dict() -> None:
     assert restored == src
     assert payload["name"] == "bge-m3"
     assert payload["dim"] == 1024
-    assert payload["field"] == "embedding_bgem3_1024"
+    assert "field" not in payload
+
+
+# ---------------------------------------------------------------------------
+# T-EM-R.1 — index_name field
+# ---------------------------------------------------------------------------
+
+
+def test_index_name_defaults_to_none() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    cfg = EmbeddingModelConfig(name="bge-m3", dim=1024, api_url="http://e", model_arg="bge-m3")
+    assert cfg.index_name is None
+
+
+def test_index_name_accepted() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    cfg = EmbeddingModelConfig(
+        name="bge-m3", dim=1024, api_url="http://e", model_arg="bge-m3", index_name="chunks_v2"
+    )
+    assert cfg.index_name == "chunks_v2"
+
+
+def test_to_dict_includes_index_name_when_set() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    cfg = EmbeddingModelConfig(
+        name="bge-m3", dim=1024, api_url="http://e", model_arg="bge-m3", index_name="chunks_v2"
+    )
+    assert cfg.to_dict()["index_name"] == "chunks_v2"
+
+
+def test_to_dict_omits_index_name_when_none() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    cfg = EmbeddingModelConfig(name="bge-m3", dim=1024, api_url="http://e", model_arg="bge-m3")
+    assert "index_name" not in cfg.to_dict()
+
+
+def test_from_dict_roundtrip_with_index_name() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    src = EmbeddingModelConfig(
+        name="bge-m3", dim=1024, api_url="http://e", model_arg="bge-m3", index_name="chunks_v3"
+    )
+    restored = EmbeddingModelConfig.from_dict(src.to_dict())
+    assert restored.index_name == "chunks_v3"
+
+
+def test_from_dict_without_index_name_gives_none() -> None:
+    from ragent.clients.embedding_model_config import EmbeddingModelConfig
+
+    d = {
+        "name": "bge-m3",
+        "dim": 1024,
+        "api_url": "http://e",
+        "model_arg": "bge-m3",
+        "field": "embedding_bgem3_1024",
+    }
+    cfg = EmbeddingModelConfig.from_dict(d)
+    assert cfg.index_name is None

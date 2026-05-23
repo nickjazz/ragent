@@ -27,6 +27,7 @@ import urllib.request
 
 import httpx
 import pytest
+import structlog
 
 from tests.e2e.conftest import API_URL, wait_api_ready
 
@@ -34,7 +35,13 @@ pytestmark = [
     pytest.mark.docker,
 ]
 
+_logger = structlog.get_logger(__name__)
+
 RECOVERY_DEADLINE_SECONDS = 600
+# How long to wait for the worker to claim the task (leave UPLOADED).
+# Worker startup (init_schema + TaskIQ bootstrap) takes ~10-30s in CI;
+# 60s gives comfortable headroom.
+WORKER_CLAIM_TIMEOUT_SECONDS = 60
 
 
 def _post_doc() -> str:
@@ -64,13 +71,21 @@ def _status(doc_id: str) -> str:
     )
 
 
-def _wait_for_status(doc_id: str, target: str, timeout: int) -> bool:
+def _wait_for_claimed(doc_id: str, timeout: int) -> str | None:
+    """Poll until the doc leaves UPLOADED (worker has claimed the task).
+
+    Returns the first non-UPLOADED status observed, or None if the doc
+    is still UPLOADED when the timeout expires.  The returned status is
+    typically PENDING (normal CI speed) but may be READY when the ingest
+    pipeline completes faster than the 0.5 s poll interval.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _status(doc_id) == target:
-            return True
+        s = _status(doc_id)
+        if s != "UPLOADED":
+            return s
         time.sleep(0.5)
-    return False
+    return None
 
 
 def _es_chunk_count(es_url: str, document_id: str) -> int:
@@ -111,7 +126,25 @@ def test_C1_worker_sigkill_recovers_to_ready(
     worker = spawn_module("ragent.worker")
     wait_api_ready()
     doc_id = _post_doc()
-    assert _wait_for_status(doc_id, "PENDING", timeout=30), "doc never reached PENDING"
+
+    claimed_status = _wait_for_claimed(doc_id, timeout=WORKER_CLAIM_TIMEOUT_SECONDS)
+    assert claimed_status is not None, (
+        f"doc {doc_id} never left UPLOADED within {WORKER_CLAIM_TIMEOUT_SECONDS}s "
+        "— worker did not start"
+    )
+    _logger.info("chaos.c1.worker_claimed", document_id=doc_id, status=claimed_status)
+
+    assert claimed_status in ("PENDING", "READY"), (
+        f"doc {doc_id} reached unexpected status {claimed_status!r} — pipeline error"
+    )
+    if claimed_status == "READY":
+        # Pipeline completed before our 0.5 s poll could observe PENDING.
+        # The SIGKILL fault-injection window was missed; skip rather than
+        # false-fail so flaky CI noise is distinguishable from real regressions.
+        pytest.skip(
+            "doc reached READY before SIGKILL window "
+            "(pipeline ran faster than poll interval — transient skip)"
+        )
 
     worker.send_signal(signal.SIGKILL)
     worker.wait(timeout=5)

@@ -31,6 +31,7 @@ class EmbeddingModelConfig:
     dim: int
     api_url: str
     model_arg: str
+    index_name: str | None = None
 
     def __post_init__(self) -> None:
         if not (_DIM_MIN <= self.dim <= _DIM_MAX):
@@ -47,13 +48,15 @@ class EmbeddingModelConfig:
         return f"embedding_{_normalize(self.name)}_{self.dim}"
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "name": self.name,
             "dim": self.dim,
             "api_url": self.api_url,
             "model_arg": self.model_arg,
-            "field": self.field,
         }
+        if self.index_name is not None:
+            d["index_name"] = self.index_name
+        return d
 
     @classmethod
     def from_dict(cls, payload: dict) -> EmbeddingModelConfig:
@@ -62,4 +65,5 @@ class EmbeddingModelConfig:
             dim=int(payload["dim"]),
             api_url=payload["api_url"],
             model_arg=payload["model_arg"],
+            index_name=payload.get("index_name"),
         )
