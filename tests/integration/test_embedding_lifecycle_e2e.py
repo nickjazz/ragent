@@ -64,7 +64,10 @@ async def lifecycle_engine(lifecycle_dsn):
     bind to its own asyncio loop (`pytest-asyncio` default loop scope =
     function). Sharing an AsyncEngine across event loops raises
     ``RuntimeError('Event loop is closed')`` on the second test."""
+    from ragent.bootstrap.init_schema import patch_aiomysql_ping
+
     engine = create_async_engine(lifecycle_dsn, pool_pre_ping=True)
+    patch_aiomysql_ping(engine)
     yield engine
     await engine.dispose()
 

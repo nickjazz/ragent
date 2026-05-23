@@ -506,7 +506,7 @@ def dev_env(
         "EMBEDDER_BATCH_SIZE": "1",
         "MINIO_ENDPOINT": minio_endpoint,
         "MINIO_ACCESS_KEY": "minioadmin",
-        "MINIO_SECRET_KEY": "example_minio_secret_not_real",  # pragma: allowlist secret
+        "MINIO_SECRET_KEY": "minioadmin",  # pragma: allowlist secret
         "ES_HOSTS": es_url,
         "ES_VERIFY_CERTS": "false",
         "MARIADB_DSN": mariadb_dsn,

@@ -44,7 +44,7 @@ def _ensure_default_bucket(minio_endpoint: str) -> None:
     client = Minio(
         minio_endpoint,
         access_key="minioadmin",
-        secret_key="example_minio_secret_not_real",  # pragma: allowlist secret
+        secret_key="minioadmin",  # pragma: allowlist secret
         secure=False,
     )
     if not client.bucket_exists(bucket):
