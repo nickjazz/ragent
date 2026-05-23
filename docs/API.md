@@ -297,7 +297,10 @@ data: {"type": "done", "content": "Based on the documents...", "model": "gptoss-
 
 > The `done` event carries the same `request_id` + `feedback_token` fields as the non-streaming response (conditional on `CHAT_FEEDBACK_ENABLED` + `X-User-Id`). Note: the `done` event body omits `usage` — token counts are captured in server-side observability logs (`chat.llm` event) but not returned to callers in P1.
 
-Error event: `{"type": "error", "error_code": "LLM_ERROR", "message": "..."}`
+Error events:
+- `{"type": "error", "error_code": "LLM_STREAM_INTERRUPTED", "message": "..."}` — stream closed before `[DONE]` sentinel (partial content may have been sent).
+- `{"type": "error", "error_code": "LLM_ERROR", "message": "..."}` — upstream LLM failure (timeout, outage, retries exhausted).
+- `{"type": "error", "error_code": "LLM_TIMEOUT", "message": "..."}` — upstream LLM timeout.
 
 ---
 

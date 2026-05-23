@@ -202,7 +202,7 @@ class MinioSiteRegistry:
 
     def get_object(self, site: str, object_key: str, *, expected_size: int | None = None) -> bytes:
         rec = self.get(site)
-        max_retries = int(os.environ.get("MINIO_GET_RETRIES", "3"))
+        max_retries = max(1, int(os.environ.get("MINIO_GET_RETRIES", "3")))
         retry_delay = float(os.environ.get("MINIO_GET_RETRY_DELAY_SECONDS", "2.0"))
 
         last_exc: Exception | None = None
@@ -237,6 +237,10 @@ class MinioSiteRegistry:
                     "NoSuchKey",
                     "NoSuchBucket",
                     "AccessDenied",
+                    "InvalidAccessKeyId",
+                    "SignatureDoesNotMatch",
+                    "InvalidBucketName",
+                    "MethodNotAllowed",
                 }:
                     raise
                 last_exc = exc

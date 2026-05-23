@@ -756,7 +756,7 @@ class DocumentEmbedder:
 
         items = response.get("items", [])
         retry_op_docs: list[tuple[Document, list[float]]] = []
-        for item, (doc, vec) in zip(items, op_docs, strict=False):
+        for item, (doc, vec) in zip(items, op_docs, strict=True):
             action = item.get("index", {})
             status = action.get("status", 200)
             if status >= 400:
@@ -779,7 +779,17 @@ class DocumentEmbedder:
             if doc.content is not None:
                 body["content"] = doc.content
             retry_ops.append(body)
-        self._es.bulk(index=index_name, operations=retry_ops)
+        retry_response = self._es.bulk(index=index_name, operations=retry_ops)
+        if retry_response.get("errors"):
+            _logger.error(
+                "es.bulk_retry_partial_failure",
+                index=index_name,
+                failed_ids=[
+                    item.get("index", {}).get("_id")
+                    for item in retry_response.get("items", [])
+                    if item.get("index", {}).get("status", 200) >= 400
+                ],
+            )
 
 
 # ---------------------------------------------------------------------------
