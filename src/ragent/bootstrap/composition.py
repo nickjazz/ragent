@@ -37,7 +37,10 @@ class Container:
     system_settings_repo: Any
     embedding_registry: Any  # ActiveModelRegistry — refresh() in lifespan startup
     embedding_lifecycle_service: Any  # EmbeddingLifecycleService — admin router backend
-    chunks_index_name: str  # ES index for the chat retrieval / dual-write
+    chunks_index_name: str  # physical ES index name (write path / VectorExtractor / lifecycle)
+    embed_fn: (
+        Any  # (EmbeddingModelConfig, list[str]) -> list[list[float]] — used by backfill worker
+    )
     # B54/B55 T-FB.8 — feedback retrieval signal (renumbered from B50/B51)
     feedback_repository: Any  # FeedbackRepository | None
     feedback_hmac_secret: str | None  # None when CHAT_FEEDBACK_ENABLED=false
@@ -162,9 +165,10 @@ def build_container() -> Container:
         verify_certs=es_verify_certs,
     )
     chunks_index_name = os.environ.get("ES_CHUNKS_INDEX", "chunks_v1")
+    chunks_read_alias = f"{chunks_index_name}_active"
     document_store = ElasticsearchDocumentStore(
         hosts=es_hosts,
-        index=chunks_index_name,
+        index=chunks_read_alias,
         verify_certs=es_verify_certs,
         basic_auth=es_basic_auth,
     )
@@ -206,6 +210,8 @@ def build_container() -> Container:
     embedding_registry = ActiveModelRegistry(
         settings_repo=system_settings_repo,
         ttl_seconds=_int_env("EMBEDDING_REGISTRY_TTL_SECONDS", 10),
+        chunks_read_alias=chunks_read_alias,
+        chunks_fallback_index=chunks_index_name,
     )
     embedding_lifecycle_service = EmbeddingLifecycleService(
         settings_repo=system_settings_repo,
@@ -262,7 +268,7 @@ def build_container() -> Container:
         feedback_retriever = _FeedbackMemoryRetriever(
             es_client=es_client,
             doc_repo=doc_repo,
-            chunks_index=chunks_index_name,
+            chunks_index=chunks_read_alias,
             min_votes=_int_env("CHAT_FEEDBACK_MIN_VOTES", 3),
             half_life_days=_int_env("CHAT_FEEDBACK_HALF_LIFE_DAYS", 14),
             request_timeout=_float_env("ES_QUERY_TIMEOUT_SECONDS", 10.0),
@@ -288,8 +294,8 @@ def build_container() -> Container:
         embedder=DocumentEmbedder(
             registry=embedding_registry,
             embed_callable=partial(_embed, query=False),
+            es_client=es_client,
         ),
-        document_store=document_store,
     )
 
     unprotect_client = None
@@ -343,6 +349,7 @@ def build_container() -> Container:
         embedding_registry=embedding_registry,
         embedding_lifecycle_service=embedding_lifecycle_service,
         chunks_index_name=chunks_index_name,
+        embed_fn=partial(_embed, query=False),
         feedback_repository=feedback_repository,
         feedback_hmac_secret=feedback_hmac_secret,
         ingest_inline_max_bytes=inline_max_bytes,

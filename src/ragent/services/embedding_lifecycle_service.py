@@ -9,7 +9,6 @@ Caller responsibilities:
 
 The service raises:
 - `IllegalEmbeddingTransition` (from utility) — wrong state for the action.
-- `EmbeddingFieldCollision` — promote attempts a field name already in mapping.
 - `CutoverPreflightFailed` — cutover hard gates not satisfied.
 - `InvalidEmbeddingModelConfig` (from EmbeddingModelConfig) — bad dim or name.
 
@@ -22,6 +21,10 @@ on entry and `embedding.lifecycle.<action>.{completed,failed}` on exit, per
 
 from __future__ import annotations
 
+import json
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -29,13 +32,34 @@ import structlog
 from ragent.clients.embedding_model_config import EmbeddingModelConfig
 from ragent.services.cutover_preflight import preflight as _preflight
 from ragent.utility.datetime import from_iso, to_iso, utcnow
-from ragent.utility.embedding_lifecycle import next_state
+from ragent.utility.embedding_lifecycle import IllegalEmbeddingTransition, next_state
 
 logger = structlog.get_logger(__name__)
 
+_ES_RESOURCES = Path(__file__).parents[3] / "resources" / "es"
+
 
 class EmbeddingFieldCollision(Exception):
-    """Raised when a promote target field name is already present in the ES mapping."""
+    """Kept for router + test compatibility; promote no longer raises it (index-per-model)."""
+
+
+_VERSION_SUFFIX_RE = re.compile(r"_v(\d+)$")
+
+
+def _next_index_name(current: str) -> str:
+    """'chunks_v1' → 'chunks_v2', 'chunks_v10' → 'chunks_v11', 'chunks' → 'chunks_v2'."""
+    m = _VERSION_SUFFIX_RE.search(current)
+    if not m:
+        return f"{current}_v2"
+    return f"{current[: m.start()]}_v{int(m.group(1)) + 1}"
+
+
+def _chunk_index_body(dim: int) -> dict:
+    """Load canonical index template and substitute the embedding dimension."""
+    resources_dir = Path(os.environ.get("RAGENT_ES_RESOURCES_DIR") or _ES_RESOURCES)
+    body = json.loads((resources_dir / "chunks_v1.json").read_text(encoding="utf-8"))
+    body["mappings"]["properties"]["embedding"]["dims"] = dim
+    return body
 
 
 class CutoverPreflightFailed(Exception):
@@ -51,13 +75,15 @@ def _iso_now() -> str:
 
 
 def _retired_entry(model_dict: dict) -> dict:
-    return {
+    entry: dict = {
         "name": model_dict["name"],
         "dim": model_dict["dim"],
-        "field": model_dict["field"],
         "retired_at": _iso_now(),
         "cleanup_done": False,
     }
+    if "index_name" in model_dict:
+        entry["index_name"] = model_dict["index_name"]
+    return entry
 
 
 def _log_failure(action: str, exc: Exception, **ctx: Any) -> None:
@@ -85,6 +111,17 @@ class EmbeddingLifecycleService:
         self._registry = registry
         self._ttl = cache_ttl_seconds
 
+    async def _swap_read_alias(self, *, remove_from: str, add_to: str) -> None:
+        alias = self._registry.read_alias
+        await self._es.indices.update_aliases(
+            body={
+                "actions": [
+                    {"remove": {"index": remove_from, "alias": alias}},
+                    {"add": {"index": add_to, "alias": alias}},
+                ]
+            }
+        )
+
     # ------------------------------------------------------------------
     # promote
     # ------------------------------------------------------------------
@@ -102,51 +139,31 @@ class EmbeddingLifecycleService:
             "embedding.lifecycle.promote.completed",
             name=name,
             dim=dim,
-            field=result["candidate"]["field"],
+            index=result["candidate"]["index_name"],
         )
         return result
 
     async def _do_promote(self, *, name: str, dim: int, api_url: str, model_arg: str) -> dict:
         next_state(self._registry.derived_state(), "promote")
-        cfg = EmbeddingModelConfig(name=name, dim=dim, api_url=api_url, model_arg=model_arg)
-
-        mapping = await self._es.indices.get_mapping(index=self._index)
-        props = mapping[self._index]["mappings"].get("properties", {})
-        existing = props.get(cfg.field)
-        if existing is not None and existing.get("dims") != cfg.dim:
-            # Different-dim collision is a hard error; same-dim is the
-            # retry-safe path (put_mapping is idempotent below).
-            raise EmbeddingFieldCollision(
-                f"field {cfg.field} already mapped with dim {existing.get('dims')}, "
-                f"requested {cfg.dim}"
-            )
-
-        await self._es.indices.put_mapping(
-            index=self._index,
-            body={
-                "properties": {
-                    cfg.field: {
-                        "type": "dense_vector",
-                        "dims": cfg.dim,
-                        "index": True,
-                        "similarity": "cosine",
-                        # Match `resources/es/chunks_v1.json` (B26 P1 choice).
-                        "index_options": {"type": "flat"},
-                    }
-                }
-            },
+        new_index = _next_index_name(self._registry.stable_index)
+        cfg = EmbeddingModelConfig(
+            name=name, dim=dim, api_url=api_url, model_arg=model_arg, index_name=new_index
         )
-
+        await self._es.indices.create(index=new_index, body=_chunk_index_body(dim))
         promoted_at = _iso_now()
         candidate_payload = {**cfg.to_dict(), "promoted_at": promoted_at}
-        # Optimistic lock: only proceed if no other admin call slipped a
-        # candidate in between our state check and our write.
-        await self._repo.transition(
-            {"embedding.candidate": candidate_payload},
-            expect={"embedding.candidate": None},
-        )
-        # Force-refresh so the next admin call (cutover) sees CANDIDATE
-        # state without waiting for the TTL window to expire.
+        try:
+            await self._repo.transition(
+                {"embedding.candidate": candidate_payload},
+                expect={"embedding.candidate": None},
+            )
+        except Exception as transition_exc:
+            try:
+                await self._es.indices.delete(index=new_index)
+            except Exception:
+                # Delete failed; log and move on — original exception is the one that matters.
+                logger.warning("es.promote_rollback_failed", index=new_index)
+            raise transition_exc
         await self._registry.refresh(force=True)
         return {"state": "CANDIDATE", "candidate": candidate_payload, "promoted_at": promoted_at}
 
@@ -177,7 +194,6 @@ class EmbeddingLifecycleService:
         report = await _preflight(
             registry=self._registry,
             es_client=self._es,
-            index_name=self._index,
             promoted_at=promoted_at,
             cache_ttl_seconds=self._ttl,
         )
@@ -188,6 +204,12 @@ class EmbeddingLifecycleService:
             {"embedding.read": "candidate"},
             expect={"embedding.read": "stable"},
         )
+        candidate_index = self._registry.candidate_index
+        if candidate_index:
+            await self._swap_read_alias(
+                remove_from=self._registry.stable_index,
+                add_to=candidate_index,
+            )
         await self._registry.refresh(force=True)
         return {
             "state": "CUTOVER",
@@ -208,6 +230,12 @@ class EmbeddingLifecycleService:
                 {"embedding.read": "stable"},
                 expect={"embedding.read": "candidate"},
             )
+            candidate_index = self._registry.candidate_index
+            if candidate_index:
+                await self._swap_read_alias(
+                    remove_from=candidate_index,
+                    add_to=self._registry.stable_index,
+                )
             await self._registry.refresh(force=True)
         except Exception as exc:
             _log_failure("rollback", exc)
@@ -242,7 +270,9 @@ class EmbeddingLifecycleService:
         retired = list(self._registry.retired_list)
         retired.append(_retired_entry(stable_raw))
 
-        new_stable = {k: candidate_raw[k] for k in ("name", "dim", "api_url", "model_arg", "field")}
+        _base = ("name", "dim", "api_url", "model_arg")
+        _extra = ("index_name",) if "index_name" in candidate_raw else ()
+        new_stable = {k: candidate_raw[k] for k in (*_base, *_extra)}
         await self._repo.transition(
             {
                 "embedding.stable": new_stable,
@@ -273,11 +303,48 @@ class EmbeddingLifecycleService:
         logger.info("embedding.lifecycle.abort.completed", aborted=result["aborted"])
         return result
 
+    # ------------------------------------------------------------------
+    # backfill
+    # ------------------------------------------------------------------
+
+    async def backfill(self, *, broker: Any) -> dict:
+        logger.info("embedding.lifecycle.backfill.started")
+        try:
+            state = self._registry.derived_state()
+            if state not in ("CANDIDATE", "CUTOVER"):
+                raise IllegalEmbeddingTransition(
+                    f"backfill requires CANDIDATE or CUTOVER state, got {state}"
+                )
+            candidate_index = self._registry.candidate_index
+            if not candidate_index:
+                raise IllegalEmbeddingTransition("backfill: candidate has no index_name")
+            stable_index = self._registry.stable_index
+            await broker.enqueue(
+                "ingest.backfill_candidate",
+                stable_index=stable_index,
+                candidate_index=candidate_index,
+            )
+        except Exception as exc:
+            _log_failure("backfill", exc)
+            raise
+        logger.info("embedding.lifecycle.backfill.completed", candidate_index=candidate_index)
+        return {
+            "state": state,
+            "queued": True,
+            "stable_index": stable_index,
+            "candidate_index": candidate_index,
+        }
+
     async def _do_abort(self) -> dict:
         next_state(self._registry.derived_state(), "abort")
         candidate_raw = self._registry.candidate_raw
         if candidate_raw is None:
             raise RuntimeError("abort requires candidate populated")
+
+        # None only for legacy candidates promoted before index-per-model; skip silently.
+        candidate_index = self._registry.candidate_index
+        if candidate_index:
+            await self._es.indices.delete(index=candidate_index)
 
         retired = list(self._registry.retired_list)
         retired.append(_retired_entry(candidate_raw))
