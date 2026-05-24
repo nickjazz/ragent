@@ -144,7 +144,6 @@ def test_reranker_run_accepts_runtime_top_k_overrides_construction_default() -> 
     out = _Reranker(rerank_client, top_k=20).run(query="q", documents=docs, top_k=2)["documents"]
     rerank_client.rerank.assert_called_once_with(query="q", texts=["", "", ""], top_k=2)
     assert len(out) == 2
-    assert len(out) == 2
 
 
 # ---------------------------------------------------------------------------
