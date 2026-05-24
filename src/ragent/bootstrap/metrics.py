@@ -139,6 +139,26 @@ chaos_drill_outcome_total = Counter(
     labelnames=("case", "outcome"),
 )
 
+# Rerank fail-open degradation (P2.3 / T-CHAOS.C4).  Incremented by
+# _Reranker when the rerank service is unavailable and the pipeline falls
+# back to RRF-ordered results without reranking.
+# reason="5xx"     → UpstreamServiceError (HTTP 5xx from reranker)
+# reason="timeout" → UpstreamTimeoutError (deadline exceeded)
+_rerank_degraded_total = Counter(
+    "rerank_degraded_total",
+    "Reranker fail-open events — pipeline fell back to RRF order (P2.3).",
+    labelnames=("reason",),
+)
+_RERANK_DEGRADED_REASONS = frozenset({"5xx", "timeout"})
+
+
+def record_rerank_degraded(reason: str) -> None:
+    """Increment rerank_degraded_total. `reason` must be '5xx' or 'timeout'."""
+    if reason not in _RERANK_DEGRADED_REASONS:
+        raise ValueError(f"unknown rerank degraded reason {reason!r}")
+    _rerank_degraded_total.labels(reason=reason).inc()
+
+
 # Ingest upload-guard rejections (T-SEC.7).  Closed label set bounds cardinality
 # at one series per defense outcome across the worker-side guard layers
 # (zip preflight / PDF page-count cap).  Drives the Grafana panel that

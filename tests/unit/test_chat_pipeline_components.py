@@ -144,3 +144,67 @@ def test_reranker_run_accepts_runtime_top_k_overrides_construction_default() -> 
     out = _Reranker(rerank_client, top_k=20).run(query="q", documents=docs, top_k=2)["documents"]
     rerank_client.rerank.assert_called_once_with(query="q", texts=["", "", ""], top_k=2)
     assert len(out) == 2
+    assert len(out) == 2
+
+
+# ---------------------------------------------------------------------------
+# P2.3 — fail-open behaviour when reranker raises UpstreamServiceError
+# ---------------------------------------------------------------------------
+
+
+def test_reranker_fail_open_returns_original_docs_on_service_error() -> None:
+    """UpstreamServiceError → return original docs (capped to top_k), log warning."""
+    import structlog.testing
+
+    from ragent.errors.upstream import UpstreamServiceError
+
+    rerank_client = MagicMock()
+    rerank_client.rerank.side_effect = UpstreamServiceError("rerank 5xx", service="rerank")
+    docs = [Document(id=str(i)) for i in range(5)]
+    with structlog.testing.capture_logs() as logs:
+        out = _Reranker(rerank_client, top_k=3).run(query="q", documents=docs)["documents"]
+    assert [d.id for d in out] == ["0", "1", "2"]  # first top_k docs, original order
+    assert any(e.get("event") == "rerank.degraded" for e in logs)
+
+
+def test_reranker_fail_open_returns_original_docs_on_timeout() -> None:
+    """UpstreamTimeoutError (subclass of UpstreamServiceError) → same fail-open path."""
+    import structlog.testing
+
+    from ragent.errors.upstream import UpstreamTimeoutError
+
+    rerank_client = MagicMock()
+    rerank_client.rerank.side_effect = UpstreamTimeoutError("rerank timeout", service="rerank")
+    docs = [Document(id="X"), Document(id="Y")]
+    with structlog.testing.capture_logs() as logs:
+        out = _Reranker(rerank_client, top_k=5).run(query="q", documents=docs)["documents"]
+    assert [d.id for d in out] == ["X", "Y"]  # all docs, top_k >= len(docs)
+    assert any(e.get("event") == "rerank.degraded" for e in logs)
+
+
+def test_reranker_fail_open_increments_degraded_metric_5xx() -> None:
+    """UpstreamServiceError increments rerank_degraded_total{reason='5xx'}."""
+    from prometheus_client import REGISTRY
+
+    from ragent.errors.upstream import UpstreamServiceError
+
+    before = REGISTRY.get_sample_value("rerank_degraded_total", {"reason": "5xx"}) or 0.0
+    rerank_client = MagicMock()
+    rerank_client.rerank.side_effect = UpstreamServiceError("err", service="rerank")
+    _Reranker(rerank_client, top_k=1).run(query="q", documents=[Document(id="A")])
+    after = REGISTRY.get_sample_value("rerank_degraded_total", {"reason": "5xx"}) or 0.0
+    assert after == before + 1.0
+
+
+def test_reranker_fail_open_increments_degraded_metric_timeout() -> None:
+    """UpstreamTimeoutError increments rerank_degraded_total{reason='timeout'}."""
+    from prometheus_client import REGISTRY
+
+    from ragent.errors.upstream import UpstreamTimeoutError
+
+    before = REGISTRY.get_sample_value("rerank_degraded_total", {"reason": "timeout"}) or 0.0
+    rerank_client = MagicMock()
+    rerank_client.rerank.side_effect = UpstreamTimeoutError("timeout", service="rerank")
+    _Reranker(rerank_client, top_k=1).run(query="q", documents=[Document(id="B")])
+    after = REGISTRY.get_sample_value("rerank_degraded_total", {"reason": "timeout"}) or 0.0
+    assert after == before + 1.0
