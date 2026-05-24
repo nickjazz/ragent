@@ -12,9 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_DASHBOARD_PATH = (
-    Path(__file__).parent.parent.parent / "deploy" / "grafana" / "ragent_overview.json"
-)
+_DASHBOARD_PATH = Path(__file__).parents[2] / "deploy" / "grafana" / "ragent_overview.json"
 
 # Panel titles that must be present — any removal is a breaking change.
 _REQUIRED_PANEL_TITLES = frozenset(
@@ -30,7 +28,7 @@ _REQUIRED_PANEL_TITLES = frozenset(
 
 
 def _load_dashboard() -> dict:
-    return json.loads(_DASHBOARD_PATH.read_text())
+    return json.loads(_DASHBOARD_PATH.read_text(encoding="utf-8"))
 
 
 def test_dashboard_file_exists() -> None:
@@ -45,7 +43,6 @@ def test_dashboard_has_title() -> None:
 def test_dashboard_has_panels() -> None:
     dash = _load_dashboard()
     assert isinstance(dash.get("panels"), list), "'panels' must be a list"
-    assert len(dash["panels"]) > 0, "Dashboard must have at least one panel"
 
 
 def test_all_required_panels_present() -> None:

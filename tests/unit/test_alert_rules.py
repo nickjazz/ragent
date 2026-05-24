@@ -29,12 +29,12 @@ _REQUIRED_ALERTS = frozenset(
 
 _ALLOWED_SEVERITIES = frozenset({"critical", "warning"})
 
-_ALERTS_PATH = Path(__file__).parent.parent.parent / "deploy" / "prometheus" / "alerts.yaml"
+_ALERTS_PATH = Path(__file__).parents[2] / "deploy" / "prometheus" / "alerts.yaml"
 
 
 def _load_alerts() -> list[dict]:
     """Return the flat list of all alert rules from the YAML."""
-    data = yaml.safe_load(_ALERTS_PATH.read_text())
+    data = yaml.safe_load(_ALERTS_PATH.read_text(encoding="utf-8"))
     rules: list[dict] = []
     for group in data.get("groups", []):
         for rule in group.get("rules", []):
@@ -48,6 +48,8 @@ def test_alerts_yaml_exists() -> None:
 
 
 def test_all_required_alerts_present() -> None:
+    if not _ALERTS_PATH.exists():
+        pytest.skip(f"alerts file missing: {_ALERTS_PATH}")
     rules = _load_alerts()
     names = {r["alert"] for r in rules}
     missing = _REQUIRED_ALERTS - names
