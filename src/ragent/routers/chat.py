@@ -17,6 +17,7 @@ from ragent.auth.deps import get_user_id
 from ragent.clients.rate_limiter import RateLimiter
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
+from ragent.errors.upstream import LLMStreamInterruptedError
 from ragent.pipelines.retrieve import (
     EXCERPT_MAX_CHARS_DEFAULT,
     build_es_filters,
@@ -267,14 +268,22 @@ def create_chat_router(
                     )
                 except Exception as exc:
                     l_span.record_exception(exc)
-                    logger.exception(
-                        "chat.llm.error",
-                        model=body.model,
-                        error_type=type(exc).__name__,
-                    )
+                    if isinstance(exc, LLMStreamInterruptedError):
+                        logger.warning(
+                            "chat.llm.stream_interrupted",
+                            model=body.model,
+                            error_type=type(exc).__name__,
+                        )
+                    else:
+                        logger.error(
+                            "chat.llm.error",
+                            model=body.model,
+                            error_type=type(exc).__name__,
+                        )
+                    error_code = getattr(exc, "error_code", HttpErrorCode.LLM_ERROR)
                     err_payload = {
                         "type": "error",
-                        "error_code": "LLM_ERROR",
+                        "error_code": str(error_code),
                         "message": str(exc),
                     }
                     yield f"data: {json.dumps(err_payload)}\n\n"

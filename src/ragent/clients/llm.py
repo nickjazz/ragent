@@ -44,6 +44,8 @@ class LLMClient:
         max_tokens: int = 4096,
         usage_out: list | None = None,
     ) -> Generator[str, None, None]:
+        from ragent.errors.upstream import LLMStreamInterruptedError
+
         with _tracer.start_as_current_span("llm.stream") as span:
             span.set_attribute("peer.service", "llm")
             span.set_attribute("model", model)
@@ -58,6 +60,9 @@ class LLMClient:
                     )
                     logger.info("llm.call", peer_service="llm", model=model, retry_attempt=attempt)
                     return
+                except LLMStreamInterruptedError:
+                    # Never retry — partial content already yielded downstream.
+                    raise
                 except Exception as exc:
                     last_exc = exc
             span.record_exception(last_exc)  # type: ignore[arg-type]
@@ -82,7 +87,11 @@ class LLMClient:
     def _do_stream(
         self, messages, model, temperature, max_tokens, usage_out: list | None = None
     ) -> Generator[str, None, None]:
-        with self._http.post(
+        from ragent.errors.upstream import LLMStreamInterruptedError
+
+        seen_done = False
+        any_content = False
+        resp = self._http.post(
             self._url,
             json={
                 "model": model,
@@ -94,24 +103,29 @@ class LLMClient:
             },
             headers={self._auth_header_name: self._get_token()},
             timeout=self._timeout,
-        ) as resp:
-            for line in resp.iter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data_str = line[len("data:") :].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    payload = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
-                choices = payload.get("choices", [])
-                if choices:
-                    content = choices[0].get("delta", {}).get("content")
-                    if content:
-                        yield content
-                if usage_out is not None and "usage" in payload:
-                    usage_out.append(payload["usage"])
+        )
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data_str = line[len("data:") :].strip()
+            if data_str == "[DONE]":
+                seen_done = True
+                break
+            try:
+                payload = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            choices = payload.get("choices", [])
+            if choices:
+                content = choices[0].get("delta", {}).get("content")
+                if content:
+                    any_content = True
+                    yield content
+            if usage_out is not None and "usage" in payload:
+                usage_out.append(payload["usage"])
+        if not seen_done and any_content:
+            raise LLMStreamInterruptedError("LLM stream closed before [DONE]")
 
     def chat(
         self,

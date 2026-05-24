@@ -373,7 +373,8 @@ Inventory of every `error_code` emitted by P1 (API responses + log events). New 
 | `FEEDBACK_TOKEN_EXPIRED`             | 410         | Token `ts` outside the 7-day window (T-FB.6, B55) | Router (feedback) |
 | `FEEDBACK_SOURCE_INVALID`            | 422         | `source_id ∉ shown_source_ids` (T-FB.6) | Router (feedback) |
 | `FEEDBACK_VALIDATION`                | 422         | Schema violations: vote ∉ {±1}, reason outside B56 enum, missing required field | Schema (feedback) |
-| `LLM_ERROR`                          | 502 / SSE-error | Pre-stream LLM failure (problem+json) or mid-stream LLM failure (`data: {type:error}`, B6) | Router T3.10/T3.12 |
+| `LLM_STREAM_INTERRUPTED`             | SSE-error only  | LLM SSE stream closed before `[DONE]` sentinel after at least one content delta was yielded; `stream()` never retries (partial content already sent); chat router emits `data: {type:error, error_code:LLM_STREAM_INTERRUPTED}` (B6, T-CHAOS.C5) | Router T3.12 |
+| `LLM_ERROR`                          | 502 / SSE-error | Pre-stream LLM failure (problem+json) or mid-stream LLM failure after retries exhausted (`data: {type:error}`, B6) | Router T3.10/T3.12 |
 | `MCP_PARSE_ERROR`                    | JSON-RPC `-32700` | Request body is not valid JSON (S64) | Router P2.5 |
 | `MCP_INVALID_REQUEST`                | JSON-RPC `-32600` | Missing `jsonrpc:"2.0"` / `method`; malformed envelope | Router P2.5 |
 | `MCP_METHOD_NOT_FOUND`               | JSON-RPC `-32601` | Method outside §3.8.2 allow-list (S61) | Router P2.5 |

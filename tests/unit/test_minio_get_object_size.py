@@ -1,4 +1,4 @@
-"""MinIO get_object size verification — partial-read truncation must surface."""
+"""MinIO get_object size verification and non-retryable error handling."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+from minio.error import S3Error
 
 from ragent.storage.minio_registry import MinioSiteRegistry
 
@@ -52,3 +53,38 @@ def test_get_object_without_expected_size_skips_check() -> None:
     stub.get_object.return_value = _resp(b"hello")
     out = _registry(stub).get_object("__default__", "k")
     assert out == b"hello"
+
+
+def _s3err(code: str) -> S3Error:
+    return S3Error(
+        code=code,
+        message="error",
+        resource="/bucket/key",
+        request_id="r",
+        host_id="h",
+        response=MagicMock(status=403, headers={}, text=""),
+    )
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "NoSuchKey",
+        "NoSuchBucket",
+        "AccessDenied",
+        "InvalidAccessKeyId",
+        "SignatureDoesNotMatch",
+        "InvalidBucketName",
+        "MethodNotAllowed",
+    ],
+)
+def test_get_object_non_retryable_s3error_raises_immediately(code: str) -> None:
+    """Non-retryable S3 errors must surface immediately without retry."""
+    stub = MagicMock()
+    stub.get_object.side_effect = _s3err(code)
+    reg = _registry(stub)
+    with pytest.raises(S3Error) as exc_info:
+        reg.get_object("__default__", "k")
+    assert exc_info.value.code == code
+    # Exactly one call — no retry
+    assert stub.get_object.call_count == 1
