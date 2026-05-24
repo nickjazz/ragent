@@ -486,7 +486,15 @@ def _make_tool_callable(
     client: httpx.AsyncClient,
     base_url: str = "",
 ) -> Any:
-    locations = {p.name: p.location for p in spec.params}
+    # Wire dicts computed once at registration — reused on every call.
+    # header_kebab maps Python param name (underscore) → HTTP header name
+    # (hyphen), so the per-call loop never calls .replace("_", "-").
+    path_names: frozenset[str] = frozenset(p.name for p in spec.params if p.location == "path")
+    query_names: frozenset[str] = frozenset(p.name for p in spec.params if p.location == "query")
+    header_kebab: dict[str, str] = {
+        p.name: p.name.replace("_", "-") for p in spec.params if p.location == "header"
+    }
+    body_names: frozenset[str] = frozenset(p.name for p in spec.params if p.location == "body")
     accepts_body = spec.method in _BODY_METHODS
     effective_base = (spec.base_url or base_url).rstrip("/")
 
@@ -502,18 +510,15 @@ def _make_tool_callable(
         body: dict[str, Any] = {}
 
         for name, value in kwargs.items():
-            loc = locations.get(name)
-            if loc is None:
-                continue
-            if loc == "path":
+            if name in path_names:
                 path_args[name] = value
-            elif loc == "query":
+            elif name in query_names:
                 if value is not None:
                     query[name] = value
-            elif loc == "header":
+            elif name in header_kebab:
                 if value is not None:
-                    headers[name.replace("_", "-")] = str(value)
-            elif loc == "body" and value is not None:
+                    headers[header_kebab[name]] = str(value)
+            elif name in body_names and value is not None:
                 body[name] = value
 
         rendered = spec.path.format(**path_args)
