@@ -1,0 +1,168 @@
+{
+  "uid": "ragent-overview-v1",
+  "title": "RAGent System Overview",
+  "description": "Key operational metrics for RAGent — ingest, retrieval, worker, and infra health.",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "tags": ["ragent", "sre"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ingest Pipeline Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": {} },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list" } },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(ragent_pipeline_runs_total[5m]))",
+          "legendFormat": "{{ outcome }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Ingest Failure Rate",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "sum(rate(ragent_pipeline_runs_total{outcome=\"failed\"}[5m])) / sum(rate(ragent_pipeline_runs_total[5m]))",
+          "legendFormat": "failure rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Worker Pipeline Duration (p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 120 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(worker_pipeline_duration_seconds_bucket[10m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(worker_pipeline_duration_seconds_bucket[10m])))",
+          "legendFormat": "p50",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Reranker Degradation Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": {} },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list" } },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(rerank_degraded_total[5m]))",
+          "legendFormat": "{{ reason }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Reconciler Health",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": {} },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list" } },
+      "targets": [
+        {
+          "expr": "rate(reconciler_tick_total[5m])",
+          "legendFormat": "tick rate (ticks/s)",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(multi_ready_repaired_total[5m])",
+          "legendFormat": "multi-READY repairs/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Readyz Probe Status",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            { "options": { "0": { "text": "FAIL", "color": "red" }, "1": { "text": "OK", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "expr": "ragent_readyz_probe_status",
+          "legendFormat": "{{ probe }}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

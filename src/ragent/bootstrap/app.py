@@ -298,7 +298,7 @@ def _build_probes(container: Any) -> dict:
     return probes
 
 
-def create_app() -> FastAPI:
+def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by integration/e2e suite
     enforce()
     configure_logging("ragent-api")
     setup_tracing("ragent-api")

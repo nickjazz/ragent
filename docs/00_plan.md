@@ -54,7 +54,7 @@
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
-| P2.1 | Stability | • **Achieve:** Production-grade HA + observability.<br>• **Deliver:** SRE HA verification report, monitoring dashboards, alerting rules. | [ ] | SRE |
+| P2.1 | Stability | • **Achieve:** Production-grade HA + observability.<br>• **Deliver:** SRE HA verification report (`docs/ha_runbook.md`), Grafana dashboard (`deploy/grafana/ragent_overview.json`), alerting rules (`deploy/prometheus/alerts.yaml` — 4 new alerts). | [x] | SRE |
 | P2.2 | Security | • **Achieve:** Activate JWT + Permission layer per Track T8; B14 invariant (ES carries no auth fields).<br>• **Deliver:** All `[~]` rows in T8 → `[ ]` → `[x]`; remove `RAGENT_AUTH_DISABLED`; introduce `RAGENT_TRUST_X_USER_ID_HEADER` (default `false`) and per-surface `RAGENT_PERMISSION_INGEST_ENABLED` / `RAGENT_PERMISSION_CHAT_ENABLED` (both default `false`) — wiring lands but enforcement stays opt-in. | [~] | Dev |
 | P2.3 | Behavioral | • **Achieve:** Improve chat ranking via reranker.<br>• **Deliver:** `RerankClient` wired into chat pipeline as `HybridRetrieverWithRerank` SuperComponent. Reranker wiring was completed in P1; P2.3 delivers fail-open resilience: `UpstreamServiceError` / `UpstreamTimeoutError` → log `rerank.degraded` + increment `rerank_degraded_total{reason}` + return RRF-ordered docs[:top_k]. | [x] | Dev |
 | P2.4 | Behavioral | • **Achieve:** Route translate/summarize intents to direct LLM, bypassing retrieval.<br>• **Deliver:** `ConditionalRouter` intent split. | [~] | Dev |

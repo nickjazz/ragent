@@ -13,3 +13,83 @@ groups:
             reconciler_tick_total has been flat for >10 min — the K8s CronJob
             scheduling the reconciler may be misconfigured or the job is failing.
             Stale PENDING/UPLOADED/DELETING rows will accumulate (S30, R8).
+
+  - name: ragent.ingest
+    rules:
+      - alert: IngestHighFailureRate
+        # Rate of failed pipeline runs > 10 % of all runs over the last 5 min.
+        # Numerator: failed runs.  Denominator: all runs.  Alert fires when
+        # there is sufficient volume (> 0 runs) AND failure fraction > 10 %.
+        expr: |
+          sum(rate(ragent_pipeline_runs_total{outcome="failed"}[5m]))
+            /
+          sum(rate(ragent_pipeline_runs_total[5m]))
+            > 0.10
+        for: 2m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Ingest pipeline failure rate > 10 % for 2 min"
+          description: |
+            More than 10 % of ingest pipeline runs are failing.
+            Check worker logs for EMBEDDER_ERROR / ES bulk failures.
+            ragent_pipeline_runs_total{outcome="failed"} is the source series.
+
+  - name: ragent.retrieval
+    rules:
+      - alert: RerankerDegradedPersistent
+        # rerank_degraded_total increments once per request when the reranker
+        # returns 5xx or times out and the pipeline falls back to RRF order.
+        # A non-zero rate sustained for 5 min means the reranker is effectively
+        # down; investigate RERANK_API_URL availability.
+        expr: rate(rerank_degraded_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: reranker
+        annotations:
+          summary: "Reranker degraded (fail-open) for > 5 min"
+          description: |
+            The reranker has been returning errors for over 5 minutes.
+            Chat continues to function (RRF fallback), but answer ranking
+            quality is degraded.  Check RERANK_API_URL and reranker service logs.
+
+      - alert: WorkerPipelineSlow
+        # p99 ingest pipeline duration > 5 minutes (300 s) across all
+        # source_app/mime_type label combinations.  A slow pipeline means
+        # documents accumulate in PENDING state and the ingest SLA is breached.
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(worker_pipeline_duration_seconds_bucket[10m]))
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Worker ingest pipeline p99 > 5 min"
+          description: |
+            The 99th-percentile ingest pipeline duration has exceeded 5 minutes
+            for > 5 min.  Likely causes: embedder latency spike, ES bulk timeout,
+            or a very large document.  Check worker_pipeline_duration_seconds and
+            upstream AI API latency dashboards.
+
+  - name: ragent.infra
+    rules:
+      - alert: ReadyzProbeFailing
+        # ragent_readyz_probe_status is a Gauge: 1 = ok, 0 = fail, per probe.
+        # Any probe stuck at 0 for > 2 min means a hard infra dependency is down.
+        expr: ragent_readyz_probe_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infra
+        annotations:
+          summary: "Readyz probe {{ $labels.probe }} is failing"
+          description: |
+            The /readyz dependency probe for {{ $labels.probe }} has been failing
+            for > 2 minutes.  The API process is alive (livez passes) but one or
+            more infra dependencies (MariaDB / ES / Redis) is unreachable.
+            Check ragent_readyz_probe_failures_total for error_code detail.
