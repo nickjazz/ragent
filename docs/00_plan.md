@@ -122,7 +122,7 @@
 
 ---
 
-### MCP Hub microservice — T-MH.3 (remaining)
+### MCP Hub microservice — T-MH (100% complete)
 
 > Source: user kickoff. Standalone FastMCP service that loads `tools.yaml` at startup and dynamically registers each REST endpoint as an MCP Tool. Streamable HTTP transport.
 
@@ -131,7 +131,7 @@
 | T-MH.0 | Kickoff | • **Achieve:** Land the dynamic Hub skeleton — YAML schema, signature factory, httpx forwarder, lifespan-managed client, Streamable HTTP entry point.<br>• **Deliver:** `src/ragent/mcp_hub/{mcp_hub.py,server.py,tools.example.yaml,__init__.py}` + `tests/unit/mcp_hub/test_signature_factory.py`. | — | [x] | Dev |
 | T-MH.1 | Spec | • **Achieve:** Document the Hub microservice in `docs/00_spec.md` — tools.yaml schema, env-var inventory, Streamable HTTP endpoint contract, deployment topology. | — | [x] | Spec |
 | T-MH.2 | Test | • **Achieve:** Add an integration test that boots the Hub against a stub upstream and exercises one tool call over Streamable HTTP via a FastMCP client. | — | [x] | QA |
-| T-MH.3 | Hardening | • **Achieve:** Pre-compute per-tool wire dicts (header-name kebab map, partitioned param lists) and connection limits from `defaults`; consider auth header pass-through.<br>• **Deliver:** updates to `src/ragent/mcp_hub/mcp_hub.py`. | — | [ ] | Dev |
+| T-MH.3 | Hardening | • **Achieve:** Pre-compute per-tool wire dicts (header-name kebab map, partitioned param lists) and connection limits from `defaults`; consider auth header pass-through.<br>• **Deliver:** updates to `src/ragent/mcp_hub/mcp_hub.py`. | — | [x] | Dev |
 | T-MH.4 | Behavioral | • **Achieve:** Upstream-error transparency contract — replace blanket `raise_for_status` with structured envelopes. | — | [x] | Dev |
 | T-MH.5 | Behavioral | • **Achieve:** Static `tools.yaml` validator runnable in CI. | — | [x] | Dev |
 | T-MH.6 | Behavioral | • **Achieve:** Address gemini-code-assist PR #79 review (three medium-priority findings). | — | [x] | Dev |
