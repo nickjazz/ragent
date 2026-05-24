@@ -91,7 +91,7 @@
 - **T-UP** (T-UP.1–T-UP.3) — Unprotect API integration — 100% complete
 - **T-PDF** (T-PDF.1–T-PDF.5) — PDF ingest support — 100% complete
 - **T-RERUN** (T-RERUN.1–T-RERUN.3) — Manual rerun endpoint — 100% complete
-- **T-HTTPLOG.1–T-HTTPLOG.2** — HTTP upstream error logging (T-HTTPLOG.3 below) — partial
+- **T-HTTPLOG.1–T-HTTPLOG.3** — HTTP upstream error logging — 100% complete
 - **T-SEC** (T-SEC.1–T-SEC.8) — Security file-upload checks — 100% complete
 - **T-OCR** (T-OCR.1–T-OCR.4) — Replace Tesseract with RapidOCR — 100% complete
 - **T-HDR** (T-HDR.1–T-HDR.2) — Header/footer exclusion — 100% complete
@@ -118,7 +118,7 @@
 
 | # | Category | Task | Spec | Status | Owner |
 |---|---|---|:-:|:-:|---|
-| T-HTTPLOG.3 | Refactor | • **Achieve:** /simplify + /review pass; journal-add row in `docs/00_journal.md` (Spec) recording the deliberate `http_request_payload` / `http_response_payload` denylist carve-out for upstream-error diagnostics. | §4.6.8 | [ ] | Dev |
+| T-HTTPLOG.3 | Refactor | • **Achieve:** /simplify + /review pass; journal-add row in `docs/00_journal.md` (Spec) recording the deliberate `http_request_payload` / `http_response_payload` denylist carve-out for upstream-error diagnostics. | §4.6.8 | [x] | Dev |
 
 ---
 
