@@ -39,7 +39,7 @@ side-by-side while you work; every step is one real line.
 [ Worker ]
   workers/ingest.py:35       @broker.task("ingest.pipeline") ingest_pipeline_task
   workers/ingest.py:44       repo.claim_for_processing  (TX-A, NOWAIT, status=PENDING)
-  workers/ingest.py:55       head = registry.head_object(site, object_key)
+  workers/ingest.py:83       head = registry.head_object(site, doc.object_key)
   workers/ingest.py:82-88    mime = doc.mime_type or minio_content_type or DEFAULT_MIME
                                ↳ doc.mime_type (DB column) is AUTHORITATIVE — MinIO head is fallback only for legacy NULL rows
                                ↳ strip charset suffix: "text/markdown; charset=utf-8" → "text/markdown"

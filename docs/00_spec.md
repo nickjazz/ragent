@@ -87,7 +87,7 @@ stores such as ES chunks; they do not delete MinIO bytes.
 > Each splitter sets `meta["raw_content"]` = exact byte slice (byte-stable, R4/S25). `_BudgetChunker` is the sole budget enforcer. `chunks_v1` stores both `content` (normalized, BM25-analyzed) and `raw_content` (`index: false`); LLM context and citations use `raw_content`. Retry idempotency: `DuplicatePolicy.OVERWRITE` on ES write replaces existing chunks by `chunk_id` — no `_IdempotencyClean` step exists in the Haystack graph.
 
 **Performance & timeout discipline:**
-- Worker runs `fan_out_delete(document_id)` **before** starting the Haystack pipeline (idempotency clean outside the graph — sweeps every plugin, not just `VectorExtractor`).
+- Retry idempotency is handled entirely by `DuplicatePolicy.OVERWRITE` in `DocumentEmbedder` — the worker calls `container.ingest_pipeline.run()` directly with no pre-pipeline `fan_out_delete` step. `fan_out_delete` is used only on the delete/DELETING path (service layer + reconciler), not on the ingest-retry path.
 - `EmbeddingClient` is invoked in **batches of 32 chunks** per HTTP call (configurable; never 1-by-1).
 - Every external call carries an explicit timeout: Embedder 30 s/batch (ingest), ES bulk 60 s, MinIO get 30 s, plugin `extract()` 60 s overall (enforced by `PluginRegistry.fan_out`).
 - **Overall pipeline ceiling:** `INGEST_PIPELINE_TIMEOUT_SECONDS` (default 300 s, B18). Overrun ⇒ `FAILED` with `error_code=PIPELINE_TIMEOUT_AGGREGATE`.
