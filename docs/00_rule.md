@@ -296,6 +296,10 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 
 - **Rule: When CI fails with a top-level annotation but no per-test `FAILED <name>` line in the GitHub UI, DO NOT diagnose from the annotation alone.** The annotation is the loudest stderr/stdout tail snippet, NOT the actual pytest summary. Multiple simultaneous failures collapse into one annotation, leading the next-session-Claude to chase the wrong root cause. Request raw pytest output (`gh run view --log` operator-side, or paste from the Actions UI) before forming a hypothesis. Chasing the annotation alone cost two wrong fixes on PR #90.
 
+- **Rule: Vacuous assertions are banned for wire-shape fields.** `assert "key" in body[X]` passes even when the value at that key is malformed. Tests asserting a request body, ES DSL fragment, or wire payload contains key `X` MUST also assert the **exact value or shape at X** — use `==` against the expected dict, or schema-validate for large structures. Audit grep: `assert ".*" in .*\[.*\]` on a body/DSL target is a smell — promote to a value assertion. (Journal QA 2026-05-19 "Vacuous assertion")
+
+- **Rule: Verify the real object supports the same protocol as its mock.** `MagicMock` auto-generates `__enter__`/`__exit__` and any method; the real object may not. Before mocking, confirm the real class actually supports the used protocol. **httpx-specific:** `httpx.Response` is NOT a context manager (`httpx.Client.stream()` is). Using `with self._http.post(...) as resp:` raises `TypeError` in production while silently passing with any mock. Audit grep: `with self\._http\.post(` anywhere in `src/` is a bug — replace with `resp = self._http.post(...); resp.raise_for_status()`. (Journal QA 2026-05-23)
+
 ---
 
 
