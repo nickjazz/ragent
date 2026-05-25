@@ -18,6 +18,8 @@ Fixture-reuse policy (B49):
 
 from __future__ import annotations
 
+import contextlib
+import json
 import urllib.request
 from collections.abc import Iterator
 
@@ -81,7 +83,34 @@ def scrape_chaos_outcomes() -> dict[tuple[str, str], int]:
     return out
 
 
+def post_wiremock_stub(wiremock_url: str, stub: dict) -> None:
+    """POST a stub mapping to WireMock's /__admin/mappings endpoint."""
+    data = json.dumps(stub).encode()
+    req = urllib.request.Request(
+        f"{wiremock_url}/__admin/mappings",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        resp.read()
+
+
+def parse_sse_events(body: str) -> list[dict]:
+    """Parse an SSE response body into a list of JSON-decoded data payloads."""
+    events = []
+    for line in body.splitlines():
+        line = line.strip()
+        if line.startswith("data:"):
+            data_str = line[len("data:") :].strip()
+            with contextlib.suppress(json.JSONDecodeError):
+                events.append(json.loads(data_str))
+    return events
+
+
 __all__ = [
+    "parse_sse_events",
+    "post_wiremock_stub",
     "scrape_chaos_outcomes",
     "wiremock_reset",
     "_reset_wiremock",

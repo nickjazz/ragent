@@ -98,3 +98,15 @@ async def test_close_infra_continues_when_es_close_raises(fake_container) -> Non
     await _close_infra(fake_container)  # should not raise
 
     fake_container.engine.dispose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_infra_continues_when_engine_dispose_raises(fake_container) -> None:
+    """engine.dispose() failure is also best-effort — must not prevent shutdown."""
+    from ragent.bootstrap.app import _close_infra
+
+    fake_container.engine.dispose.side_effect = RuntimeError("pool exhausted")
+
+    await _close_infra(fake_container)  # should not raise
+
+    fake_container.es_client.close.assert_called_once()

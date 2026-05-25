@@ -219,3 +219,5 @@ __marimo__/
 .streamlit/secrets.toml
 .claude/logs/
 .claude/.pre_commit_approved
+.claude/.pending_full_review
+.claude/.stamp_audit.log

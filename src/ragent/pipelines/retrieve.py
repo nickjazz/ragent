@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 import anyio.from_thread
+import httpx
 import structlog
 from haystack.components.joiners import DocumentJoiner
 from haystack.core.component import component
@@ -18,6 +19,8 @@ from haystack_integrations.components.retrievers.elasticsearch import (
 )
 from haystack_integrations.document_stores.elasticsearch.filters import _normalize_filters
 
+from ragent.bootstrap.metrics import record_rerank_degraded
+from ragent.errors.upstream import UpstreamServiceError, UpstreamTimeoutError
 from ragent.pipelines.observability import wrap_pipeline_component
 from ragent.utility.datetime import utcnow
 from ragent.utility.env import int_env, optional_float_env
@@ -266,7 +269,21 @@ class _Reranker:
             return {"documents": []}
         k = top_k if top_k is not None else self._top_k
         texts = [d.content or "" for d in documents]
-        results = self._client.rerank(query=query, texts=texts, top_k=k)
+        try:
+            results = self._client.rerank(query=query, texts=texts, top_k=k)
+        except UpstreamServiceError as exc:
+            # 4xx responses (auth failures, bad-request config errors) are NOT
+            # transient — re-raise so they surface as hard errors instead of
+            # silently degrading ranking. Only 5xx / timeout warrant fail-open.
+            cause = exc.__cause__
+            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code < 500:
+                raise
+            # UpstreamTimeoutError is a subclass of UpstreamServiceError; check
+            # it first so the reason label discriminates timeout from 5xx errors.
+            reason = "timeout" if isinstance(exc, UpstreamTimeoutError) else "5xx"
+            _logger.warning("rerank.degraded", reason=reason, candidate_count=len(documents))
+            record_rerank_degraded(reason)
+            return {"documents": documents[:k]}
         ordered: list[Document] = []
         invalid = 0
         for r in results[:k]:

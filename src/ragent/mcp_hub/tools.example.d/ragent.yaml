@@ -23,6 +23,12 @@ tools:
       whose answer may be in the ingested knowledge corpus.
     method: POST
     path: /retrieve/v1
+    # Auth header pass-through: use forward_headers to propagate an incoming
+    # header (e.g. Authorization) to the upstream verbatim. The {placeholder}
+    # value is the lowercased ASGI-canonical incoming header name. Missing
+    # placeholders silently skip the outgoing header (graceful degradation).
+    #   forward_headers:
+    #     Authorization: "{authorization}"
     forward_headers:
       X-User-Id: "{x-user-id}"
     parameters:
