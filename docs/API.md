@@ -439,7 +439,8 @@ curl -X POST http://localhost:8000/feedback/v1 \
 | Endpoint | Description |
 |---|---|
 | `GET /livez` | Liveness probe — always 200 if process is up |
-| `GET /readyz` | Readiness probe — checks all dependencies (DB, ES, Redis, MinIO) |
+| `GET /startupz` | Startup probe — 503 until every dep probe has been green at least once; then permanently 200 |
+| `GET /readyz` | Readiness probe — checks all dependencies (DB, ES, Redis, MinIO); 503 with problem+json on failure |
 | `GET /metrics` | Prometheus metrics (text/plain) |
 
 ```bash

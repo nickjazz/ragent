@@ -346,11 +346,12 @@
 
 ---
 
-### ES chunks index config + housekeeping (T-EI.1 and T-EI.2a/3/4/5/6 completed; T-EI.2 in main plan)
+### ES chunks index config + housekeeping (T-EI track — 100% complete)
 
 | Task | Type | Dep | Status | Owner |
 |---|---|---|---|---|
 | T-EI.1 | Structural | — | [x] | Dev |
+| T-EI.2 | Red | — | [x] | QA |
 | T-EI.2a | Red+Green | — | [x] | Dev |
 | T-EI.3 | Green | T-EI.2 | [x] | Dev |
 | T-EI.4 | Red+Green | T-EI.3 | [x] | QA |

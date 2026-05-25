@@ -98,7 +98,7 @@
 - **T-EM** (T-EM.0–T-EM.21) + **T-EM-R** (T-EM-R.1–T-EM-R.10) — Embedding-model lifecycle — 100% complete
 - **T-FB** (T-FB.1–T-FB.12) — Feedback retrieval signal — 100% complete
 - **T-IUP** (T-IUP.1–T-IUP.2) — Ingest upload discriminator fix — 100% complete
-- **T-EI.1, T-EI.2a, T-EI.3–T-EI.6** — ES chunks index config (T-EI.2 below) — partial
+- **T-EI (T-EI.1–T-EI.2 + T-EI.2a + T-EI.3–T-EI.6)** — ES chunks index config — 100% complete
 - **T-APL** (T-APL.1–T-APL.11) — API pipeline param sanity & observability — 100% complete
 - **T-UP.4–T-UP.5** — Inline ingest unprotect fix — 100% complete
 
@@ -142,12 +142,3 @@
 | T-MH.10 | Behavioral | • **Achieve:** Expose the project's own `POST /retrieve/v1` as an MCP tool by default. | — | [x] | Dev |
 | T-MH.11 | Behavioral | • **Achieve:** Operability triple — per-system `verify_ssl`, Hub serves `GET /metrics`, `LoadFailure` carries structured fields. | — | [x] | Dev |
 
----
-
-### ES chunks index config — T-EI.2 (remaining)
-
-> Tidy First: T-EI.1 (Structural) landed first. T-EI.2/3/4 (Behavioral) follow as second commit. T-EI.5 consolidates into Behavioral commit.
-
-| Task | Type | Deliverables | Dep | Status | Owner |
-|---|---|---|---|---|---|
-| T-EI.2 | Red | • **Achieve:** Pin (a) ingest pipeline resource drift, (b) `indexed_at` mapping presence, (c) `default_pipeline` index setting.<br>• **Deliver:** `tests/integration/test_es_resource_drift.py` extended to load `resources/es/pipelines/chunks_default.json` and assert single `set` processor on `_ingest.timestamp → indexed_at`; `tests/unit/test_init_schema.py` extended to assert `chunks_v1.json` has `mappings.properties.indexed_at == {"type":"date"}` and `settings.index.default_pipeline == "chunks_default"`. `tests/integration/test_bootstrap_auto_init.py` extended: `GET _ingest/pipeline/chunks_default` returns 200 AND was created before the index. Tests MUST fail before T-EI.3. | — | [x] | QA |

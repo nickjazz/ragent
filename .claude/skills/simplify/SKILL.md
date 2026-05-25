@@ -37,6 +37,8 @@ List findings concisely (one line each). Fix any that are clear-cut. Skip false 
 
 ### full mode — three parallel sub-agents
 
+> **MANDATORY — no exceptions:** ALWAYS launch all three sub-agents even if the diff appears small, focused, or surgical. The phrase *"diff is small/inline review sufficient"* is a process violation — see journal Process 2026-05-17 "Inline /simplify rationalization". The fan-out **is** the review; skipping it means skipping the review.
+
 Use the Agent tool to launch all three agents concurrently in a single message. Pass each agent the full diff so it has complete context.
 
 #### Agent 1: Code Reuse Review
