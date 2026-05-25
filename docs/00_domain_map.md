@@ -61,7 +61,7 @@
 
 | 檔案 | 用途 |
 |---|---|
-| `composition.py` | `build_container()` — 唯一 env 讀取點；構建所有 singleton |
+| `composition.py` | `build_container()` — 唯一配置組裝點；構建所有 singleton |
 | `app.py` | `create_app()` — 掛載 routers、lifespan、middleware |
 | `broker.py` | TaskIQ broker 工廠（standalone / sentinel）|
 | `dispatcher.py` | 同步封裝層，讓同步呼叫能 enqueue async task |
@@ -186,7 +186,7 @@
 | **路徑** | `src/ragent/clients/` |
 | **責任** | 封裝對 Embedding / LLM / Rerank / Redis rate-limiter 的 HTTP 呼叫；retry、timeout、error mapping。 |
 | **允許依賴** | `errors/`、`utility/`；shared `httpx.Client`（由 bootstrap 注入）。 |
-| **禁止事項** | ❌ 不得硬編碼 URL（由 bootstrap 讀取 env 注入）。❌ 不得持有多個 `httpx.Client` 實例（共用 bootstrap 的 `http`）。❌ `httpx.Response` 非 context manager — 禁止 `with self._http.post(...) as resp:`。❌ 不得讀取 `os.environ`。 |
+| **禁止事項** | ❌ 不得硬編碼 URL（由 bootstrap 讀取 env 注入）。❌ 不得持有多個 `httpx.Client` 實例（共用 bootstrap 的 `http`）。❌ 禁止使用 `with self._http.post(...) as resp:`（應統一使用 `resp = self._http.post(...); resp.raise_for_status()` 模式）。❌ 不得讀取 `os.environ`。 |
 
 **模組清單：**
 
@@ -336,7 +336,7 @@
 | 項目 | 說明 |
 |---|---|
 | **路徑** | `src/ragent/reconciler.py` |
-| **責任** | K8s CronJob；掃描 stale UPLOADED / PENDING / DELETING，re-kiq 或 FAILED；multi-READY 修復（R3）。 |
+| **責任** | K8s CronJob；掃描 stale UPLOADED / PENDING / DELETING，re-kiq 或 FAILED；multi-READY 修復（R4）。 |
 | **允許依賴** | `repositories/`、`bootstrap/`（共用 Container）、`errors/`、`utility/`。 |
 | **禁止事項** | ❌ 不得引入 TaskIQ `@broker.task` 定義（只呼叫 `kiq()`）。❌ 不得持有 DB transaction 跨 plugin / external call 邊界。❌ 必須以 `SELECT … FOR UPDATE SKIP LOCKED` 避免多 instance 競爭。 |
 
