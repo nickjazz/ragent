@@ -224,7 +224,9 @@ def test_reranker_reraises_on_4xx_reranker_error() -> None:
     mock_request = MagicMock(spec=httpx.Request)
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 401
-    http_exc = httpx.HTTPStatusError("401 Unauthorized", request=mock_request, response=mock_response)
+    http_exc = httpx.HTTPStatusError(
+        "401 Unauthorized", request=mock_request, response=mock_response
+    )
     upstream_exc = UpstreamServiceError("rerank auth failure", service="rerank")
     upstream_exc.__cause__ = http_exc
     rerank_client.rerank.side_effect = upstream_exc

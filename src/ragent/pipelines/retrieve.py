@@ -6,8 +6,8 @@ import dataclasses
 from datetime import datetime
 from typing import Any
 
-import httpx
 import anyio.from_thread
+import httpx
 import structlog
 from haystack.components.joiners import DocumentJoiner
 from haystack.core.component import component
