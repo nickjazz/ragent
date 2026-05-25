@@ -211,8 +211,8 @@ def test_source_hydrator_enriches_documents(es_store, mock_embedder, mode: str) 
     `legacy` exercises Haystack's ``ElasticsearchEmbeddingRetriever``; `registry`
     exercises ``_DynamicFieldEmbeddingRetriever`` — ensuring that hydration is not
     silently broken by a change to the registry-mode retriever filter path.
-    Both documents include the registry-mode dense_vector field so that the kNN
-    query finds the chunk regardless of which field the retriever targets.
+    Both modes target the ``"embedding"`` dense_vector field (index-per-model
+    design, B61); no extra field is needed in meta.
     """
     # Mode-suffix document IDs so the module-scoped es_store does not mix chunks
     # across the two parametrize iterations.
@@ -229,7 +229,6 @@ def test_source_hydrator_enriches_documents(es_store, mock_embedder, mode: str) 
                     "chunk_id": chunk_id,
                     "document_id": doc_id,
                     "source_app": source_app,
-                    _REGISTRY_MODEL_FIELD: _FIXED_EMBEDDING,
                 },
                 embedding=_FIXED_EMBEDDING,
             )
