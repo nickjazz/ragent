@@ -105,9 +105,11 @@ def test_C4_rerank_5xx_degrades_gracefully(
         headers={"X-User-Id": "alice"},
         json={
             "ingest_type": "inline",
-            "content": _INGEST_CONTENT,
+            "source_id": "c4-chaos-seed",
+            "source_app": "chaos-drill",
             "source_title": "C4 chaos doc",
             "mime_type": "text/plain",
+            "content": _INGEST_CONTENT,
         },
         timeout=10,
     )
