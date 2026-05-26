@@ -43,7 +43,7 @@ Existing routers to read as living references:
 
 | Router | File | Prefix | Routes |
 |---|---|---|---|
-| Ingest | `src/ragent/routers/ingest.py` | `/ingest/v1` | `""`, `/{document_id}` (GET+DELETE), `""` (GET list), `/{id}/rerun` |
+| Ingest | `src/ragent/routers/ingest.py` | `/ingest/v1` | `""`, `/{document_id}` (GET+DELETE), `""` (GET list), `/{document_id}/rerun` |
 | Chat | `src/ragent/routers/chat.py` | `/chat/v1` | `""`, `/stream` |
 | Retrieve | `src/ragent/routers/retrieve.py` | `/retrieve/v1` | `""` |
 | Feedback | `src/ragent/routers/feedback.py` | `/feedback/v1` | `""` |
