@@ -190,11 +190,11 @@
 
 | context_mode | intent | retrieve | inject_context | prompt | sources |
 |---|---|---|---|---|---|
-| auto | GREETING/CHITCHAT | skip | False | _PLAIN_ASSISTANT | [] |
-| auto | QUESTION/SUMMARY/GENERATION | run | True | _DEFAULT_RAG (with [N]) | [...] |
-| caller | GREETING/CHITCHAT | skip | False | _PLAIN_ASSISTANT | [] |
-| caller | QUESTION/SUMMARY/GENERATION | skip | False | _RAG_NO_CITATION (no [N]) | [] |
-| force | any intent | run | True | _DEFAULT_RAG (with [N]) | [...] |
+| auto | GREETING/CHITCHAT | skip | False | _PLAIN_ASSISTANT | null |
+| auto | QUESTION/SUMMARY/GENERATION | run | True | _DEFAULT_RAG (with [N]) | []/[{...}] |
+| caller | GREETING/CHITCHAT | skip | False | _PLAIN_ASSISTANT | null |
+| caller | QUESTION/SUMMARY/GENERATION | skip | False | _RAG_NO_CITATION (no [N]) | null |
+| force | any intent | run | True | _DEFAULT_RAG (with [N]) | []/[{...}] |
 
 **Temperature** (intent-based, used when `body.temperature is None`):
 `GREETING/CHITCHAT → 0.8`, `QUESTION/SUMMARY → 0.2`, `GENERATION → 0.7`
@@ -210,7 +210,7 @@
 | T-CH2.R2 | Red+Green | • **Achieve:** `context_mode="caller"` always skips retrieval regardless of intent.<br>• **Deliver:** `tests/unit/test_chat_intent.py::test_caller_mode_always_skips_retrieval`. | [x] | Dev |
 | T-CH2.R3 | Red+Green | • **Achieve:** `context_mode="force"` always runs retrieval regardless of intent (even GREETING).<br>• **Deliver:** `tests/unit/test_chat_intent.py::test_force_mode_always_runs_retrieval`. | [x] | Dev |
 | T-CH2.R4 | Red+Green | • **Achieve:** Intent detection always runs regardless of `context_mode`.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_intent_detection_runs_for_all_context_modes`. | [x] | Dev |
-| T-CH2.I1 | Red+Green | • **Achieve:** `context_mode="caller"` + QUESTION intent: `sources=[]`, no `<context>` injection, no `[N]` in outgoing system prompt.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_caller_mode_no_citation_in_prompt`. | [x] | Dev |
+| T-CH2.I1 | Red+Green | • **Achieve:** `context_mode="caller"` + QUESTION intent: `sources=null`, no `<context>` injection, no `[N]` in outgoing system prompt.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_caller_mode_no_citation_in_prompt`. | [x] | Dev |
 | T-CH2.I2 | Red+Green | • **Achieve:** `temperature=null` + GREETING intent: LLM called with `_INTENT_TEMPERATURE["GREETING"]`.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_auto_temperature_greeting`. | [x] | Dev |
 | T-CH2.I3 | Red+Green | • **Achieve:** `context_mode="force"` + GREETING intent: retrieval runs, sources populated.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_force_mode_retrieval_runs`. | [x] | Dev |
 
