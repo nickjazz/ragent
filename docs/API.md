@@ -255,7 +255,7 @@ Request schema is shared by both endpoints. Only `messages` is required.
 | `top_k` | int | `20` | Max chunks to retrieve (1–200). |
 | `min_score` | float | `null` | Minimum chunk score threshold. |
 | `dedupe` | bool | `false` | Keep only the top-scored chunk per `document_id`. |
-| `context_mode` | string | `"auto"` | `"auto"` = intent-based retrieval; `"caller"` = skip retrieval (caller embeds context); `"force"` = always retrieve. |
+| `context_mode` | string | `"auto"` | `"auto"` = intent-based retrieval; `"caller"` = skip retrieval (caller embeds context); `"force"` = always retrieve. Sending the removed `retrieve` field returns 422. |
 
 **Intent detection** always runs (a lightweight `temperature=0`, `max_tokens=10` LLM call)
 unless the user turn is empty or whitespace. It classifies the last user turn:

@@ -149,7 +149,7 @@ QueryEmbedder → { ESVectorRetriever (kNN on embedding, optional filter)
   "dedupe":false, "context_mode":"auto" }
 ```
 
-`messages` required; `provider` validated against `{"openai"}` (B22); `top_k` 1–200; server prepends default system message when `role:"system"` absent.
+`messages` required; `provider` validated against `{"openai"}` (B22); `top_k` 1–200; server prepends default system message when `role:"system"` absent. The removed `retrieve` field returns 422 `VALIDATION_ERROR` — callers must migrate to `context_mode`. When a caller-supplied `role:"system"` message is present, the grounding prefix is merged into it (single system turn).
 
 `temperature` (default `null`): when `null`, intent-based auto-selection applies — GREETING/CHITCHAT → 0.8, QUESTION/SUMMARY → 0.2, GENERATION → 0.7; when a float, overrides intent-based default.
 

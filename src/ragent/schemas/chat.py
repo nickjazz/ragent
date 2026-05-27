@@ -6,7 +6,7 @@ import os
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ragent.pipelines.retrieve import DEFAULT_MIN_SCORE as _DEFAULT_MIN_SCORE
 from ragent.pipelines.retrieve import DEFAULT_TOP_K as _DEFAULT_TOP_K
@@ -164,6 +164,17 @@ class ChatRequest(BaseModel):
     context_mode: Literal["auto", "caller", "force"] = "auto"
     # See _compute_skip_retrieve() in routers/chat.py for per-mode retrieval semantics.
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_fields(cls, data: Any) -> Any:
+        # `retrieve: bool` was removed in favour of `context_mode` in T-CH2.
+        # Reject explicitly so callers get a clear 422 rather than silent ignore.
+        if isinstance(data, dict) and "retrieve" in data:
+            raise ValueError(
+                "'retrieve' was removed; use 'context_mode' ('auto'|'caller'|'force') instead"
+            )
+        return data
+
     @field_validator("provider")
     @classmethod
     def _validate_provider(cls, v: str) -> str:
@@ -281,11 +292,20 @@ def build_rag_messages(
     for m in messages:
         (sys_msgs if m.get("role") == "system" else other_msgs).append(m)
 
-    # When caller provides a system message and context is injected, use the grounding
-    # rules variant (shorter, avoids conflicting style instructions with caller's prompt).
+    # Select the grounding prefix based on inject_context, intent, and whether the caller
+    # supplied a system message. When inject_context=True with a caller sys-msg, use the
+    # shorter grounding-rules variant to avoid conflicting style instructions.
     prefix = (
         _RAG_GROUNDING_RULES
         if inject_context and sys_msgs
         else _select_system_prompt(intent, inject_context)
     )
-    return [{"role": "system", "content": prefix}] + sys_msgs + other_msgs
+
+    if sys_msgs:
+        # Merge: prepend our grounding prefix into the caller's first system message so the
+        # final prompt has exactly one system turn. Inserting a separate leading system message
+        # would create two system turns — some providers reject that, and it can conflict with
+        # the caller's persona when context_mode='caller'.
+        merged = {**sys_msgs[0], "content": prefix + "\n\n" + (sys_msgs[0].get("content") or "")}
+        return [merged] + sys_msgs[1:] + other_msgs
+    return [{"role": "system", "content": prefix}] + other_msgs

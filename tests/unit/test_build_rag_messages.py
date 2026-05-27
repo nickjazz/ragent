@@ -34,7 +34,8 @@ def test_no_docs_no_user_system_still_uses_rag_system_prompt():
 
 def test_no_docs_with_user_system_still_uses_grounding_rules():
     """Even with no docs and a caller-supplied system message, grounding rules must be prepended
-    — the RAG boundary must not be removed when the context happens to be empty."""
+    into the caller's system message — the RAG boundary must not be removed when context is empty.
+    The prefix is merged into the caller's sys-msg (single system turn, not two separate ones)."""
     from ragent.schemas.chat import _RAG_GROUNDING_RULES
 
     req = _req(
@@ -43,7 +44,11 @@ def test_no_docs_with_user_system_still_uses_grounding_rules():
     )
     for docs in (None, []):
         result = build_rag_messages(req, docs)
-        assert result[0]["content"] == _RAG_GROUNDING_RULES
+        # Prefix merged into caller's sys-msg; exactly one system message.
+        assert result[0]["role"] == "system"
+        assert result[0]["content"].startswith(_RAG_GROUNDING_RULES)
+        assert "Custom persona" in result[0]["content"]
+        assert not any(m["role"] == "system" for m in result[1:])
 
 
 def test_empty_docs_injects_empty_context_placeholder():
@@ -70,7 +75,10 @@ def test_docs_present_prepends_rag_system_at_index_0_and_wraps_last_user():
     assert "</context>" in last_user["content"]
 
 
-def test_docs_present_with_user_system_uses_rules_only_variant_at_index_0_user_system_at_index_1():
+def test_docs_present_with_user_system_merges_grounding_rules_into_caller_sys_msg():
+    """When docs are present and the caller provides a system message, the grounding-rules
+    prefix is merged into the caller's sys-msg (single system turn). The caller's persona
+    is preserved at the end of the merged content."""
     from ragent.schemas.chat import _RAG_GROUNDING_RULES
 
     doc = _doc("e", source_title="T", document_id="d", source_app="a")
@@ -81,9 +89,10 @@ def test_docs_present_with_user_system_uses_rules_only_variant_at_index_0_user_s
     result = build_rag_messages(req, [doc])
 
     assert result[0]["role"] == "system"
-    assert result[0]["content"] == _RAG_GROUNDING_RULES
-    assert result[1]["role"] == "system"
-    assert result[1]["content"] == "You are a pirate"
+    assert result[0]["content"].startswith(_RAG_GROUNDING_RULES)
+    assert "You are a pirate" in result[0]["content"]
+    # No second system message — merged into one.
+    assert result[1]["role"] != "system"
 
 
 # --- docs present: user message wrapping ---
@@ -299,9 +308,9 @@ def test_inject_context_false_no_context_tag():
 
 
 def test_inject_context_false_system_floated():
-    """Caller-supplied system messages must still be floated to the front even
-    when inject_context=False. With QUESTION intent + no context, the prefix is
-    _RAG_GROUNDING_NO_CITATION (not _RAG_GROUNDING_RULES — that's for inject_context=True)."""
+    """Caller-supplied system messages are merged with the grounding prefix (single sys turn).
+    With QUESTION intent + inject_context=False, prefix is _RAG_GROUNDING_NO_CITATION.
+    The caller's persona is preserved in the merged content."""
     from ragent.schemas.chat import _RAG_GROUNDING_NO_CITATION
 
     req = _req(
@@ -310,9 +319,11 @@ def test_inject_context_false_system_floated():
     )
     result = build_rag_messages(req, [], inject_context=False, intent="QUESTION")
 
-    assert result[0]["content"] == _RAG_GROUNDING_NO_CITATION
-    assert result[1]["role"] == "system"
-    assert result[1]["content"] == "Custom persona"
+    assert result[0]["role"] == "system"
+    assert result[0]["content"].startswith(_RAG_GROUNDING_NO_CITATION)
+    assert "Custom persona" in result[0]["content"]
+    # No second system message — merged into one.
+    assert result[1]["role"] == "user"
 
 
 # ---------------------------------------------------------------------------

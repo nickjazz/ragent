@@ -376,8 +376,14 @@ def create_chat_router(
                         max_tokens=body.max_tokens,
                         usage_out=usage_out,
                     ):
-                        full_content.append(delta)
-                        yield f"data: {json.dumps({'type': 'delta', 'content': delta})}\n\n"
+                        # Best-effort per-delta normalization: catches full-width brackets
+                        # emitted as a single token (the common case). Brackets split across
+                        # chunk boundaries will not be caught here but ARE normalized in
+                        # the assembled done.content below.
+                        normalized_delta = normalize_citations(delta)
+                        full_content.append(normalized_delta)
+                        delta_payload = {"type": "delta", "content": normalized_delta}
+                        yield f"data: {json.dumps(delta_payload)}\n\n"
                     assembled = normalize_citations("".join(full_content))
                     done_payload = {
                         "type": "done",

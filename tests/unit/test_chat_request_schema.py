@@ -244,3 +244,33 @@ def test_temperature_float_accepted():
     """Explicit float temperature overrides intent-based default."""
     req = _req(messages=[{"role": "user", "content": "hi"}], temperature=0.3)
     assert req.temperature == pytest.approx(0.3)
+
+
+# ---------------------------------------------------------------------------
+# PR #130 review fixes — legacy field rejection
+# ---------------------------------------------------------------------------
+
+
+def test_retrieve_field_rejected_with_422():
+    """Legacy 'retrieve' field must be explicitly rejected with a validation error.
+    Callers must migrate to context_mode='caller'/'auto'/'force'."""
+    from ragent.schemas.chat import ChatRequest
+
+    with pytest.raises(ValidationError) as exc_info:
+        ChatRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            retrieve=False,
+        )
+    errors = exc_info.value.errors()
+    assert any("retrieve" in str(e) for e in errors)
+
+
+def test_retrieve_true_also_rejected():
+    """retrieve=True must also be rejected — the field is entirely removed."""
+    from ragent.schemas.chat import ChatRequest
+
+    with pytest.raises(ValidationError):
+        ChatRequest(
+            messages=[{"role": "user", "content": "hi"}],
+            retrieve=True,
+        )
