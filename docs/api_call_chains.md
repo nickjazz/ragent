@@ -386,23 +386,24 @@ TokenManager.get_token()   [protected by threading.Lock]
   └── _refresh()
         ├── _get_j1()      → read J1 from env var OR K8s SA token file
         └── self._http.post(auth_url, json={"key": j1})
-              └── raise RuntimeError("Token refresh failed")  on ANY exception
+              ├── re-raise httpx.TimeoutException  (preserves type for classify_upstream_error)
+              └── raise RuntimeError("Token refresh failed")  on all other exceptions
 ```
 
-### Exception transparency gap ⚠️
+### Exception transparency
 
-`_refresh()` wraps **all exceptions** (including `httpx.TimeoutException`) in
-`RuntimeError("Token refresh failed")`. This strips the timeout type before it reaches
-`classify_upstream_error()`.
+`_refresh()` re-raises `httpx.TimeoutException` unwrapped; all other exceptions are wrapped
+in `RuntimeError("Token refresh failed")`.
 
 **Effect at request time**:  
-A token exchange **timeout** surfaces as `UpstreamServiceError` (HTTP 502) instead of
-`UpstreamTimeoutError` (HTTP 504) because `classify_upstream_error` receives a `RuntimeError`,
-not an `httpx.TimeoutException`.
+A token exchange **timeout** propagates as `httpx.TimeoutException` → `classify_upstream_error`
+returns `UpstreamTimeoutError` (HTTP 504). Non-timeout failures (503, connection refused)
+produce `RuntimeError` → `UpstreamServiceError` (HTTP 502).
 
 **Effect at boot time**:  
-`_check_infra_ready()` re-wraps the `RuntimeError` as `RuntimeError("infra not ready: token
-exchange failed: Token refresh failed")` → **boot abort** (intended behavior).
+`_check_infra_ready()` catches any exception from `get_token()` (both `httpx.TimeoutException`
+and `RuntimeError`) and re-wraps as `RuntimeError("infra not ready: token exchange failed …")`
+→ **boot abort** (intended behavior — unchanged).
 
 ### Retry behaviour
 
@@ -422,7 +423,7 @@ a token exchange outage causes:
 | Upstream failure | Caught at | HTTP status | `error_code` |
 |---|---|---|---|
 | Token exchange 503 (runtime) | Client retry loop (3×) | 502 | `EMBEDDER_ERROR` / `LLM_ERROR` / `RERANK_ERROR` |
-| Token exchange timeout (runtime) | Client retry loop (3×) | 502 | same ⚠️ (should be 504 — see §14) |
+| Token exchange timeout (runtime) | Client retry loop (3×) | 504 | `EMBEDDER_TIMEOUT` / `LLM_TIMEOUT` / `RERANK_TIMEOUT` |
 | Embedding API 503 | Client retry loop (3×@1s) | 502 | `EMBEDDER_ERROR` |
 | Embedding API timeout | Client retry loop (3×@1s) | 504 | `EMBEDDER_TIMEOUT` |
 | LLM API 503 (answer) | Client retry loop (3×@2s) | 502 | `LLM_ERROR` |
