@@ -6,7 +6,9 @@
 
 ---
 
-## API error codes (appear in `application/problem+json` responses)
+## API-surface error codes
+
+> Codes emitted at the HTTP / JSON-RPC / SSE boundary. Transport varies: most appear in `application/problem+json` bodies; MCP codes appear in JSON-RPC error envelopes; `INGEST_ARCHIVE_UNSAFE` / `INGEST_PDF_TOO_MANY_PAGES` / `INGEST_NOT_FOUND` surface via `documents.error_code` on a `GET /ingest/v1/{id}` poll after async worker rejection.
 
 | `error_code` | HTTP / Surface | When | Origin |
 |---|---|---|---|
@@ -25,7 +27,7 @@
 | `INGEST_VALIDATION`                  | 422         | Missing/empty `source_id` / `source_app` / `source_title` (S23) | Router T2.13 |
 | `INGEST_MINIO_SITE_UNKNOWN`          | 422         | `minio_site` not in `MinioSiteRegistry` | Router T2.13 |
 | `INGEST_OBJECT_NOT_FOUND`            | 422         | `(minio_site, object_key)` HEAD-probe miss | Router T2.13 |
-| `INGEST_NOT_FOUND`                   | 404         | `GET/DELETE/rerun /ingest/v1/{id}` on unknown id | Service T2.10 |
+| `INGEST_NOT_FOUND`                   | 404         | `GET/DELETE /ingest/v1/{id}` or `POST /ingest/v1/{id}/rerun` on unknown id | Service T2.10 |
 | `INGEST_NOT_RERUNNABLE`              | 409         | `/rerun` on a document in `READY` or `DELETING` state | Router (rerun endpoint) |
 | `MISSING_USER_ID`                    | 422         | User-id header absent or empty after JWT verification | Identity middleware |
 | `CHAT_RATE_LIMITED`                  | 429 + `Retry-After` | Per-user fixed-window quota exceeded on `/chat/v1[/stream]` (B31, S37) | Router-level Depends T3.16 |

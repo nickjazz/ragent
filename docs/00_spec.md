@@ -342,7 +342,7 @@ Standalone FastMCP service that federates arbitrary third-party REST APIs as MCP
 
 Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (permission, OpenFGA-backed) — see §3.5. ES queries remain permission-blind in every phase.
 
-**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/API.md §Embedding Model Lifecycle`](API.md):
+**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/API.md §Embedding Model Lifecycle`](API.md#embedding-model-lifecycle-admin):
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
