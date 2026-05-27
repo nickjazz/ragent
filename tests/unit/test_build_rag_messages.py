@@ -325,9 +325,7 @@ def test_context_mode_field():
     req_default = ChatRequest(messages=[{"role": "user", "content": "hi"}])
     assert req_default.context_mode == "auto"
 
-    req_caller = ChatRequest(
-        messages=[{"role": "user", "content": "hi"}], context_mode="caller"
-    )
+    req_caller = ChatRequest(messages=[{"role": "user", "content": "hi"}], context_mode="caller")
     assert req_caller.context_mode == "caller"
 
     req_force = ChatRequest(messages=[{"role": "user", "content": "hi"}], context_mode="force")

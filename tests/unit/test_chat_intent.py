@@ -113,7 +113,7 @@ def test_detect_intent_multiword_uses_first_word():
 
 def test_intent_temperature_mapping():
     """_INTENT_TEMPERATURE maps all known intents; unknown defaults to _DEFAULT_TEMPERATURE."""
-    from ragent.routers.chat import _DEFAULT_TEMPERATURE, _INTENT_TEMPERATURE
+    from ragent.routers.chat import _INTENT_TEMPERATURE
 
     assert _INTENT_TEMPERATURE["GREETING"] == pytest.approx(0.8)
     assert _INTENT_TEMPERATURE["CHITCHAT"] == pytest.approx(0.8)

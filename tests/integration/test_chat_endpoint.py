@@ -421,8 +421,7 @@ def test_caller_mode_no_citation_in_system_prompt():
                     {
                         "role": "user",
                         "content": (
-                            "<context>\n[資料來源 #1]\nsome doc\n---\n</context>"
-                            "\n\nWhat is this?"
+                            "<context>\n[資料來源 #1]\nsome doc\n---\n</context>\n\nWhat is this?"
                         ),
                     }
                 ],

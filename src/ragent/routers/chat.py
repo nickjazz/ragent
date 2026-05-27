@@ -34,10 +34,10 @@ from ragent.utility.id_gen import new_id
 # Intent taxonomy — 維護點：只改此表即可新增/移除 intent
 # ---------------------------------------------------------------------------
 _INTENT_REQUIRES_RETRIEVE: dict[str, bool] = {
-    "GREETING": False,   # 打招呼、再見
-    "CHITCHAT": False,   # 閒聊、情緒表達、開放式創作（詩/故事）
-    "QUESTION": True,    # 需從文件查找事實
-    "SUMMARY": True,     # 摘要文件內容
+    "GREETING": False,  # 打招呼、再見
+    "CHITCHAT": False,  # 閒聊、情緒表達、開放式創作（詩/故事）
+    "QUESTION": True,  # 需從文件查找事實
+    "SUMMARY": True,  # 摘要文件內容
     "GENERATION": True,  # 根據文件草擬文字（必須依賴文件；純創作 → CHITCHAT）
 }
 _INTENT_DEFAULT = "QUESTION"  # fallback when LLM returns unrecognised label
@@ -45,10 +45,10 @@ _INTENT_DEFAULT = "QUESTION"  # fallback when LLM returns unrecognised label
 # Per-intent temperature used when body.temperature is None.
 _DEFAULT_TEMPERATURE = 0.7
 _INTENT_TEMPERATURE: dict[str, float] = {
-    "GREETING": 0.8,    # warm, natural conversation
-    "CHITCHAT": 0.8,    # creative, varied
-    "QUESTION": 0.2,    # factual, low variance
-    "SUMMARY": 0.2,     # faithful to source
+    "GREETING": 0.8,  # warm, natural conversation
+    "CHITCHAT": 0.8,  # creative, varied
+    "QUESTION": 0.2,  # factual, low variance
+    "SUMMARY": 0.2,  # faithful to source
     "GENERATION": 0.7,  # fluent yet grounded
 }
 
@@ -317,9 +317,7 @@ def create_chat_router(
                     completion_tokens=completion_tokens,
                 )
             # sources semantics: None=skipped, []=ran+no hits, [{...}]=ran+found
-            sources = (
-                None if skip_retrieve else _build_sources(docs, max_chars=excerpt_max_chars)
-            )
+            sources = None if skip_retrieve else _build_sources(docs, max_chars=excerpt_max_chars)
             content = normalize_citations(result["content"])
             return JSONResponse(
                 {
@@ -358,9 +356,7 @@ def create_chat_router(
                 )
             effective_temperature = _resolve_temperature(body.temperature, intent)
             # sources semantics: None=skipped, []=ran+no hits, [{...}]=ran+found
-            sources = (
-                None if skip_retrieve else _build_sources(docs, max_chars=excerpt_max_chars)
-            )
+            sources = None if skip_retrieve else _build_sources(docs, max_chars=excerpt_max_chars)
             # Capture the chat.request context so chat.llm (started later inside the
             # StreamingResponse generator, in a different async context) still nests
             # under chat.request via explicit parent reference rather than via the

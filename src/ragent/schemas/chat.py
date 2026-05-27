@@ -251,7 +251,7 @@ def _select_system_prompt(intent: str, inject_context: bool) -> str:
 
 
 def build_rag_messages(
-    req: "ChatRequest",
+    req: ChatRequest,
     docs: list[Any] | None,
     *,
     inject_context: bool = True,
