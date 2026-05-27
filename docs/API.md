@@ -316,6 +316,8 @@ curl -X POST http://localhost:8000/chat/v1 \
 
 > `request_id` + `feedback_token` are emitted **only when `CHAT_FEEDBACK_ENABLED=true` AND `X-User-Id` is present**. Clients echo both back to `POST /feedback/v1` to record like / dislike feedback (see the Feedback section above). Both fields are absent otherwise.
 
+> `content` is always a string. If the upstream LLM returns a null or missing content field (e.g., due to a safety filter), `content` is an empty string `""`.
+
 ### `POST /chat/v1/stream` — Streaming chat (SSE)
 
 ```bash

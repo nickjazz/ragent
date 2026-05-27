@@ -318,7 +318,7 @@ def create_chat_router(
                 )
             # sources semantics: None=skipped, []=ran+no hits, [{...}]=ran+found
             sources = None if skip_retrieve else _build_sources(docs, max_chars=excerpt_max_chars)
-            content = normalize_citations(result["content"])
+            content = normalize_citations(result.get("content") or "")
             return JSONResponse(
                 {
                     "content": content,
