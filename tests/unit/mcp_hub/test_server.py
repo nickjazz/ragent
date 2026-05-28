@@ -25,12 +25,11 @@ def test_non_numeric_port_exits_with_clear_message(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):
     monkeypatch.setenv("MCP_HUB_PORT", "not-a-number")
-    monkeypatch.setenv("MCP_HUB_TOOLS_YAML", "/nonexistent.yaml")
 
-    with pytest.raises(SystemExit) as ex:
+    with pytest.raises(SystemExit):
         main()
 
-    assert "MCP_HUB_PORT" in str(ex.value)
+    assert "MCP_HUB_PORT" in capsys.readouterr().err
 
 
 class _FakeClient:
