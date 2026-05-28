@@ -29,7 +29,7 @@ def bool_env(var: str, default: bool) -> bool:
     raw = os.environ.get(var)
     if raw is None:
         return default
-    return raw.lower() in ("1", "true", "yes")
+    return raw.lower() in ("1", "true", "yes", "on")
 
 
 def float_env(var: str, default: float) -> float:

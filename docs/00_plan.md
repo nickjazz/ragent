@@ -151,6 +151,7 @@
 | T-MH.9 | Behavioral | • **Achieve:** Operator-facing structured logging via `structlog`. | — | [x] | Dev |
 | T-MH.10 | Behavioral | • **Achieve:** Expose the project's own `POST /retrieve/v1` as an MCP tool by default. | — | [x] | Dev |
 | T-MH.11 | Behavioral | • **Achieve:** Operability triple — per-system `verify_ssl`, Hub serves `GET /metrics`, `LoadFailure` carries structured fields. | — | [x] | Dev |
+| T-MH.12 | Behavioral | • **Achieve:** Expose `build_mcp_app()` as a 0-arg uvicorn `--factory` entry point; refactor `main()` to delegate to it; extend `bool_env()` to accept `"on"` sentinel; update K8s api command to uvicorn CLI; update docs. | — | [x] | Dev |
 
 ---
 

@@ -1,17 +1,24 @@
-"""T7.5d — API process entrypoint: python -m ragent.api (B30)."""
+"""T7.5d — API process entrypoint (B30).
+
+Kept as a backward-compat shim for ``python -m ragent.api``.
+Primary path: ``uvicorn ragent.bootstrap.app:create_app --factory``
+"""
 
 from __future__ import annotations
 
-import os
-
 import uvicorn
 
-from ragent.bootstrap.app import create_app
+from ragent.utility.env import int_env, str_env
 
-if __name__ == "__main__":
-    host = os.environ.get("RAGENT_HOST", "127.0.0.1")
-    port = int(os.environ.get("RAGENT_PORT", "8000"))
-    log_level = os.environ.get("LOG_LEVEL", "INFO").lower()
+if __name__ == "__main__":  # pragma: no cover
+    host = str_env("RAGENT_HOST", "127.0.0.1")
+    port = int_env("RAGENT_PORT", 8000)
+    log_level = str_env("LOG_LEVEL", "INFO").lower()
 
-    app = create_app()
-    uvicorn.run(app, host=host, port=port, log_level=log_level)
+    uvicorn.run(
+        "ragent.bootstrap.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        log_level=log_level,
+    )

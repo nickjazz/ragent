@@ -10,13 +10,13 @@ Environment variables:
     MCP_HUB_JSON_RESPONSE   Return JSON responses instead of SSE (default: false).
 
 Run:
-    uv run python -m ragent.mcp_hub.server
+    uvicorn ragent.mcp_hub.server:build_mcp_app --factory --host 0.0.0.0 --port 9000
+    (legacy: uv run python -m ragent.mcp_hub.server)
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -26,6 +26,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
+
+from ragent.utility.env import bool_env, int_env, str_env
 
 from .mcp_hub import _INCOMING_HEADERS, HubBundle, build_hub
 
@@ -105,30 +107,30 @@ def build_app(
     return HeaderForwardMiddleware(fastmcp_app)
 
 
-def main() -> None:
-    yaml_path = os.environ.get("MCP_HUB_TOOLS_YAML", "tools.yaml")
-    name = os.environ.get("MCP_HUB_NAME", "ragent-mcp-hub")
-    host = os.environ.get("MCP_HUB_HOST", "0.0.0.0")
-    try:
-        port = int(os.environ.get("MCP_HUB_PORT", "9000"))
-    except ValueError as exc:
-        raise SystemExit(f"MCP_HUB_PORT must be an integer, got {exc.args[0]!r}") from exc
-    path = os.environ.get("MCP_HUB_PATH", "/mcp")
-
-    truthy = {"1", "true", "yes", "on"}
-    stateless_http = os.environ.get("MCP_HUB_STATELESS_HTTP", "false").lower() in truthy
-    json_response = os.environ.get("MCP_HUB_JSON_RESPONSE", "false").lower() in truthy
+def build_mcp_app() -> Any:
+    """0-arg factory for ``uvicorn ragent.mcp_hub.server:build_mcp_app --factory``."""
+    yaml_path = str_env("MCP_HUB_TOOLS_YAML", "tools.yaml")
+    name = str_env("MCP_HUB_NAME", "ragent-mcp-hub")
+    path = str_env("MCP_HUB_PATH", "/mcp")
+    stateless_http = bool_env("MCP_HUB_STATELESS_HTTP", False)
+    json_response = bool_env("MCP_HUB_JSON_RESPONSE", False)
 
     bundle = build_hub(yaml_path, name=name)
+    return build_app(bundle, path=path, json_response=json_response, stateless_http=stateless_http)
+
+
+def main() -> None:
+    host = str_env("MCP_HUB_HOST", "0.0.0.0")
+    port = int_env("MCP_HUB_PORT", 9000)
+    log_level = str_env("LOG_LEVEL", "INFO").lower()
+    # String factory form so each worker process calls build_mcp_app() independently,
+    # avoiding shared httpx clients across fork boundaries.
     uvicorn.run(
-        build_app(
-            bundle,
-            path=path,
-            json_response=json_response,
-            stateless_http=stateless_http,
-        ),
+        "ragent.mcp_hub.server:build_mcp_app",
+        factory=True,
         host=host,
         port=port,
+        log_level=log_level,
     )
 
 

@@ -27,7 +27,16 @@ spec:
           # digest/tag (e.g. via `kustomize edit set image` or `yq`) before
           # apply. Never deploy `:latest` to a long-lived cluster.
           image: ragent:REPLACE_WITH_RELEASE_TAG
-          command: ["python", "-m", "ragent.api"]
+          command:
+            - /app/.venv/bin/uvicorn
+            - "ragent.bootstrap.app:create_app"
+            - "--factory"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--log-level"
+            - "info"
           ports:
             - name: http
               containerPort: 8000

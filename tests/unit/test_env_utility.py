@@ -42,7 +42,7 @@ def test_int_env_exits_on_garbage(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_bool_env_truthy_strings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("B", raising=False)
     assert bool_env("B", default=True) is True
-    for v in ("1", "true", "yes", "TRUE", "Yes"):
+    for v in ("1", "true", "yes", "on", "TRUE", "Yes", "ON"):
         monkeypatch.setenv("B", v)
         assert bool_env("B", default=False) is True
     monkeypatch.setenv("B", "no")
