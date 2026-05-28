@@ -10,13 +10,13 @@ Environment variables:
     MCP_HUB_JSON_RESPONSE   Return JSON responses instead of SSE (default: false).
 
 Run:
-    uv run python -m ragent.mcp_hub.server
+    uvicorn ragent.mcp_hub.server:build_mcp_app --factory --host 0.0.0.0 --port 9000
+    (legacy: uv run python -m ragent.mcp_hub.server)
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -122,7 +122,9 @@ def build_mcp_app() -> Any:
 def main() -> None:
     host = str_env("MCP_HUB_HOST", "0.0.0.0")
     port = int_env("MCP_HUB_PORT", 9000)
-    uvicorn.run(build_mcp_app(), host=host, port=port)
+    # String factory form so each worker process calls build_mcp_app() independently,
+    # avoiding shared httpx clients across fork boundaries.
+    uvicorn.run("ragent.mcp_hub.server:build_mcp_app", factory=True, host=host, port=port)
 
 
 if __name__ == "__main__":
