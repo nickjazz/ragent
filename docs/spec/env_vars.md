@@ -20,8 +20,8 @@
 | `OIDC_VERIFY_SSL`                     | `true`           | Verify the IdP's TLS certificate during OIDC discovery + JWKS fetch. Set `false` ONLY for dev/staging against self-signed Keycloak. For production with a private CA, leave `true` and mount the CA via `SSL_CERT_FILE` instead. |
 | `RAGENT_PERMISSION_INGEST_ENABLED`    | `false`          | **P2 only.** When `true`, `GET/DELETE /ingest/v1/{id}` and `GET /ingest/v1` enforce `PermissionClient` (§3.5). Default off — gate is wired but inert until OpenFGA tuples exist. |
 | `RAGENT_PERMISSION_CHAT_ENABLED`      | `false`          | **P2 only.** When `true`, chat retrieval applies the `PermissionClient` post-filter (§3.5). Default off. |
-| `RAGENT_HOST`                         | `127.0.0.1`      | API bind address. Guard (§1) refuses any value other than `127.0.0.1` in Mode A (open auth — no auth surface, must bind loopback). Modes B/C tolerate any bind. |
-| `RAGENT_PORT`                         | `8000`           | API bind port. |
+| `RAGENT_HOST`                         | `127.0.0.1`      | API bind address. Guard (§1) refuses any value other than `127.0.0.1` in Mode A (open auth — no auth surface, must bind loopback). Modes B/C tolerate any bind. Consumed by the legacy `python -m ragent.api` shim; primary startup `uvicorn ragent.bootstrap.app:create_app --factory` passes `--host` directly. |
+| `RAGENT_PORT`                         | `8000`           | API bind port. Consumed by the legacy `python -m ragent.api` shim; primary startup passes `--port` to uvicorn directly. |
 | `LOG_LEVEL`                           | `INFO`           | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR`. Applies to app + TaskIQ + Reconciler. |
 | `CORS_ALLOW_ORIGINS`                  | *(unset)*        | Comma-separated list of allowed CORS origins (e.g. `https://app.example.com,https://admin.example.com`). When unset or empty, no `CORSMiddleware` is added and all cross-origin requests are denied. |
 
