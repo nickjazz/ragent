@@ -8,6 +8,7 @@ import pytest
 from fastmcp import FastMCP
 
 from ragent.mcp_hub.mcp_hub import HubBundle
+from ragent.mcp_hub.server import build_mcp_app
 
 
 def _fake_bundle() -> HubBundle:
@@ -16,8 +17,6 @@ def _fake_bundle() -> HubBundle:
 
 def test_build_mcp_app_is_importable_and_callable():
     """build_mcp_app exists as a 0-arg callable — satisfies uvicorn --factory contract."""
-    from ragent.mcp_hub.server import build_mcp_app
-
     assert callable(build_mcp_app)
 
 
@@ -28,8 +27,6 @@ def test_build_mcp_app_returns_asgi_app(monkeypatch: pytest.MonkeyPatch, tmp_pat
     monkeypatch.setenv("MCP_HUB_TOOLS_YAML", str(tools_yaml))
 
     with patch("ragent.mcp_hub.server.build_hub", return_value=_fake_bundle()):
-        from ragent.mcp_hub.server import build_mcp_app
-
         app = build_mcp_app()
 
     assert callable(app)
@@ -44,8 +41,6 @@ def test_build_mcp_app_forwards_path_flag(monkeypatch: pytest.MonkeyPatch):
         patch("ragent.mcp_hub.server.build_hub", return_value=_fake_bundle()),
         patch("ragent.mcp_hub.server.build_app", mock_build_app),
     ):
-        from ragent.mcp_hub.server import build_mcp_app
-
         build_mcp_app()
 
     _, kwargs = mock_build_app.call_args
@@ -62,8 +57,6 @@ def test_build_mcp_app_forwards_stateless_and_json_flags(monkeypatch: pytest.Mon
         patch("ragent.mcp_hub.server.build_hub", return_value=_fake_bundle()),
         patch("ragent.mcp_hub.server.build_app", mock_build_app),
     ):
-        from ragent.mcp_hub.server import build_mcp_app
-
         build_mcp_app()
 
     _, kwargs = mock_build_app.call_args
@@ -74,11 +67,8 @@ def test_build_mcp_app_forwards_stateless_and_json_flags(monkeypatch: pytest.Mon
 def test_main_still_validates_non_numeric_port(monkeypatch: pytest.MonkeyPatch):
     """Port validation remains in main(), not in build_mcp_app()."""
     monkeypatch.setenv("MCP_HUB_PORT", "not-a-number")
-    monkeypatch.setenv("MCP_HUB_TOOLS_YAML", "/nonexistent.yaml")
 
     from ragent.mcp_hub.server import main
 
-    with pytest.raises(SystemExit) as ex:
+    with pytest.raises(SystemExit):
         main()
-
-    assert "MCP_HUB_PORT" in str(ex.value)

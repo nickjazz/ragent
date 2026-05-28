@@ -6,14 +6,14 @@ Primary path: ``uvicorn ragent.bootstrap.app:create_app --factory``
 
 from __future__ import annotations
 
-import os
-
 import uvicorn
 
+from ragent.utility.env import int_env, str_env
+
 if __name__ == "__main__":  # pragma: no cover
-    host = os.environ.get("RAGENT_HOST", "127.0.0.1")
-    port = int(os.environ.get("RAGENT_PORT", "8000"))
-    log_level = os.environ.get("LOG_LEVEL", "INFO").lower()
+    host = str_env("RAGENT_HOST", "127.0.0.1")
+    port = int_env("RAGENT_PORT", 8000)
+    log_level = str_env("LOG_LEVEL", "INFO").lower()
 
     uvicorn.run(
         "ragent.bootstrap.app:create_app",
