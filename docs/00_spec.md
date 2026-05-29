@@ -111,7 +111,7 @@ class ExtractorPlugin(Protocol):
 
 **P1 plugins:** `VectorExtractor` (required, ES bulk), `StubGraphExtractor` (optional, no-op). See §4.4.
 
-**Plugin construction (B17):** the Protocol freezes the **interface** (`extract`, `delete`, `health` plus three attributes) but plugins are **dependency-injected** via their constructor. `VectorExtractor.__init__(repo: DocumentRepository, chunks: dict[str, list[Chunk]], embedder: EmbeddingClient, es: _ES, index: str)` — in v2, composition passes `chunks={}` so `extract()` is effectively a no-op stub (real embedding and ES write done by `DocumentEmbedder` in the Haystack pipeline, §3.2). `ChunkRepository` was dropped in C6. Plugins MUST NOT import `pipelines/` or HTTP layers; they accept their dependencies as constructor args, the registry simply holds the constructed instances.
+**Plugin construction (B17):** the Protocol freezes the **interface** (`extract`, `delete`, `health` plus three attributes) but plugins are **dependency-injected** via their constructor. `VectorExtractor.__init__(repo: DocumentRepository, chunks: dict[str, list[Chunk]], embedder: EmbeddingClient, es: ElasticsearchClient, index: str)` — in v2, composition passes `chunks={}` so `extract()` is effectively a no-op stub (real embedding and ES write done by `DocumentEmbedder` in the Haystack pipeline, §3.2). `ChunkRepository` was dropped in C6. Plugins MUST NOT import `pipelines/` or HTTP layers; they accept their dependencies as constructor args, the registry simply holds the constructed instances.
 
 **Registry:**
 - `register()` raises `DuplicatePluginError` on name conflict.
