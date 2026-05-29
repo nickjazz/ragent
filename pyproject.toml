@@ -34,6 +34,9 @@ dependencies = [
     "pyyaml>=6.0",
     "joserfc>=1.6.4",
     "rapidocr-onnxruntime>=1.4.4",
+    # opencv-python-headless replaces opencv-python (pulled by rapidocr) so that
+    # libGL / libX11 are not required in slim containers.
+    "opencv-python-headless>=4.5.1.48",
     # onnxruntime 1.24+ dropped Python 3.10 wheels; pin upper bound for py310
     "onnxruntime<1.24.0; python_version == '3.10'",
 ]
