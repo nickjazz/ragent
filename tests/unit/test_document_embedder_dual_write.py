@@ -157,6 +157,65 @@ def test_bulk_action_uses_doc_id_as_es_id() -> None:
     assert all(a["index"]["_id"] == doc.id for a in actions)
 
 
+def test_bulk_body_contains_chunk_id_matching_doc_id() -> None:
+    """chunk_id field must be present in ES _source body and equal doc.id.
+
+    _FeedbackRetriever reads chunk_id from _source (retrieve.py); if missing
+    it silently gets None and feedback scoring breaks.
+    """
+    from ragent.pipelines.ingest import DocumentEmbedder
+
+    stable = _model("bge-m3", 1024)
+    es = _es()
+    doc = Document(content="hello")
+
+    embedder = DocumentEmbedder(
+        registry=_registry(stable, stable_index="chunks_v1"),
+        embed_callable=lambda m, texts: [[0.1] * m.dim for _ in texts],
+        es_client=es,
+    )
+    embedder.run([doc])
+
+    ops = es.bulk.call_args.kwargs["operations"]
+    bodies = [ops[i] for i in range(1, len(ops), 2)]
+    assert all(b.get("chunk_id") == doc.id for b in bodies)
+
+
+def test_retry_bulk_body_contains_chunk_id() -> None:
+    """Retry path must also include chunk_id — same contract as the primary write."""
+    from ragent.pipelines.ingest import DocumentEmbedder
+
+    stable = _model("bge-m3", 1024)
+    doc = Document(content="hello")
+    call_count = 0
+
+    def bulk_side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Simulate a partial failure on first call
+            return {
+                "errors": True,
+                "items": [{"index": {"_id": doc.id, "status": 429, "error": "too_many"}}],
+            }
+        return {"errors": False, "items": []}
+
+    es = MagicMock()
+    es.bulk.side_effect = bulk_side_effect
+
+    embedder = DocumentEmbedder(
+        registry=_registry(stable, stable_index="chunks_v1"),
+        embed_callable=lambda m, texts: [[0.1] * m.dim for _ in texts],
+        es_client=es,
+    )
+    embedder.run([doc])
+
+    assert es.bulk.call_count == 2
+    retry_ops = es.bulk.call_args_list[1].kwargs["operations"]
+    retry_bodies = [retry_ops[i] for i in range(1, len(retry_ops), 2)]
+    assert all(b.get("chunk_id") == doc.id for b in retry_bodies)
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------

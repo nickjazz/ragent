@@ -734,7 +734,8 @@ class DocumentEmbedder:
             for doc, vec in zip(documents, vectors, strict=True):
                 ops.append({"index": {"_id": doc.id}})
                 # meta is written first so that "embedding" and "content" always win.
-                body: dict = {**(doc.meta or {}), "embedding": vec}
+                # chunk_id mirrors _id so _FeedbackRetriever can read it from _source.
+                body: dict = {**(doc.meta or {}), "chunk_id": doc.id, "embedding": vec}
                 if doc.content is not None:
                     body["content"] = doc.content
                 ops.append(body)
@@ -775,7 +776,7 @@ class DocumentEmbedder:
         retry_ops: list[dict] = []
         for doc, vec in retry_op_docs:
             retry_ops.append({"index": {"_id": doc.id}})
-            body: dict = {**(doc.meta or {}), "embedding": vec}
+            body: dict = {**(doc.meta or {}), "chunk_id": doc.id, "embedding": vec}
             if doc.content is not None:
                 body["content"] = doc.content
             retry_ops.append(body)
