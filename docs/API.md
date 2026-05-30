@@ -4,7 +4,8 @@ Interactive docs (auto-generated from OpenAPI schema):
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-**Startup:** `uvicorn ragent.bootstrap.app:create_app --factory --host ${RAGENT_HOST:-0.0.0.0} --port ${RAGENT_PORT:-8000}`
+**Startup:** `uvicorn ragent.bootstrap.app:create_app --factory --host ${RAGENT_HOST:-0.0.0.0} --port ${RAGENT_PORT:-8000}`  
+**Mode A open-auth** (`RAGENT_AUTH_DISABLED=true`) **requires `RAGENT_HOST=127.0.0.1` set in the environment** — the startup guard reads the env var, not the CLI bind flag; leaving `RAGENT_HOST` unset lets the guard pass (it defaults to `127.0.0.1`) while the process binds `0.0.0.0`.
 
 Swagger UI Authorize button tracks the runtime auth mode (P1 default: `UserIdHeader`/`X-User-Id`; P2 JWT mode: `JWT`/`X-Auth-Token`). Public paths (exact match): `/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs`, `/docs/oauth2-redirect`, `/redoc`, `/openapi.json`. All non-2xx responses use RFC 9457 problem+json. `X-User-Id` is recorded for audit in P1.
 
@@ -478,8 +479,8 @@ Full design: [`docs/team/2026_05_15_embedding_model_lifecycle.md`](team/2026_05_
 
 | Endpoint | Purpose | Success | Failure |
 |---|---|---|---|
-| `POST /embedding/v1/promote` `{name,dim,api_url,model_arg}` | PUT ES mapping + enable dual-write | 200 `{state:"CANDIDATE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 422 `EMBEDDING_INVALID_CONFIG/FIELD_NAME_COLLISION` |
-| `POST /embedding/v1/cutover` `{force?}` | Switch reads to candidate | 200 `{state:"CUTOVER"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE/CUTOVER_PREFLIGHT_FAILED` |
+| `POST /embedding/v1/promote` `{name,dim,api_url,model_arg}` | PUT ES mapping + enable dual-write | 200 `{state:"CANDIDATE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 422 `EMBEDDING_INVALID_CONFIG` or `EMBEDDING_FIELD_NAME_COLLISION` |
+| `POST /embedding/v1/cutover` `{force?}` | Switch reads to candidate | 200 `{state:"CUTOVER"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` or `EMBEDDING_CUTOVER_PREFLIGHT_FAILED` |
 | `POST /embedding/v1/rollback` | Revert reads to stable | 200 `{state:"CANDIDATE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
 | `POST /embedding/v1/commit` | Promote candidate; retire old field | 200 `{state:"IDLE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
 | `POST /embedding/v1/abort` | Drop candidate | 200 `{state:"IDLE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
