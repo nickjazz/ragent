@@ -6,7 +6,7 @@ Interactive docs (auto-generated from OpenAPI schema):
 
 **Startup:** `uvicorn ragent.bootstrap.app:create_app --factory --host ${RAGENT_HOST:-0.0.0.0} --port ${RAGENT_PORT:-8000}`
 
-Swagger UI Authorize button tracks the runtime auth mode (P1 default: `UserIdHeader`/`X-User-Id`; P2 JWT mode: `JWT`/`X-Auth-Token`). Public paths (`/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs*`, `/redoc`, `/openapi.json`) need no auth. All non-2xx responses use RFC 9457 problem+json. `X-User-Id` is recorded for audit in P1.
+Swagger UI Authorize button tracks the runtime auth mode (P1 default: `UserIdHeader`/`X-User-Id`; P2 JWT mode: `JWT`/`X-Auth-Token`). Public paths (exact match): `/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs`, `/docs/oauth2-redirect`, `/redoc`, `/openapi.json`. All non-2xx responses use RFC 9457 problem+json. `X-User-Id` is recorded for audit in P1.
 
 ## Ingest
 

@@ -146,7 +146,7 @@ Implement the minimum handler. Template for a new route on an existing router:
 @router.<method>("<relative-path>", status_code=<N>, response_model=<ResponseModel>)
 async def <handler>(
     body: <RequestModel>,
-    user_id: Annotated[str, Depends(get_user_id)],  # ← NEVER Header(alias="X-User-Id")
+    user_id: Annotated[str | None, Depends(get_user_id)],  # ← NEVER Header(alias="X-User-Id")
 ) -> <ResponseModel> | Response:
     try:
         result = await svc.<operation>(...)
