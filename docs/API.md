@@ -5,11 +5,8 @@ Interactive docs (auto-generated from OpenAPI schema):
 - ReDoc: http://localhost:8000/redoc
 
 **Startup:** `uvicorn ragent.bootstrap.app:create_app --factory --host ${RAGENT_HOST:-0.0.0.0} --port ${RAGENT_PORT:-8000}`
-(legacy: `python -m ragent.api` — delegates to the same factory; Mode A open-auth requires `RAGENT_HOST=127.0.0.1`)
 
-The Swagger UI **Authorize** button drives every protected endpoint. The published security scheme tracks the runtime auth mode (T8.D1): in trust-header mode (P1 default / dev) the scheme is `UserIdHeader` pointing at `X-User-Id`; in JWT mode (P2 prod, `RAGENT_AUTH_DISABLED=false` + `RAGENT_TRUST_X_USER_ID_HEADER=false`) the scheme is `JWT` pointing at `X-Auth-Token` (or whatever `RAGENT_JWT_HEADER` overrides it to). Public paths (`/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs`, `/docs/oauth2-redirect`, `/redoc`, `/openapi.json`) carry no security requirement.
-
-All endpoints return RFC 9457 problem+json on errors. `X-User-Id` header is recorded for audit in Phase 1.
+Swagger UI Authorize button tracks the runtime auth mode (P1 default: `UserIdHeader`/`X-User-Id`; P2 JWT mode: `JWT`/`X-Auth-Token`). Public paths (`/livez`, `/readyz`, `/startupz`, `/metrics`, `/docs*`, `/redoc`, `/openapi.json`) need no auth. All non-2xx responses use RFC 9457 problem+json. `X-User-Id` is recorded for audit in P1.
 
 ## Ingest
 
@@ -238,10 +235,6 @@ Request schema is shared by both endpoints. Only `messages` is required.
 }
 ```
 
-`source_app` and `source_meta` are optional retrieval filters (AND when both supplied; omit to retrieve across all documents).
-
-`top_k` (default `RETRIEVAL_TOP_K`, default 20, range 1–200) caps the number of chunks passed to the LLM context. `min_score` (default `RETRIEVAL_MIN_SCORE`, default `null`) is a post-retrieval score floor; chunks below this threshold are dropped before building LLM context. Both fields use the same semantics as `/retrieve/v1`.
-
 ### `POST /chat/v1` — Non-streaming chat
 
 **Request fields** (all optional except `messages`):
@@ -317,9 +310,7 @@ curl -X POST http://localhost:8000/chat/v1 \
 }
 ```
 
-> `request_id` + `feedback_token` are emitted **only when `CHAT_FEEDBACK_ENABLED=true` AND `X-User-Id` is present**. Clients echo both back to `POST /feedback/v1` to record like / dislike feedback (see the Feedback section above). Both fields are absent otherwise.
-
-> `content` is always a string. If the upstream LLM returns a null or missing content field (e.g., due to a safety filter), `content` is an empty string `""`.
+> `request_id` + `feedback_token` emitted only when `CHAT_FEEDBACK_ENABLED=true` AND `X-User-Id` present; absent otherwise. `content` is always a string (`""` on safety-filtered LLM response).
 
 ### `POST /chat/v1/stream` — Streaming chat (SSE)
 
@@ -338,7 +329,7 @@ data: {"type": "delta", "content": " the documents..."}
 data: {"type": "done", "content": "Based on the documents...", "model": "gptoss-120b", "provider": "openai", "sources": [...], "request_id": "01J9...", "feedback_token": "<base64url>.<hmac_hex>"}
 ```
 
-> The `done` event carries the same `request_id` + `feedback_token` fields as the non-streaming response (conditional on `CHAT_FEEDBACK_ENABLED` + `X-User-Id`). Note: the `done` event body omits `usage` — token counts are captured in server-side observability logs (`chat.llm` event) but not returned to callers in P1.
+> `done` carries same `request_id` + `feedback_token` as non-streaming (conditional on `CHAT_FEEDBACK_ENABLED` + `X-User-Id`). `usage` is omitted from `done` — captured in server-side logs.
 
 Error events:
 - `{"type": "error", "error_code": "LLM_STREAM_INTERRUPTED", "message": "..."}` — stream closed before `[DONE]` sentinel (partial content may have been sent).
@@ -351,9 +342,7 @@ Error events:
 
 ### `POST /retrieve/v1` — Retrieve chunks without LLM
 
-Runs the full retrieval pipeline (embed → kNN + BM25 → RRF join → source hydration) and returns ranked chunks directly, without invoking the LLM. Useful for debugging retrieval quality or building custom UIs.
-
-By default returns **all ranked chunks** — a single document can appear multiple times if several of its chunks scored highly. Set `"dedupe": true` to keep only the best-scoring chunk per `document_id`.
+Full retrieval pipeline (embed → kNN + BM25 → RRF join → source hydration) without LLM. Returns all ranked chunks by default (a document may appear multiple times). Set `"dedupe": true` to keep only the best-scoring chunk per `document_id`.
 
 ```bash
 curl -X POST http://localhost:8000/retrieve/v1 \
@@ -370,23 +359,11 @@ curl -X POST http://localhost:8000/retrieve/v1 \
 ```
 
 ```json
-// 200 OK — dedupe=false (default): same document_id can repeat
-{
-  "chunks": [
-    {
-      "document_id": "01J9AAA",
-      "source_app": "confluence",
-      "source_id": "DOC-123",
-      "source_meta": "engineering",
-      "type": "knowledge",
-      "source_title": "Q3 OKR Planning",
-      "source_url": "https://wiki.example/q3-okr",
-      "mime_type": "text/markdown",
-      "excerpt": "Key results for Q3 include...",
-      "score": 0.87
-    }
-  ]
-}
+// 200 OK (chunks[] — same document_id can repeat when dedupe=false)
+{"chunks": [{"document_id":"01J9AAA","source_app":"confluence","source_id":"DOC-123",
+  "source_meta":"engineering","type":"knowledge","source_title":"Q3 OKR Planning",
+  "source_url":"https://wiki.example/q3-okr","mime_type":"text/markdown",
+  "excerpt":"Key results for Q3 include...","score":0.87}]}
 ```
 
 **Request fields:**
@@ -400,9 +377,7 @@ curl -X POST http://localhost:8000/retrieve/v1 \
 | `min_score` | `float` | No | — | Minimum retrieval score threshold; chunks below this are dropped |
 | `dedupe` | `bool` | No | `false` | When `true`, keeps only the highest-scored chunk per `document_id` |
 
-**How `excerpt` works:**
-
-Each chunk stored in ES is the raw text segment produced by the indexing pipeline's splitter. The `excerpt` field in the response is that chunk's text, truncated to `EXCERPT_MAX_CHARS` characters (default `512`, configurable via env var) by `_ExcerptTruncator` before it reaches the router. Truncation is a hard character cut — no semantic boundary is preserved. The same truncation applies to `sources[].excerpt` in `/chat/v1` and `/chat/v1/stream` responses.
+**`excerpt`:** chunk text truncated to `EXCERPT_MAX_CHARS` chars (default 512, hard cut). Same truncation applies to `sources[].excerpt` in chat responses.
 
 ---
 
@@ -410,7 +385,7 @@ Each chunk stored in ES is the raw text segment produced by the indexing pipelin
 
 ### `POST /feedback/v1` — Record a vote against a chat source (T-FB.6, B54/B55)
 
-Closes the feedback loop: the client echoes back the HMAC-signed token from a prior `/chat` response and reports a like / dislike (with optional reason) against one of the source documents shown. Default disabled (`CHAT_FEEDBACK_ENABLED=false`); when enabled, the feedback drives the `_FeedbackMemoryRetriever` (a 3rd RRF input) so future chats with semantically-similar queries surface liked sources.
+Client echoes the HMAC-signed token from a prior `/chat` response to record a like/dislike. Default disabled (`CHAT_FEEDBACK_ENABLED=false`); when enabled, drives the `_FeedbackMemoryRetriever` (3rd RRF input) to surface liked sources in future chats.
 
 **Headers:** `X-User-Id` required.
 
@@ -434,13 +409,10 @@ Closes the feedback loop: the client echoes back the HMAC-signed token from a pr
 }
 ```
 
-- `request_id`, `feedback_token`: from the prior `/chat/v1` response. Token TTL = 7 days. The body's `request_id` MUST equal the value signed into the token; mismatch is rejected (a single token cannot be replayed across `request_id`s).
-- `query_text`, `shown_sources`: re-supplied; HMAC binds `sha256(json([[source_app, source_id], …]))` so the server detects tampering. Document identity is the `(source_app, source_id)` pair.
-- Voted `(source_app, source_id)` ∈ `shown_sources` (server-enforced).
-- `vote` ∈ {+1, -1}.
-- `reason` (optional): closed enum (B56) — `irrelevant | hallucinated | outdated | incomplete | wrong_citation | other`.
-- `position_shown` (optional): 0-based rank in the original `sources[]` (collected for future IPS; ignored in P1).
-- If `X-User-Id` is sent it MUST equal the `user_id` signed into the token; mismatch is rejected (cross-user token reuse).
+- `request_id`, `feedback_token`: from prior `/chat/v1` response; TTL 7 days. Body `request_id` MUST match signed value; `X-User-Id` MUST match signed `user_id`. HMAC binds `sha256(json([[source_app, source_id], …]))`.
+- Voted `(source_app, source_id)` MUST be in `shown_sources`. `vote ∈ {+1, -1}`.
+- `reason` (optional): `irrelevant | hallucinated | outdated | incomplete | wrong_citation | other`.
+- `position_shown` (optional): 0-based rank; ignored in P1.
 
 **Response:** `204 No Content`.
 
@@ -453,7 +425,7 @@ Closes the feedback loop: the client echoes back the HMAC-signed token from a pr
 | 422 | `FEEDBACK_SOURCE_INVALID` | Voted `(source_app, source_id)` pair not in `shown_sources`. |
 | 422 | `FEEDBACK_VALIDATION` | Schema violations: `vote ∉ {±1}`, reason outside enum, missing field. Body includes `errors[]` array with per-field `{field, message}` entries. |
 
-**Dual-write semantics:** MariaDB `feedback` (truth) → ES `feedback_v1` (serving view). ES leg failure logs `event=feedback.es_write_failed` + increments `ragent_feedback_es_write_failed_total`; request still returns 204.
+**Dual-write:** MariaDB `feedback` (SoT) → ES `feedback_v1`. ES failure logs `feedback.es_write_failed` + increments `ragent_feedback_es_write_failed_total`; response still 204.
 
 ```bash
 curl -X POST http://localhost:8000/feedback/v1 \
@@ -495,47 +467,24 @@ curl http://localhost:8000/metrics
 
 ## MCP (Phase 2)
 
-`POST /mcp/v1` — Model Context Protocol server speaking JSON-RPC 2.0
-(spec `2024-11-05`). Exposes the corpus as a single tool `retrieve` so
-external MCP-aware agents (Claude Desktop, Cursor, in-house agents) can
-invoke the retrieval pipeline through the MCP standard.
-
-Supported methods (full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md)):
-
-| Method | Direction | Purpose |
-|---|---|---|
-| `initialize` | client → server | Capability negotiation. |
-| `notifications/initialized` | client → server (notification) | Client signals init complete; server returns 204. |
-| `tools/list` | client → server | Returns the single `retrieve` tool with `inputSchema` and `annotations: {readOnlyHint: true}` (MCP 2025-03-26+; older clients ignore). |
-| `tools/call` | client → server | Invokes the tool. Result `content[0].text` is JSON-stringified `{chunks:[...]}`. |
-| `ping` | bidirectional | Returns `{}`. |
-
-Errors surface as JSON-RPC error envelopes with `data.error_code` mapping
-to the standard catalog (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`,
-`MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`,
-`MCP_TOOL_EXECUTION_FAILED`). Transport-layer failures (e.g. auth 401)
-still come through as `application/problem+json`, not as JSON-RPC errors.
+`POST /mcp/v1` — JSON-RPC 2.0 MCP server (spec `2024-11-05`) exposing the `retrieve` tool.  
+Full protocol: [`docs/spec/mcp_server.md`](spec/mcp_server.md). Methods: `initialize`, `notifications/initialized` (204), `tools/list`, `tools/call` (result `content[0].text` = JSON `{chunks:[]}`), `ping`.  
+Errors: JSON-RPC envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures (401) use `application/problem+json`.
 
 ## Embedding Model Lifecycle (admin)
 
-`POST /embedding/v1/{promote,cutover,rollback,commit,abort}` plus
-`GET /embedding/v1/state` and `GET /embedding/v1/cutover/preflight`
-drive a zero-downtime embedding-model swap (B50). Full design:
-`docs/team/2026_05_15_embedding_model_lifecycle.md`. State machine:
-`IDLE → promote → CANDIDATE → cutover → CUTOVER → {commit|rollback}`;
-`CANDIDATE → abort → IDLE`.
+Zero-downtime model swap (B50). State: `IDLE → promote → CANDIDATE → cutover → CUTOVER → {commit|rollback}`; `CANDIDATE → abort → IDLE`.  
+Full design: [`docs/team/2026_05_15_embedding_model_lifecycle.md`](team/2026_05_15_embedding_model_lifecycle.md).
 
-| Endpoint | Purpose | Success status | Failure → problem+json |
+| Endpoint | Purpose | Success | Failure |
 |---|---|---|---|
-| `POST /embedding/v1/promote` body `{name,dim,api_url,model_arg}` | Open migration; PUT ES mapping + enable dual-write | 200 with `{state:"CANDIDATE", candidate, promoted_at}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 422 `EMBEDDING_INVALID_CONFIG`; 422 `EMBEDDING_FIELD_NAME_COLLISION` |
-| `POST /embedding/v1/cutover` body `{force?: bool}` | Switch reads to candidate (subject to preflight) | 200 with `{state:"CUTOVER", read, cutover_at, preflight}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 409 `EMBEDDING_CUTOVER_PREFLIGHT_FAILED` (body carries `preflight` report) |
-| `POST /embedding/v1/rollback` | Revert reads to stable; dual-write stays open | 200 with `{state:"CANDIDATE", read:"stable", rolled_back_at}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
-| `POST /embedding/v1/commit` | Promote candidate to stable; retire old field | 200 with `{state:"IDLE", stable, committed_at}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
-| `POST /embedding/v1/abort` | Drop candidate (must rollback first if in CUTOVER) | 200 with `{state:"IDLE", aborted, aborted_at}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
-| `POST /embedding/v1/backfill` | Enqueue backfill task to embed missing chunks into candidate_index | 200 with `{state, queued, stable_index, candidate_index}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 503 when broker not wired |
-| `GET /embedding/v1/state` | Snapshot of stable / candidate / read / retired | 200 with snapshot dict | 503 `EMBEDDING_REGISTRY_NOT_READY` when first refresh has not completed |
-| `GET /embedding/v1/cutover/preflight` | Run hard/soft gates without taking action | 200 with `{pass, gates}` | — |
+| `POST /embedding/v1/promote` `{name,dim,api_url,model_arg}` | PUT ES mapping + enable dual-write | 200 `{state:"CANDIDATE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 422 `EMBEDDING_INVALID_CONFIG/FIELD_NAME_COLLISION` |
+| `POST /embedding/v1/cutover` `{force?}` | Switch reads to candidate | 200 `{state:"CUTOVER"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE/CUTOVER_PREFLIGHT_FAILED` |
+| `POST /embedding/v1/rollback` | Revert reads to stable | 200 `{state:"CANDIDATE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
+| `POST /embedding/v1/commit` | Promote candidate; retire old field | 200 `{state:"IDLE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
+| `POST /embedding/v1/abort` | Drop candidate | 200 `{state:"IDLE"}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE` |
+| `POST /embedding/v1/backfill` | Enqueue backfill task | 200 `{state,queued}` | 409 `EMBEDDING_LIFECYCLE_INVALID_STATE`; 503 |
+| `GET /embedding/v1/state` | Registry snapshot | 200 snapshot | 503 `EMBEDDING_REGISTRY_NOT_READY` |
+| `GET /embedding/v1/cutover/preflight` | Run gates without action | 200 `{pass,gates}` | — |
 
-Cutover hard gates: `state_is_candidate`, `field_dim_matches`,
-`candidate_coverage` (≥ 99%), `dual_write_warmup` (≥ 2 × cache TTL).
-See design doc §6 for full semantics.
+Cutover hard gates: `state_is_candidate`, `field_dim_matches`, `candidate_coverage` (≥ 99%), `dual_write_warmup` (≥ 2 × cache TTL). See design doc §6.

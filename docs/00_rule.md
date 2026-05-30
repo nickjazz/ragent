@@ -145,6 +145,11 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
   - **Rationale**: `--env-file` loaders resolve a blank assignment (e.g. `VAR=` in `.env.example`) as `""`, not as a missing key; `if raw is None:` silently parses the blank as the typed value and crashes at boot with `ValueError`.
   - **Verification**: every `optional_*_env` utility must have a regression test asserting it returns `None` when the var is set to `""`.
 
+- **Rule**: `bool_env()` (and any central boolean env parser) MUST accept all four standard truthy sentinels: `"1"`, `"true"`, `"yes"`, `"on"`.
+  - **Rationale**: Operators use `on` in Apache configs and many runbooks; a utility that silently omits it falls through to the `False` default, creating invisible config drift when replacing inline truthy sets.
+  - **Migration**: when replacing an inline truthy set with the central utility, diff the old set against `bool_env`'s accepted set — any value present in the old set but absent in the utility is a regression.
+  - **Verification**: `tests/unit/test_env_utility.py::test_bool_env_truthy_strings` must have a row for each of the four sentinels. (SRE journal 2026-05-28)
+
 ---
 
 ### Logging: Identity Yes, Content No

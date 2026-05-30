@@ -146,7 +146,7 @@ Implement the minimum handler. Template for a new route on an existing router:
 @router.<method>("<relative-path>", status_code=<N>, response_model=<ResponseModel>)
 async def <handler>(
     body: <RequestModel>,
-    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user_id: Annotated[str, Depends(get_user_id)],  # ← NEVER Header(alias="X-User-Id")
 ) -> <ResponseModel> | Response:
     try:
         result = await svc.<operation>(...)
@@ -154,6 +154,11 @@ async def <handler>(
         return problem(<status>, HttpErrorCode.<CODE>, "<message>")
     return <ResponseModel>(...)
 ```
+
+> **Anti-pattern banned by `docs/00_rule.md` and `docs/00_domain_map.md §R3`:**  
+> `x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None` — never use this.  
+> Routers MUST obtain `user_id` via `Depends(get_user_id)` from `ragent.auth.deps`.  
+> The gate `tests/unit/test_no_auth_header_in_routes.py` fails CI if `Header(alias="X-User-Id")` appears in any router handler.
 
 For a **brand-new resource** also:
 
@@ -235,5 +240,6 @@ endpoints (any path under `/<resource>/v<N>`) must NOT be in this list.
 - [ ] `tests/unit/test_api_versioning.py` still passes after wiring
 - [ ] For v2: old version still mounted; deprecation timeline in spec; decommission task in plan
 - [ ] Infra bypass: only added to `_PUBLIC_PATHS` if genuinely infra (not a business endpoint)
+- [ ] `user_id` obtained via `Depends(get_user_id)`, NEVER `Header(alias="X-User-Id")` (gate: `test_no_auth_header_in_routes.py`)
 - [ ] `make check` green (format + lint + full test suite)
 - [ ] `[BEHAVIORAL]` commit; no structural changes mixed in
