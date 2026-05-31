@@ -1,4 +1,4 @@
-"""Composable streaming primitives for building chat handlers.
+"""Composable streaming primitives for building twp-ai run handlers.
 
 Core primitive: Turn
     Wraps one LLM stream. You yield from it (gets SSE to the FE),
@@ -22,7 +22,7 @@ from typing import Any
 
 from .callers.protocol import ToolDef
 from .events import TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent, to_sse
-from .schemas import ChatContext, ChatRequest
+from .schemas import RunAgentInput
 
 
 def new_id() -> str:
@@ -63,21 +63,17 @@ class Turn:
             yield to_sse(TextMessageEndEvent(message_id=msg_id))
 
 
-def build_messages(request: ChatRequest, system_prompt: str) -> list[dict]:
+def build_messages(request: RunAgentInput, system_prompt: str) -> list[dict]:
     return [
         {"role": "system", "content": system_prompt},
         *[{"role": m.role, "content": m.content} for m in request.messages],
     ]
 
 
-def build_tool_defs(context: ChatContext) -> list[ToolDef]:
+def build_tool_defs(request: RunAgentInput) -> list[ToolDef]:
     return [
-        ToolDef(
-            name=name,
-            description=f"Fill the '{name}' form with data extracted from the user's request.",
-            schema=context.tool_inputs[name].schema_ if name in context.tool_inputs else {},
-        )
-        for name in context.tools
+        ToolDef(name=tool.name, description=tool.description, schema=tool.parameters)
+        for tool in request.tools
     ]
 
 

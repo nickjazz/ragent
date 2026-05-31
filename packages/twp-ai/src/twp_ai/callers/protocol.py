@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 @dataclass
 class ToolDef:
-    """Provider-agnostic tool definition built from context.tool_inputs.
+    """Provider-agnostic tool definition built from twp-ai input tools.
 
     Each caller is responsible for converting this into its provider's
     native function/tool format (OpenAI, Anthropic, etc.).

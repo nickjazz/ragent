@@ -213,6 +213,78 @@ Request: `{request_id, feedback_token, query_text, shown_sources, source_app, so
 - Errors: `401 FEEDBACK_TOKEN_INVALID` · `410 FEEDBACK_TOKEN_EXPIRED` · `422 FEEDBACK_SOURCE_INVALID`/`FEEDBACK_VALIDATION`.
 - `_FeedbackMemoryRetriever` (3rd retriever, kNN on `feedback_v1`, Wilson+decay+min-votes) active only when `CHAT_FEEDBACK_ENABLED=true`.
 
+### 3.4.6 `packages/twp-ai` Adapter
+
+`packages/twp-ai` is the Agent-User Interaction adapter used by frontend
+applications that need page-aware runs plus client-provided tools. Its wire
+contract follows twp-ai protocol shapes while implementing the event types needed
+by the current tool-call flow.
+
+**Run input:** the endpoint accepts twp-ai run input. Required fields are
+`threadId`, `runId`, `state`, `messages`, `tools`, `context`, and
+`forwardedProps`; `parentRunId` and `model` are optional.
+
+```json
+{
+  "threadId": "thread_1",
+  "runId": "run_1",
+  "parentRunId": null,
+  "state": {
+    "page": {
+      "title": "Edit product"
+    }
+  },
+  "messages": [
+    {
+      "id": "msg_user_1",
+      "role": "user",
+      "content": "Fill the description"
+    }
+  ],
+  "tools": [
+    {
+      "name": "fill_form",
+      "description": "Use only when the user asks to fill or update form fields.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "context": [
+    {
+      "description": "Current page",
+      "value": "{\"title\":\"Edit product\",\"fields\":[\"description\"]}"
+    }
+  ],
+  "forwardedProps": {
+    "source": "form-page"
+  },
+  "model": "gptoss-120b"
+}
+```
+
+`context` carries twp-ai contextual items. Tool availability belongs in the
+top-level `tools` array.
+
+**Stream events:** the direct runtime emits twp-ai camelCase SSE payloads
+for `RUN_STARTED`, `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`,
+`TEXT_MESSAGE_END`, `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`,
+`TOOL_CALL_RESULT`, `RUN_FINISHED`, and `RUN_ERROR`. The first direct runtime
+turn lets the LLM decide whether to call a tool (`tool_choice=auto` in the
+OpenAI-compatible caller). Tool arguments may be emitted as a single complete
+`TOOL_CALL_ARGS` delta when the underlying provider adapter only exposes
+accumulated tool-call arguments.
+
+**Tool result boundary:** the current direct runtime synthesizes a successful
+tool result (`{"status":"ok"}`) to preserve the existing two-turn confirmation
+flow. A later resume-capable slice will accept frontend tool results explicitly
+and translate them into the provider-specific tool-result message/state format.
+
 ---
 
 ### 3.5 Authentication & Permission

@@ -215,9 +215,19 @@
 | T-CH2.I2 | Red+Green | • **Achieve:** `temperature=null` + GREETING intent: LLM called with `_INTENT_TEMPERATURE["GREETING"]`.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_auto_temperature_greeting`. | [x] | Dev |
 | T-CH2.I3 | Red+Green | • **Achieve:** `context_mode="force"` + GREETING intent: retrieval runs, sources populated.<br>• **Deliver:** `tests/integration/test_chat_endpoint.py::test_force_mode_retrieval_runs`. | [x] | Dev |
 
+## Track T-twp-ai — twp-ai Protocol Alignment
+
+> Source: 2026-05-30 design session. Align `packages/twp-ai` with twp-ai protocol
+> run input and event lifecycle while keeping the direct LLM runtime minimal.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-twp-ai.1 | Red+Green | • **Achieve:** Accept twp-ai required run input fields and top-level client-provided tool definitions.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/schemas.py` + `packages/twp-ai/tests/test_twp_protocol.py::test_run_agent_input_accepts_twp_ai_tool_shape`. | [x] | Dev |
+| T-twp-ai.2 | Red+Green | • **Achieve:** Emit twp-ai tool lifecycle events for direct LLM tool calls.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/events.py`, `packages/twp-ai/src/twp_ai/agents/direct.py`, and `packages/twp-ai/tests/test_twp_protocol.py::test_direct_agent_emits_twp_ai_tool_lifecycle_events`. | [x] | Dev |
+| T-twp-ai.3 | Red+Green | • **Achieve:** Preserve the current two-turn direct LLM confirmation by translating the tool result back into provider-compatible messages.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/_compose.py` + `packages/twp-ai/tests/test_twp_protocol.py::test_direct_agent_sends_tool_result_to_second_llm_turn`. | [x] | Dev |
+
 ### Post-merge fix — PR #130 review (2026-05-27)
 
 | # | Category | Fix |
 |---|----------|-----|
 | PR130.F1 | Defensive | `result.get("content") or ""` in sync handler — guard against null/missing LLM content field (KeyError on safety-filtered responses). Gemini review comment. |
-

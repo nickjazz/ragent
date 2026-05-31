@@ -7,10 +7,10 @@ If you use a framework like LangGraph or CrewAI, write your own Agent
 instead — those frameworks manage the loop internally, so you only need
 to convert their output events to twp-ai events.
 
-Flow for the form-fill scenario:
+Flow for a client-side tool scenario:
     RUN_STARTED
     Turn 1: LLM talks and/or calls tools
-    CUSTOM("fill_form", {schema, data})   ← FE fills form
+    TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END
     Turn 2: LLM confirms                  ← only if tools were called
     RUN_FINISHED
 
@@ -25,8 +25,17 @@ from collections.abc import Generator
 
 from .._compose import Turn, build_messages, build_tool_defs, inject_tool_results, new_id
 from ..callers.protocol import LLMCaller
-from ..events import CustomEvent, RunErrorEvent, RunFinishedEvent, RunStartedEvent, to_sse
-from ..schemas import ChatRequest
+from ..events import (
+    RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    ToolCallArgsEvent,
+    ToolCallEndEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+    to_sse,
+)
+from ..schemas import RunAgentInput
 
 
 class DirectLLMAgent:
@@ -39,30 +48,40 @@ class DirectLLMAgent:
     def __init__(self, caller: LLMCaller) -> None:
         self._caller = caller
 
-    def run(self, request: ChatRequest, model: str) -> Generator[str, None, None]:
-        run_id = new_id()
-        yield to_sse(RunStartedEvent(run_id=run_id))
+    def run(self, request: RunAgentInput, model: str) -> Generator[str, None, None]:
+        run_id = request.run_id
+        yield to_sse(
+            RunStartedEvent(
+                run_id=run_id,
+                thread_id=request.thread_id,
+                parent_run_id=request.parent_run_id,
+            )
+        )
 
         try:
-            tool_defs = build_tool_defs(request.context)
+            tool_defs = build_tool_defs(request)
             messages = build_messages(request, _system_prompt(request))
 
             # Turn 1 — LLM talks and/or calls tools
             turn1 = Turn(self._caller.stream_events(messages, tool_defs, model))
             yield from turn1
 
-            # CUSTOM event per tool call → FE fills form
+            # twp-ai tool lifecycle. The current direct runtime receives
+            # accumulated tool calls, so args are emitted as one complete delta.
             for tc in turn1.tool_calls:
-                schema = (
-                    request.context.tool_inputs[tc["name"]].schema_
-                    if tc["name"] in request.context.tool_inputs
-                    else {}
+                yield to_sse(
+                    ToolCallStartEvent(tool_call_id=tc["id"], tool_call_name=tc["name"])
                 )
-                try:
-                    data = json.loads(tc["arguments"]) if tc["arguments"] else {}
-                except json.JSONDecodeError:
-                    data = {}
-                yield to_sse(CustomEvent(name=tc["name"], value={"schema": schema, "data": data}))
+                if tc["arguments"]:
+                    yield to_sse(ToolCallArgsEvent(tool_call_id=tc["id"], delta=tc["arguments"]))
+                yield to_sse(ToolCallEndEvent(tool_call_id=tc["id"]))
+                yield to_sse(
+                    ToolCallResultEvent(
+                        message_id=new_id(),
+                        tool_call_id=tc["id"],
+                        content=json.dumps({"status": "ok"}),
+                    )
+                )
 
             # Turn 2 — LLM confirms (only if tools were called)
             if turn1.tool_calls:
@@ -70,30 +89,45 @@ class DirectLLMAgent:
                 turn2 = Turn(self._caller.stream_events(messages, [], model))
                 yield from turn2
 
-            yield to_sse(RunFinishedEvent(run_id=run_id))
+            yield to_sse(RunFinishedEvent(run_id=run_id, thread_id=request.thread_id))
 
         except Exception as exc:
-            yield to_sse(RunErrorEvent(message=str(exc), code=type(exc).__name__))
+            yield to_sse(
+                RunErrorEvent(
+                    message=str(exc),
+                    code=type(exc).__name__,
+                    run_id=run_id,
+                    thread_id=request.thread_id,
+                )
+            )
 
 
-def _system_prompt(request: ChatRequest) -> str:
-    ctx = request.context
+def _system_prompt(request: RunAgentInput) -> str:
     lines = ["You are a helpful assistant that helps users complete tasks and fill forms.", ""]
 
-    if ctx.tools:
+    if request.tools:
         lines.append("Available tools:")
-        for name in ctx.tools:
-            lines.append(f"  - {name}: extract relevant data and call this tool.")
+        for tool in request.tools:
+            lines.append(f"  - {tool.name}: {tool.description}")
         lines.append("")
         lines.append(
-            "When the user asks to fill something, call the matching tool "
-            "with the extracted data, then confirm what was filled."
+            "Only call a tool when the user explicitly asks to change, fill, update, "
+            "submit, clear, or otherwise modify the current application state. "
+            "If the user asks about the page or asks an unrelated question, answer in text."
         )
     else:
         lines.append("Answer the user helpfully.")
 
-    if ctx.app_meta:
+    if request.context:
         lines.append("")
-        lines.append(f"App context: {json.dumps(ctx.app_meta, ensure_ascii=False)}")
+        context_json = json.dumps(
+            [item.model_dump(by_alias=True) for item in request.context],
+            ensure_ascii=False,
+        )
+        lines.append(f"Context: {context_json}")
+
+    if request.state is not None:
+        lines.append("")
+        lines.append(f"State: {json.dumps(request.state, ensure_ascii=False)}")
 
     return "\n".join(lines)

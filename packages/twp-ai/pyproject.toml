@@ -1,7 +1,7 @@
 [project]
 name = "twp-ai"
 version = "0.1.0"
-description = "TWP AI — AG-UI style event streaming adapter"
+description = "twp-ai — twp-ai event streaming adapter"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
