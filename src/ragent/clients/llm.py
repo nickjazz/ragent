@@ -237,7 +237,6 @@ class LLMClient:
 
             choice = choices[0]
             delta = choice.get("delta") or {}
-            finish_reason = choice.get("finish_reason")
 
             content = delta.get("content")
             if content:
@@ -256,13 +255,11 @@ class LLMClient:
                 if func.get("arguments"):
                     tool_calls_acc[idx]["arguments"] += func["arguments"]
 
-            if finish_reason in ("stop", "tool_calls", "length"):
-                for _, tc_data in sorted(tool_calls_acc.items()):
-                    yield ("tool_call", tc_data)
-                break
-
         if not seen_done and any_content:
             raise LLMStreamInterruptedError("LLM stream closed before [DONE]")
+
+        for _, tc_data in sorted(tool_calls_acc.items()):
+            yield ("tool_call", tc_data)
 
     def chat(
         self,

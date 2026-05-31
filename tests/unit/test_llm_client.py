@@ -45,6 +45,20 @@ def _mock_streaming_http(deltas, usage=None):
     return http
 
 
+def _mock_streaming_http_lines(lines: list[str]):
+    http = MagicMock()
+
+    class _FakeStream:
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            yield from lines
+
+    http.post.return_value = _FakeStream()
+    return http
+
+
 def test_stream_yields_deltas():
     http = _mock_streaming_http(["Hello", " world"])
     client = LLMClient(api_url="https://llm.example.com", http=http, get_token=lambda: "tok")
@@ -202,3 +216,50 @@ def test_stream_usage_out_none_does_not_break():
     http = _mock_streaming_http(["hi"], usage={"prompt_tokens": 1, "completion_tokens": 1})
     client = LLMClient(api_url="https://llm.example.com", http=http, get_token=lambda: "tok")
     assert list(client.stream(messages=[{"role": "user", "content": "q"}], model="m")) == ["hi"]
+
+
+def test_stream_with_tools_reads_done_after_tool_finish_reason():
+    """Tool-call finish_reason is not the stream terminator; [DONE] still must be read."""
+    lines = [
+        'data: {"choices":[{"delta":{"content":"I can do that."},"finish_reason":null}]}',
+        (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {
+                                            "name": "fill_form",
+                                            "arguments": '{"title":"Task"}',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            )
+        ),
+        "data: [DONE]",
+    ]
+    http = _mock_streaming_http_lines(lines)
+    client = LLMClient(api_url="https://llm.example.com", http=http, get_token=lambda: "tok")
+
+    result = list(
+        client.stream_with_tools(
+            messages=[{"role": "user", "content": "fill task"}],
+            tools=[{"type": "function", "function": {"name": "fill_form"}}],
+            model="m",
+        )
+    )
+
+    assert result == [
+        ("text", "I can do that."),
+        ("tool_call", {"id": "call_1", "name": "fill_form", "arguments": '{"title":"Task"}'}),
+    ]
