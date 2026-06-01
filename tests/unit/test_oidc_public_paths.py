@@ -51,9 +51,7 @@ def auth_on_client(oidc_token_manager) -> TestClient:
     from ragent.bootstrap.auth_mode import AuthMode
 
     app = FastAPI()
-    _x_user_id_middleware(
-        app, auth_mode=AuthMode.jwt_header, token_manager=oidc_token_manager
-    )
+    _x_user_id_middleware(app, auth_mode=AuthMode.jwt_header, token_manager=oidc_token_manager)
 
     @app.get("/livez")
     def _livez() -> dict:
@@ -91,9 +89,7 @@ def test_protected_path_still_requires_auth_when_enabled(oidc_token_manager) -> 
     from ragent.bootstrap.auth_mode import AuthMode
 
     app = FastAPI()
-    _x_user_id_middleware(
-        app, auth_mode=AuthMode.jwt_header, token_manager=oidc_token_manager
-    )
+    _x_user_id_middleware(app, auth_mode=AuthMode.jwt_header, token_manager=oidc_token_manager)
 
     @app.get("/protected")
     def _protected(x_user_id: str | None = Header(default=None, alias="X-User-Id")) -> dict:

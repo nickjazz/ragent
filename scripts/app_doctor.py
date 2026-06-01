@@ -507,6 +507,7 @@ def check_oidc() -> None:
     _section("OIDC (JWT verification)")
 
     from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
+    from ragent.utility.env import bool_env
 
     try:
         auth_mode = parse_auth_mode()

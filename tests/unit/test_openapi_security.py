@@ -94,9 +94,9 @@ def test_public_operation_has_no_security() -> None:
 
 
 def test_custom_jwt_header_propagates_to_scheme_name() -> None:
-    schemes = _install(auth_mode=AuthMode.jwt_header, jwt_header="X-Custom-Auth")[
-        "components"
-    ]["securitySchemes"]
+    schemes = _install(auth_mode=AuthMode.jwt_header, jwt_header="X-Custom-Auth")["components"][
+        "securitySchemes"
+    ]
     assert schemes["JWT"]["name"] == "X-Custom-Auth"
 
 

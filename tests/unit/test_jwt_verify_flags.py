@@ -6,7 +6,6 @@ import time
 
 import pytest
 
-
 # ---------------------------------------------------------------- guard enforcement
 
 
@@ -76,9 +75,7 @@ def test_token_manager_stores_verify_flags(oidc_token_manager_factory) -> None:
 # ---------------------------------------------------------------- verify_jwt: skip aud
 
 
-def test_verify_jwt_skip_aud_accepts_wrong_audience(
-    oidc_token_manager_factory, make_token
-) -> None:
+def test_verify_jwt_skip_aud_accepts_wrong_audience(oidc_token_manager_factory, make_token) -> None:
     tm = oidc_token_manager_factory(verify_aud=False)
     token = make_token(preferred_username="alice", aud="wrong-audience")
 
@@ -88,9 +85,7 @@ def test_verify_jwt_skip_aud_accepts_wrong_audience(
     assert user_id == "alice"
 
 
-def test_verify_jwt_with_aud_rejects_wrong_audience(
-    oidc_token_manager_factory, make_token
-) -> None:
+def test_verify_jwt_with_aud_rejects_wrong_audience(oidc_token_manager_factory, make_token) -> None:
     tm = oidc_token_manager_factory(verify_aud=True)
     token = make_token(preferred_username="alice", aud="wrong-audience")
 
@@ -103,9 +98,7 @@ def test_verify_jwt_with_aud_rejects_wrong_audience(
 # ---------------------------------------------------------------- verify_jwt: skip exp
 
 
-def test_verify_jwt_skip_exp_accepts_expired_token(
-    oidc_token_manager_factory, make_token
-) -> None:
+def test_verify_jwt_skip_exp_accepts_expired_token(oidc_token_manager_factory, make_token) -> None:
     tm = oidc_token_manager_factory(verify_exp=False)
     token = make_token(preferred_username="alice", exp=int(time.time()) - 3600)
 
@@ -115,9 +108,7 @@ def test_verify_jwt_skip_exp_accepts_expired_token(
     assert user_id == "alice"
 
 
-def test_verify_jwt_with_exp_rejects_expired_token(
-    oidc_token_manager_factory, make_token
-) -> None:
+def test_verify_jwt_with_exp_rejects_expired_token(oidc_token_manager_factory, make_token) -> None:
     tm = oidc_token_manager_factory(verify_exp=True)
     token = make_token(preferred_username="alice", exp=int(time.time()) - 1)
 
