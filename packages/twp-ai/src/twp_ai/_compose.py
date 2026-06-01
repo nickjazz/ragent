@@ -9,20 +9,19 @@ Core primitive: Turn
     for tc in turn.tool_calls:   # now you know what was called
         ...
 
-Helpers: build_messages, build_tool_defs, inject_tool_results
+Helpers: build_messages, build_tool_defs
     Shared plumbing used by every handler.
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from collections.abc import Generator
 from typing import Any
 
 from .callers.protocol import ToolDef
 from .events import TextMessageContentEvent, TextMessageEndEvent, TextMessageStartEvent, to_sse
-from .schemas import RunAgentInput
+from .schemas import Message, RunAgentInput, ToolCall
 
 
 def new_id() -> str:
@@ -66,7 +65,7 @@ class Turn:
 def build_messages(request: RunAgentInput, system_prompt: str) -> list[dict]:
     return [
         {"role": "system", "content": system_prompt},
-        *[{"role": m.role, "content": m.content} for m in request.messages],
+        *[_message_to_provider_dict(message) for message in request.messages],
     ]
 
 
@@ -77,30 +76,29 @@ def build_tool_defs(request: RunAgentInput) -> list[ToolDef]:
     ]
 
 
-def inject_tool_results(messages: list[dict], tool_calls: list[dict]) -> None:
-    """Append assistant tool-call turn + synthetic results into messages in-place.
+def _message_to_provider_dict(message: Message) -> dict:
+    result = {"role": message.role, "content": message.content}
 
-    Tells the LLM "these tools were called and succeeded" so it can continue.
-    """
-    messages.append(
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                }
-                for tc in tool_calls
-            ],
-        }
-    )
-    for tc in tool_calls:
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": json.dumps({"status": "ok"}),
-            }
-        )
+    if message.name is not None:
+        result["name"] = message.name
+
+    if message.role == "assistant" and message.tool_calls:
+        result["tool_calls"] = [
+            _tool_call_to_provider_dict(tool_call) for tool_call in message.tool_calls
+        ]
+
+    if message.role == "tool" and message.tool_call_id:
+        result["tool_call_id"] = message.tool_call_id
+
+    return result
+
+
+def _tool_call_to_provider_dict(tool_call: ToolCall) -> dict:
+    return {
+        "id": tool_call.id,
+        "type": tool_call.type,
+        "function": {
+            "name": tool_call.function.name,
+            "arguments": tool_call.function.arguments,
+        },
+    }

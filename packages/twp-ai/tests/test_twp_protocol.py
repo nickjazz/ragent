@@ -3,7 +3,6 @@ from collections.abc import Generator
 from typing import Any
 
 from fastapi.testclient import TestClient
-
 from twp_ai.agents.direct import DirectLLMAgent
 from twp_ai.app import create_app
 from twp_ai.schemas import RunAgentInput
@@ -20,6 +19,10 @@ class FakeCaller:
         model: str,
     ) -> Generator[tuple[str, Any], None, None]:
         self.calls.append((messages.copy(), tools, model))
+        last_message = messages[-1]
+        if last_message.get("role") == "tool":
+            yield ("text", "Filled the description.")
+            return
         if len(self.calls) == 1:
             yield (
                 "tool_call",
@@ -30,7 +33,6 @@ class FakeCaller:
                 },
             )
             return
-        yield ("text", "Filled the description.")
 
 
 def _events(lines: list[str]) -> list[dict]:
@@ -89,10 +91,6 @@ def test_direct_agent_emits_twp_ai_tool_lifecycle_events() -> None:
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
-        "TOOL_CALL_RESULT",
-        "TEXT_MESSAGE_START",
-        "TEXT_MESSAGE_CONTENT",
-        "TEXT_MESSAGE_END",
         "RUN_FINISHED",
     ]
     assert events[0]["threadId"] == "thread_1"
@@ -100,26 +98,67 @@ def test_direct_agent_emits_twp_ai_tool_lifecycle_events() -> None:
     assert events[1]["toolCallId"] == "call_1"
     assert events[1]["toolCallName"] == "fill_form"
     assert events[2]["delta"] == '{"description":"Better copy"}'
-    assert events[4]["toolCallId"] == "call_1"
-    assert events[4]["role"] == "tool"
-    assert json.loads(events[4]["content"]) == {"status": "ok"}
-    assert events[5]["messageId"] == events[6]["messageId"] == events[7]["messageId"]
+    assert len(caller.calls) == 1
 
 
-def test_direct_agent_sends_tool_result_to_second_llm_turn() -> None:
+def test_direct_agent_preserves_client_tool_result_history() -> None:
     caller = FakeCaller()
-    request = RunAgentInput.model_validate(_run_input())
+    body = _run_input()
+    body["messages"] = [
+        *body["messages"],
+        {
+            "id": "assistant_tool_1",
+            "role": "assistant",
+            "content": None,
+            "toolCalls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "fill_form",
+                        "arguments": '{"description":"Better copy"}',
+                    },
+                }
+            ],
+        },
+        {
+            "id": "tool_result_1",
+            "role": "tool",
+            "toolCallId": "call_1",
+            "content": '{"ok":true}',
+        },
+    ]
+    request = RunAgentInput.model_validate(body)
 
-    list(DirectLLMAgent(caller).run(request, "model-a"))
+    events = _events(list(DirectLLMAgent(caller).run(request, "model-a")))
 
-    second_turn_messages = caller.calls[1][0]
-    assert second_turn_messages[-2]["role"] == "assistant"
-    assert second_turn_messages[-2]["tool_calls"][0]["id"] == "call_1"
-    assert second_turn_messages[-1] == {
-        "role": "tool",
-        "tool_call_id": "call_1",
-        "content": '{"status": "ok"}',
+    provider_messages = caller.calls[0][0]
+    assert provider_messages[-2] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "fill_form",
+                    "arguments": '{"description":"Better copy"}',
+                },
+            }
+        ],
     }
+    assert provider_messages[-1] == {
+        "role": "tool",
+        "content": '{"ok":true}',
+        "tool_call_id": "call_1",
+    }
+    assert [event["type"] for event in events] == [
+        "RUN_STARTED",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]
 
 
 def test_run_route_streams_agent_events() -> None:

@@ -11,8 +11,11 @@ Flow for a client-side tool scenario:
     RUN_STARTED
     Turn 1: LLM talks and/or calls tools
     TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END
-    Turn 2: LLM confirms                  ← only if tools were called
     RUN_FINISHED
+
+The frontend executes client-side tools and sends their real results back as
+`role="tool"` messages in a continuation run. This agent must not synthesize a
+tool result or run a confirmation turn before the frontend has acted.
 
 To support a different scenario with different flow, write a new Agent
 class rather than subclassing or modifying this one.
@@ -23,7 +26,7 @@ from __future__ import annotations
 import json
 from collections.abc import Generator
 
-from .._compose import Turn, build_messages, build_tool_defs, inject_tool_results, new_id
+from .._compose import Turn, build_messages, build_tool_defs
 from ..callers.protocol import LLMCaller
 from ..events import (
     RunErrorEvent,
@@ -31,7 +34,6 @@ from ..events import (
     RunStartedEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
-    ToolCallResultEvent,
     ToolCallStartEvent,
     to_sse,
 )
@@ -75,20 +77,6 @@ class DirectLLMAgent:
                 if tc["arguments"]:
                     yield to_sse(ToolCallArgsEvent(tool_call_id=tc["id"], delta=tc["arguments"]))
                 yield to_sse(ToolCallEndEvent(tool_call_id=tc["id"]))
-                yield to_sse(
-                    ToolCallResultEvent(
-                        message_id=new_id(),
-                        tool_call_id=tc["id"],
-                        content=json.dumps({"status": "ok"}),
-                    )
-                )
-
-            # Turn 2 — LLM confirms (only if tools were called)
-            if turn1.tool_calls:
-                inject_tool_results(messages, turn1.tool_calls)
-                turn2 = Turn(self._caller.stream_events(messages, [], model))
-                yield from turn2
-
             yield to_sse(RunFinishedEvent(run_id=run_id, thread_id=request.thread_id))
 
         except Exception as exc:
