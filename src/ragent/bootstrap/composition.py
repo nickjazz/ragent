@@ -324,6 +324,8 @@ def build_container() -> Container:
             audience=_require("OIDC_AUDIENCE"),
             use_https=_bool_env("OIDC_USE_HTTPS", True),
             verify_ssl=_bool_env("OIDC_VERIFY_SSL", True),
+            verify_aud=_bool_env("RAGENT_JWT_VERIFY_AUD", True),
+            verify_exp=_bool_env("RAGENT_JWT_VERIFY_EXP", True),
         )
 
     return Container(

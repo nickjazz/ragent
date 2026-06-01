@@ -6,6 +6,10 @@ Four supported auth modes (see auth_mode.py):
   user_header      — trust X-User-Id header, no JWT; dev only
   jwt_header       — OIDC JWT only; no env restriction
   jwt_prefer_header— JWT with X-User-Id fallback; dev only
+
+JWT verification flags (both default true; require RAGENT_ENV=dev when false):
+  RAGENT_JWT_VERIFY_AUD — enforce audience claim
+  RAGENT_JWT_VERIFY_EXP — enforce expiry claim
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import os
 import sys
 
 from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
+from ragent.utility.env import bool_env as _bool_env
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
@@ -35,6 +40,11 @@ def enforce() -> None:
             _exit(f"RAGENT_AUTH_MODE={mode!r} requires OIDC_DOMAIN")
         if not os.environ.get("OIDC_AUDIENCE"):
             _exit(f"RAGENT_AUTH_MODE={mode!r} requires OIDC_AUDIENCE")
+
+    if not _bool_env("RAGENT_JWT_VERIFY_AUD", True) and env != "dev":
+        _exit("RAGENT_JWT_VERIFY_AUD=false requires RAGENT_ENV=dev")
+    if not _bool_env("RAGENT_JWT_VERIFY_EXP", True) and env != "dev":
+        _exit("RAGENT_JWT_VERIFY_EXP=false requires RAGENT_ENV=dev")
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
     if log_level not in _VALID_LOG_LEVELS:
