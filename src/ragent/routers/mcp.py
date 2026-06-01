@@ -186,7 +186,7 @@ def _render_chunks(entries: list[dict]) -> str:
     """
     if not entries:
         return "Found 0 chunk(s)."
-    parts = [f"Found {len(entries)} chunk(s)."]
+    parts = [f"Found {len(entries)} chunk(s).\n"]
     for i, entry in enumerate(entries, start=1):
         score = entry.get("score")
         source_app = entry.get("source_app") or ""
@@ -202,7 +202,7 @@ def _render_chunks(entries: list[dict]) -> str:
         if title:
             header += f" | title={title}"
         excerpt = entry.get("excerpt") or ""
-        parts.append(f"\n{header}\n{excerpt}\n---")
+        parts.append(f"{header}\n{excerpt}\n---")
     return "\n".join(parts)
 
 
