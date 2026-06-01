@@ -145,6 +145,8 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
   - **Rationale**: `--env-file` loaders resolve a blank assignment (e.g. `VAR=` in `.env.example`) as `""`, not as a missing key; `if raw is None:` silently parses the blank as the typed value and crashes at boot with `ValueError`.
   - **Verification**: every `optional_*_env` utility must have a regression test asserting it returns `None` when the var is set to `""`.
 
+- **Rule**: `bool_env()` (and any boolean env-var parser) MUST accept all four standard truthy sentinels: `"1"`, `"true"`, `"yes"`, `"on"`. When replacing an inline truthy set with the central utility, diff the old set against the utility's accepted values and verify coverage. Add a test row for each sentinel in `test_env_utility.py::test_bool_env_truthy_strings`. (SRE journal 2026-05-28)
+
 ---
 
 ### Logging: Identity Yes, Content No

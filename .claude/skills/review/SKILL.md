@@ -35,6 +35,8 @@ RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh 
 
 ## full mode (default)
 
+> **MANDATORY — no exceptions:** ALWAYS perform ALL steps below even if the diff appears small, focused, or surgical. The phrase *"diff is small/focused/inline review sufficient"* is a process violation — see journal Process 2026-05-17 "Inline /simplify rationalization". The review process **is** the protection; bypassing it means bypassing the review.
+
 1. Run `git diff --cached` (or `git diff origin/<branch>..HEAD` if triggered from the pre-push gate for a high-risk commit) to get the diff.
 2. Read the relevant sections of `docs/00_plan.md` and `docs/00_spec.md` for the items being committed.
 3. Analyze the changes and provide a thorough review covering:

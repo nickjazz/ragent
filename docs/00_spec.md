@@ -193,11 +193,13 @@ retrieval ran but returned no hits; `[{…}]` when retrieval ran and found resul
 ```
 data: {"type":"delta","content":"<token>"}
 
-  … data: {"type":"done","content":"<full>","sources":[…]}
+  … data: {"type":"done","content":"<full>","model":"…","provider":"…","sources":[…]}
+  (+ "request_id":"…","feedback_token":"…" when CHAT_FEEDBACK_ENABLED AND X-User-Id)
 
 
 ```
 
+`done` event omits `usage` — token counts go to server-side `chat.llm` logs only.
 Mid-stream error (B6): `data: {"type":"error","error_code":"…","message":"…"}` then close. Pre-stream: normal RFC 9457.
 
 #### 3.4.4 `POST /retrieve/v1`
