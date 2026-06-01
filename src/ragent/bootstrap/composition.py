@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
 from ragent.utility.env import bool_env as _bool_env
 from ragent.utility.env import float_env as _float_env
 from ragent.utility.env import int_env as _int_env
@@ -310,14 +311,12 @@ def build_container() -> Container:
             timeout=_float_env("UNPROTECT_TIMEOUT_SECONDS", 30.0),
         )
 
-    # T8.5a — Build the joserfc-based JWKS verifier iff inbound JWT auth is on.
-    # OIDC discovery + JWKS are fetched HERE (boot-time) so a misconfigured
-    # OIDC_DOMAIN aborts startup rather than 500-ing the first request; JWKS
-    # is then cached for the manager's lifetime (§3.5 cache-reuse).
+    # T8.5a / T-AM.2 — Build the joserfc-based JWKS verifier iff inbound JWT
+    # auth is on. OIDC discovery + JWKS are fetched HERE (boot-time) so a
+    # misconfigured OIDC_DOMAIN aborts startup rather than 500-ing the first
+    # request; JWKS is then cached for the manager's lifetime (§3.5 cache-reuse).
     auth_token_manager: Any = None
-    if not _bool_env("RAGENT_AUTH_DISABLED", False) and not _bool_env(
-        "RAGENT_TRUST_X_USER_ID_HEADER", False
-    ):
+    if parse_auth_mode() in (AuthMode.jwt_header, AuthMode.jwt_prefer_header):
         from ragent.auth.jwt import build_token_manager
 
         auth_token_manager = build_token_manager(
