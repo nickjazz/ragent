@@ -116,6 +116,10 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
     - **Verification**: Every `_promote_or_demote` or equivalent method MUST have a unit test asserting that the demote UPDATE SQL contains the same status values as the election subquery. A test that only asserts the winner was promoted but not that all prior holders were demoted is insufficient.
     - **Example**: `_promote_or_demote` electing on `status IN ('PENDING', 'READY')` must also demote with `WHERE status IN ('PENDING', 'READY')` — not `WHERE status = 'READY'` which would miss a concurrent PENDING that later races to READY.
 
+- **Rule: SQL File Parsing — strip-then-split (`iter_statements`).**
+  - Bare `sql.split(";")` breaks when a `--` comment contains `;` (e.g. `"-- rows are seeded; future settings …"`), producing an invalid SQL fragment that crashes `alembic upgrade`. Any helper that loads `.sql` text MUST call `ragent.bootstrap.init_schema.iter_statements(sql)` (strips `--` comments per-line first, then splits). This pattern recurred 4 times; never reintroduce `split(";")` without strip-then-split.
+  - **Audit**: `grep -rn "\.split(\";\")\" migrations/ alembic/versions/` on every PR that adds or modifies a migration helper. Both locations must be checked — `migrations/` holds raw SQL files, `alembic/versions/` holds Python wrappers that may load SQL inline.
+
 ---
 
 ### ID Generation Strategy: UUIDv7 + Base32
@@ -301,6 +305,8 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 - **Rule: Vacuous assertions are banned for wire-shape fields.** `assert "key" in body[X]` passes even when the value at that key is malformed. Tests asserting a request body, ES DSL fragment, or wire payload contains key `X` MUST also assert the **exact value or shape at X** — use `==` against the expected dict, or schema-validate for large structures. Audit grep: `assert ".*" in .*\[.*\]` on a body/DSL target is a smell — promote to a value assertion. (Journal QA 2026-05-19 "Vacuous assertion")
 
 - **Rule: Verify the real object supports the same protocol as its mock.** `MagicMock` auto-generates `__enter__`/`__exit__` and any method; the real object may not. Before mocking, confirm the real class actually supports the used protocol. **httpx-specific:** `httpx.Response` is NOT a context manager (`httpx.Client.stream()` is). Using `with self._http.post(...) as resp:` raises `TypeError` in production while silently passing with any mock. Audit grep: `with self\._http\.post(` anywhere in `src/` is a bug — replace with `resp = self._http.post(...); resp.raise_for_status()`. (Journal QA 2026-05-23)
+
+- **Rule: Use `spec=` or `autospec=True` when mocking DI-injected collaborators.** Bare `MagicMock()` accepts any attribute and any call, so a unit test that passes `broker=MagicMock()` to a service will silently accept `broker.enqueue(...)` even when the real class (`AsyncBroker`) has no `.enqueue()` method — the bug only surfaces at runtime. Every mock of a class that has a defined interface MUST be created as `MagicMock(spec=RealClass)` or via `unittest.mock.create_autospec(RealClass)`. Recurred 3+ times across TaskIQ producer, chat retrieval stubs, and reconciler broker tests.
 
 ---
 
