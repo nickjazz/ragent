@@ -94,9 +94,12 @@ curl http://localhost:8000/ingest/v1/01J9ABCDEFGHJKMNPQRSTVWXYZ \
   "attempt": 1,
   "updated_at": "2026-05-05T10:00:00.000Z",
   "ingest_type": "inline",
+  "minio_site": null,
   "source_id": "DOC-123",
   "source_app": "confluence",
   "source_title": "Q3 OKR Planning",
+  "source_meta": "engineering",
+  "source_url": "https://wiki.example/q3-okr",
   "error_code": null,
   "error_reason": null
 }
