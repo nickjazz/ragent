@@ -5,19 +5,18 @@ from __future__ import annotations
 import base64
 import json
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ragent.errors.codes import HttpErrorCode
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_jwt(payload: dict) -> str:
     """Build a minimal unsigned JWT stub for testing payload decode."""
@@ -61,9 +60,7 @@ def _post_response(content: str = "Hello!") -> MagicMock:
     resp.raise_for_status.return_value = None
     resp.json.return_value = {
         "returnCode": 96200,
-        "returnData": {
-            "messages": [{"role": "assistant", "content": content, "message_id": "m1"}]
-        },
+        "returnData": {"messages": [{"role": "assistant", "content": content, "message_id": "m1"}]},
     }
     return resp
 
@@ -504,6 +501,16 @@ def test_session_list_upstream_error_gives_502():
     assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
 
 
+def test_session_list_connect_error_gives_502():
+    http_mock = MagicMock()
+    http_mock.get.side_effect = httpx.ConnectError("refused")
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v1/sessionList", headers={"X-User-Id": "alice"})
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
 # ===========================================================================
 # GET /chatagent/v1/session
 # ===========================================================================
@@ -567,6 +574,16 @@ def test_session_upstream_error_gives_502():
             side_effect=httpx.HTTPStatusError("err", request=MagicMock(), response=MagicMock())
         )
     )
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v1/session?session=s1", headers={"X-User-Id": "alice"})
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
+def test_session_connect_error_gives_502():
+    http_mock = MagicMock()
+    http_mock.get.side_effect = httpx.ConnectError("refused")
     app = _make_app(http_mock=http_mock)
     with TestClient(app) as client:
         r = client.get("/chatagent/v1/session?session=s1", headers={"X-User-Id": "alice"})

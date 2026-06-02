@@ -155,13 +155,15 @@ def create_chatagent_router(
                 return _upstream_error()
 
             logger.info("chatagent.request", user_id=user_id, http_status=200)
-            return JSONResponse({
-                "content": messages[0]["content"],
-                "usage": {"promptTokens": None, "completionTokens": None},
-                "model": body.model,
-                "provider": body.provider,
-                "sources": None,
-            })
+            return JSONResponse(
+                {
+                    "content": messages[0]["content"],
+                    "usage": {"promptTokens": None, "completionTokens": None},
+                    "model": body.model,
+                    "provider": body.provider,
+                    "sources": None,
+                }
+            )
 
     async def _proxy_get(url: str, params: dict[str, str], log_prefix: str) -> Response:
         try:
@@ -174,10 +176,10 @@ def create_chatagent_router(
             )
             resp.raise_for_status()
         except httpx.TimeoutException:
-            logger.warning(f"chatagent.{log_prefix}.timeout", http_status=504)
+            logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
             return _timeout_error()
         except (httpx.HTTPStatusError, httpx.RequestError):
-            logger.warning(f"chatagent.{log_prefix}.upstream_error", http_status=502)
+            logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
             return _upstream_error()
         return JSONResponse(resp.json())
 
