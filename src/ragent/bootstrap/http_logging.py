@@ -72,15 +72,22 @@ def _redact_headers(headers: httpx.Headers) -> dict[str, str]:
     return {k: ("***" if k.lower() in deny else v) for k, v in headers.items()}
 
 
-def _redact_auth_body(body: bytes) -> bytes:
+def _redact_auth_body(body: bytes, extra_keys: frozenset[str] = frozenset()) -> bytes:
     try:
         parsed = json.loads(body)
     except (ValueError, UnicodeDecodeError):
         return body
-    if isinstance(parsed, dict) and "key" in parsed:
-        parsed["key"] = "***"
-        return json.dumps(parsed).encode("utf-8")
-    return body
+    if not isinstance(parsed, dict):
+        return body
+    changed = False
+    # Redact top-level "key" (J1 auth token) and any caller-supplied keys at all levels.
+    redact = {"key"} | extra_keys
+    for obj in [parsed, *[v for v in parsed.values() if isinstance(v, dict)]]:
+        for field in redact:
+            if field in obj:
+                obj[field] = "***"
+                changed = True
+    return json.dumps(parsed).encode("utf-8") if changed else body
 
 
 def _emit(
@@ -91,13 +98,17 @@ def _emit(
     exception: BaseException | None,
     is_stream: bool,
     redact_auth_body: bool,
+    redact_body_keys: frozenset[str] = frozenset(),
 ) -> None:
     max_bytes = _max_bytes()
     try:
         raw_request = request.content
     except httpx.RequestNotRead:
         raw_request = b"<stream>"
-    request_body = _redact_auth_body(raw_request) if redact_auth_body else raw_request
+    if redact_auth_body or redact_body_keys:
+        request_body = _redact_auth_body(raw_request, redact_body_keys)
+    else:
+        request_body = raw_request
     req_text, req_trunc = _decode_and_truncate(request_body, max_bytes)
     fields: dict[str, Any] = {
         "client_name": client_name,
@@ -126,6 +137,7 @@ def install_error_logging(
     *,
     client_name: str,
     redact_auth_body: bool = False,
+    redact_body_keys: frozenset[str] = frozenset(),
 ) -> None:
     """Wrap `client.send` so HTTP errors emit `http.upstream_error` records."""
     if getattr(client, "__ragent_http_error_logging__", False):
@@ -144,6 +156,7 @@ def install_error_logging(
                 exception=exc,
                 is_stream=is_stream,
                 redact_auth_body=redact_auth_body,
+                redact_body_keys=redact_body_keys,
             )
             raise
         if response.status_code >= 400:
@@ -154,6 +167,7 @@ def install_error_logging(
                 exception=None,
                 is_stream=is_stream,
                 redact_auth_body=redact_auth_body,
+                redact_body_keys=redact_body_keys,
             )
         return response
 

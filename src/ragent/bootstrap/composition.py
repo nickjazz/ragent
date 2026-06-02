@@ -95,7 +95,7 @@ def build_container() -> Container:
 
     http = httpx.Client(timeout=60.0)
     auth_http = httpx.Client(timeout=10.0)  # dedicated client for token exchange (10 s per spec)
-    install_error_logging(http, client_name="upstream")
+    install_error_logging(http, client_name="upstream", redact_body_keys=frozenset({"userToken"}))
     install_error_logging(auth_http, client_name="auth", redact_auth_body=True)
 
     auth_url = _require("AI_API_AUTH_URL")

@@ -181,7 +181,7 @@ Content-Type: multipart/form-data; boundary=<httpx-generated>
   "metadata": {
     "apName": "<CHATAGENT_AP_NAME>",
     "session": "<session from request body, or generated UUIDv7-based ID>",
-    "user": "<sub claim from inbound JWT, fallback to user_id>",
+    "user": "<verified user_id from RAGENT_JWT_CLAIM_USER_ID claim or X-User-Id header>",
     "userToken": "<raw JWT from RAGENT_JWT_HEADER header, or empty string>"
   },
   "inputData": {

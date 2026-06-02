@@ -309,6 +309,48 @@ def test_configured_auth_header_name_is_redacted(monkeypatch: pytest.MonkeyPatch
     assert "live-j2-token" not in json.dumps(rec["headers"])
 
 
+def test_redact_body_keys_redacts_nested_field() -> None:
+    from ragent.bootstrap.http_logging import install_error_logging
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, content=b"err")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport, base_url="https://chatagent.test")
+    install_error_logging(
+        client,
+        client_name="chatagent",
+        redact_body_keys=frozenset({"userToken"}),
+    )
+    body = {"metadata": {"user": "alice", "userToken": "eyJhbGci.secret.sig"}, "stream": False}
+    with structlog.testing.capture_logs() as logs:
+        client.post("/chat", json=body)
+    rec = _find_error_log(logs)
+    assert rec is not None
+    payload = json.loads(rec["http_request_payload"])
+    assert payload["metadata"]["userToken"] == "***"
+    assert payload["metadata"]["user"] == "alice"
+    assert "secret" not in rec["http_request_payload"]
+
+
+def test_redact_body_keys_top_level_field() -> None:
+    from ragent.bootstrap.http_logging import install_error_logging
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, content=b"err")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport, base_url="https://upstream.test")
+    install_error_logging(client, client_name="test", redact_body_keys=frozenset({"secret"}))
+    with structlog.testing.capture_logs() as logs:
+        client.post("/ep", json={"secret": "my-password", "other": "ok"})
+    rec = _find_error_log(logs)
+    assert rec is not None
+    payload = json.loads(rec["http_request_payload"])
+    assert payload["secret"] == "***"
+    assert payload["other"] == "ok"
+
+
 def test_streaming_request_body_unread_uses_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

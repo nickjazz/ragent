@@ -361,7 +361,7 @@ Accepts the same request body as `/chat/v1` plus an optional `session` field. Fo
 |---|---|---|---|
 | `session` | string\|null | `null` | Session ID forwarded to the chatagent service. When absent, a new ID is generated per request. |
 
-`user` (`sub` claim from inbound JWT, fallback to `user_id`) and `userToken` (raw JWT) are injected server-side.
+`user` (resolved user ID from `RAGENT_JWT_CLAIM_USER_ID` claim or `X-User-Id` header) and `userToken` (raw JWT) are injected server-side.
 
 ```bash
 curl -X POST http://localhost:8000/chatagent/v1 \

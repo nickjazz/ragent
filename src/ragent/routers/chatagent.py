@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import math
 import time
 from typing import Annotated
@@ -24,23 +22,6 @@ from ragent.utility.id_gen import new_id
 logger = structlog.get_logger(__name__)
 
 _UPSTREAM_OK_CODE = 96200
-
-
-def _decode_sub(token: str) -> str | None:
-    """Decode the JWT payload (no signature re-check) and return the 'sub' claim.
-
-    The JWT was already verified by middleware — this only reads a claim we trust.
-    """
-    try:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-        padding = "=" * (-len(parts[1]) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
-        sub = payload.get("sub")
-        return sub if isinstance(sub, str) and sub else None
-    except Exception:
-        return None
 
 
 def _rate_limit_response(reset_at: float) -> Response:
@@ -105,10 +86,9 @@ def create_chatagent_router(
                 return blocked
 
             raw_token = request.headers.get(jwt_header.lower()) or ""
-            sub = _decode_sub(raw_token) or user_id
 
             last_user = next(
-                (m["content"] for m in reversed(body.messages) if m.get("role") == "user"),
+                (m.get("content", "") for m in reversed(body.messages) if m.get("role") == "user"),
                 "",
             )
             session_id = body.session or new_id()
@@ -117,7 +97,7 @@ def create_chatagent_router(
                 "metadata": {
                     "apName": chatagent_ap_name,
                     "session": session_id,
-                    "user": sub,
+                    "user": user_id,
                     "userToken": raw_token,
                 },
                 "inputData": {"message": last_user},

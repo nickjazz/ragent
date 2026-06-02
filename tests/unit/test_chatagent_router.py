@@ -126,7 +126,9 @@ def test_post_session_generated_when_absent():
     assert isinstance(session_val, str) and len(session_val) > 0
 
 
-def test_post_sub_extracted_from_jwt():
+def test_post_uses_user_id_not_jwt_sub():
+    # metadata.user must use the verified x_user_id so POST and GET session
+    # routes use the same identifier, regardless of the JWT sub value.
     http_mock = MagicMock()
     http_mock.post.return_value = _post_response()
     app = _make_app(http_mock=http_mock, jwt_header="X-Auth-Token")
@@ -138,10 +140,10 @@ def test_post_sub_extracted_from_jwt():
             headers={"X-User-Id": "alice", "X-Auth-Token": token},
         )
     payload = http_mock.post.call_args[1]["json"]
-    assert payload["metadata"]["user"] == "user-sub-123"
+    assert payload["metadata"]["user"] == "alice"
 
 
-def test_post_sub_falls_back_to_user_id():
+def test_post_user_id_used_when_no_jwt():
     http_mock = MagicMock()
     http_mock.post.return_value = _post_response()
     app = _make_app(http_mock=http_mock)
@@ -309,6 +311,21 @@ def test_post_absent_return_data_gives_502():
         )
     assert r.status_code == 502
     assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
+def test_post_user_message_without_content_key_sends_empty_string():
+    http_mock = MagicMock()
+    http_mock.post.return_value = _post_response()
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.post(
+            "/chatagent/v1",
+            json={"messages": [{"role": "user"}]},
+            headers={"X-User-Id": "alice"},
+        )
+    assert r.status_code == 200
+    payload = http_mock.post.call_args[1]["json"]
+    assert payload["inputData"]["message"] == ""
 
 
 def test_post_no_user_role_message_sends_empty_string():
