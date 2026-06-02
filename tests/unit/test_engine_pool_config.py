@@ -200,7 +200,10 @@ def test_reconciler_engine_pool_pre_ping_and_recycle(
     monkeypatch.setattr("ragent.bootstrap.broker.broker", fake_broker)
     monkeypatch.setattr(
         "ragent.bootstrap.composition.get_container",
-        lambda: MagicMock(registry=MagicMock()),
+        lambda: MagicMock(
+            registry=MagicMock(),
+            embedding_registry=MagicMock(refresh=AsyncMock()),
+        ),
     )
     monkeypatch.setattr(
         "ragent.bootstrap.init_schema.patch_aiomysql_ping",

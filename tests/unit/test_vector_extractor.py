@@ -216,3 +216,18 @@ def test_delete_registry_takes_precedence_over_index_kwarg() -> None:
     plugin.delete("doc3")
     assert len(es.delete_by_query_calls) == 1
     assert es.delete_by_query_calls[0]["index"] == "chunks_stable"
+
+
+def test_delete_indices_deduplicates_when_candidate_equals_stable() -> None:
+    """If candidate_index == stable_index, delete() must not issue duplicate calls."""
+    es = _FakeES()
+    plugin = VectorExtractor(
+        repo=_Repo(),
+        chunks={},
+        embedder=_FakeEmbedder(),
+        es=es,
+        registry=_RegistryStub(stable="chunks_v1", candidate="chunks_v1"),
+    )
+    plugin.delete("doc4")
+    assert len(es.delete_by_query_calls) == 1
+    assert es.delete_by_query_calls[0]["index"] == "chunks_v1"

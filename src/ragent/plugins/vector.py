@@ -92,10 +92,13 @@ class VectorExtractor:
 
     def _delete_indices(self) -> list[str]:
         if self._index_provider is None:
-            return [self._index]
-        indices = [self._index_provider.stable_index]
+            return [self._index] if self._index else []
+        indices = []
+        stable = self._index_provider.stable_index
+        if stable:
+            indices.append(stable)
         candidate = self._index_provider.candidate_index
-        if candidate is not None:
+        if candidate and candidate != stable:
             indices.append(candidate)
         return indices
 
