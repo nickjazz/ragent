@@ -49,9 +49,9 @@ class _FakeES:
             else:
                 self._indexed[a["_id"]] = a["_source"]["document_id"]
 
-    def delete_by_query(self, index: str, body: dict[str, Any]) -> None:
-        self.delete_by_query_calls.append({"index": index, "body": body})
-        doc_id = body["query"]["term"]["document_id"]
+    def delete_by_query(self, *, index: str, query: dict[str, Any], conflicts: str = "proceed") -> None:
+        self.delete_by_query_calls.append({"index": index, "query": query, "conflicts": conflicts})
+        doc_id = query["term"]["document_id"]
         for k in [k for k, v in self._indexed.items() if v == doc_id]:
             del self._indexed[k]
 
@@ -138,7 +138,8 @@ def test_delete_uses_delete_by_query_with_chunks_empty() -> None:
     assert len(es.delete_by_query_calls) == 1
     call = es.delete_by_query_calls[0]
     assert call["index"] == "chunks_v1"
-    assert call["body"] == {"query": {"term": {"document_id": "d1"}}}
+    assert call["query"] == {"term": {"document_id": "d1"}}
+    assert call["conflicts"] == "proceed"
 
 
 def test_delete_uses_delete_by_query_index_override() -> None:

@@ -21,7 +21,7 @@ class _Embedder(Protocol):
 
 class _ES(Protocol):
     def bulk(self, actions: list[dict[str, Any]]) -> None: ...
-    def delete_by_query(self, index: str, body: dict[str, Any]) -> None: ...
+    def delete_by_query(self, *, index: str, query: dict[str, Any], conflicts: str = "proceed") -> None: ...
 
 
 class VectorExtractor:
@@ -74,7 +74,8 @@ class VectorExtractor:
     def delete(self, document_id: str) -> None:
         self._es.delete_by_query(
             index=self._index,
-            body={"query": {"term": {"document_id": document_id}}},
+            query={"term": {"document_id": document_id}},
+            conflicts="proceed",
         )
 
     def health(self) -> bool:
