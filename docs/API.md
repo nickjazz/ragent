@@ -383,7 +383,7 @@ curl -X POST http://localhost:8000/chatagent/v1 \
 
 **Errors:**
 - `429 CHATAGENT_RATE_LIMITED` — rate limit exceeded.
-- `502 CHATAGENT_UPSTREAM_ERROR` — external service returned non-96200 `returnCode`, empty messages, or HTTP error.
+- `502 CHATAGENT_UPSTREAM_ERROR` — external service returned non-96200 `returnCode`, empty messages, HTTP error, or non-JSON body.
 - `504 CHATAGENT_TIMEOUT` — external service did not respond within `CHATAGENT_TIMEOUT_SECONDS`.
 
 ### `GET /chatagent/v1/sessionList` — List chat sessions

@@ -371,6 +371,40 @@ def test_post_connect_error_gives_502():
     assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
 
 
+def test_post_malformed_json_gives_502():
+    http_mock = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.side_effect = ValueError("not json")
+    http_mock.post.return_value = mock_resp
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.post(
+            "/chatagent/v1",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"X-User-Id": "alice"},
+        )
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
+def test_post_non_dict_json_gives_502():
+    http_mock = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.return_value = [{"returnCode": 96200}]
+    http_mock.post.return_value = mock_resp
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.post(
+            "/chatagent/v1",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"X-User-Id": "alice"},
+        )
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
 def test_post_rate_limit_returns_429():
     from ragent.clients.rate_limiter import RateLimitResult
 
@@ -511,6 +545,19 @@ def test_session_list_connect_error_gives_502():
     assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
 
 
+def test_session_list_malformed_json_gives_502():
+    http_mock = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.side_effect = ValueError("not json")
+    http_mock.get.return_value = mock_resp
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v1/sessionList", headers={"X-User-Id": "alice"})
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
 # ===========================================================================
 # GET /chatagent/v1/session
 # ===========================================================================
@@ -584,6 +631,19 @@ def test_session_upstream_error_gives_502():
 def test_session_connect_error_gives_502():
     http_mock = MagicMock()
     http_mock.get.side_effect = httpx.ConnectError("refused")
+    app = _make_app(http_mock=http_mock)
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v1/session?session=s1", headers={"X-User-Id": "alice"})
+    assert r.status_code == 502
+    assert r.json()["error_code"] == HttpErrorCode.CHATAGENT_UPSTREAM_ERROR
+
+
+def test_session_malformed_json_gives_502():
+    http_mock = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.json.side_effect = ValueError("not json")
+    http_mock.get.return_value = mock_resp
     app = _make_app(http_mock=http_mock)
     with TestClient(app) as client:
         r = client.get("/chatagent/v1/session?session=s1", headers={"X-User-Id": "alice"})

@@ -133,23 +133,21 @@ def create_chatagent_router(
                     timeout=timeout,
                 )
                 resp.raise_for_status()
+                data = resp.json()
             except httpx.TimeoutException:
                 logger.warning("chatagent.timeout", http_status=504)
                 return _timeout_error()
-            except (httpx.HTTPStatusError, httpx.RequestError):
+            except (httpx.HTTPStatusError, httpx.RequestError, ValueError):
                 logger.warning("chatagent.upstream_error", http_status=502)
                 return _upstream_error()
 
-            data = resp.json()
-            if data.get("returnCode") != _UPSTREAM_OK_CODE:
-                logger.warning(
-                    "chatagent.bad_return_code",
-                    return_code=data.get("returnCode"),
-                    http_status=502,
-                )
+            return_code = data.get("returnCode") if isinstance(data, dict) else None
+            if return_code != _UPSTREAM_OK_CODE:
+                logger.warning("chatagent.bad_return_code", return_code=return_code, http_status=502)
                 return _upstream_error()
 
-            messages = (data.get("returnData") or {}).get("messages") or []
+            return_data = data.get("returnData")
+            messages = (return_data or {}).get("messages") or []
             if not messages:
                 logger.warning("chatagent.empty_messages", http_status=502)
                 return _upstream_error()
@@ -175,13 +173,14 @@ def create_chatagent_router(
                 timeout=timeout,
             )
             resp.raise_for_status()
+            payload = resp.json()
         except httpx.TimeoutException:
             logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
             return _timeout_error()
-        except (httpx.HTTPStatusError, httpx.RequestError):
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError):
             logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
             return _upstream_error()
-        return JSONResponse(resp.json())
+        return JSONResponse(payload)
 
     if chatagent_sessionlist_api_url is not None:
 
