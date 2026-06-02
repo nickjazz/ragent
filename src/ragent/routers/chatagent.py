@@ -143,7 +143,9 @@ def create_chatagent_router(
 
             return_code = data.get("returnCode") if isinstance(data, dict) else None
             if return_code != _UPSTREAM_OK_CODE:
-                logger.warning("chatagent.bad_return_code", return_code=return_code, http_status=502)
+                logger.warning(
+                    "chatagent.bad_return_code", return_code=return_code, http_status=502
+                )
                 return _upstream_error()
 
             return_data = data.get("returnData")
