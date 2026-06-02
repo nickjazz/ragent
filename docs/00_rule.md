@@ -145,6 +145,8 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
   - **Rationale**: `--env-file` loaders resolve a blank assignment (e.g. `VAR=` in `.env.example`) as `""`, not as a missing key; `if raw is None:` silently parses the blank as the typed value and crashes at boot with `ValueError`.
   - **Verification**: every `optional_*_env` utility must have a regression test asserting it returns `None` when the var is set to `""`.
 
+- **Rule**: `bool_env()` (and any central boolean env parser) MUST accept all four standard truthy sentinels: `"1"`, `"true"`, `"yes"`, `"on"` (case-insensitive). `"on"` is a standard Unix boolean used in Apache configs, K8s manifests, and operator runbooks; omitting it causes silent `False` for any deployment that uses it. When replacing an inline truthy set with the central utility, diff the old set against `bool_env`'s accepted set before deleting the inline version.
+
 ---
 
 ### Logging: Identity Yes, Content No
@@ -342,6 +344,14 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 ## Third-Party API
 
 > **Moved to [`docs/00_rule_third_party_api.md`](00_rule_third_party_api.md)** — same content, same `§Third-Party API` anchor. All journal rules pinning `rule.md §Third-Party API` JSON samples remain valid (anchor preserved verbatim in the new file).
+
+---
+
+### Deployment (K8s & CLI)
+
+- **Rule**: K8s `command:` arrays that reference executables installed by `uv sync` MUST use the full venv path `/app/.venv/bin/<exe>` (e.g. `/app/.venv/bin/uvicorn`). The Dockerfile does not add `.venv/bin` to `PATH`; bare executable names are not found. Verify the path once when adding a new entry point.
+
+- **Rule**: Documented startup commands (in spec, README, API.md) that accept a variable the runtime reads MUST use `${VAR:-default}` form — never bare `$VAR`. Bare `$VAR` silently produces an empty-string argument when the variable is unset, which can bind to an unintended address or crash the process. Specifically: when a CLI `--host` / `--port` argument maps to an env var that has a documented code-side default, the shell command in docs MUST use `${VAR:-<same default>}` so the CLI and the guard read the same value.
 
 # Command
 
