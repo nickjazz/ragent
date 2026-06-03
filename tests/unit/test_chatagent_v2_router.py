@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ragent.clients.rate_limiter import RateLimitResult
+from ragent.clients.rate_limiter import RateLimiter, RateLimitResult
 from ragent.errors.codes import HttpErrorCode
 from ragent.routers.chatagent_v2 import create_chatagent_v2_router
 
 
-def _make_app(*, rate_limiter: Any = None, chatagent_auth: str | None = None):
+def _make_app(*, rate_limiter: RateLimiter | None = None, chatagent_auth: str | None = None):
     http_mock = MagicMock(spec=httpx.Client)
     app = FastAPI()
     router = create_chatagent_v2_router(
@@ -172,18 +171,10 @@ def test_non_streaming_upstream_error_returns_502():
 
 def test_streaming_forwards_all_chunks():
     chunks = [b'{"delta":"part1"}', b'{"delta":"part2"}', b'{"done":true}']
-    http_mock = MagicMock(spec=httpx.Client)
+    app, http_mock = _make_app()
     resp_mock = _resp_mock(b"".join(chunks))
     resp_mock.iter_bytes.return_value = iter(chunks)
     http_mock.send.return_value = resp_mock
-
-    app = FastAPI()
-    router = create_chatagent_v2_router(
-        http_client=http_mock,
-        chatagent_ap_name="TestAP",
-        chatagent_api_url="http://upstream",
-    )
-    app.include_router(router)
 
     with TestClient(app) as client:
         r = client.post(
@@ -196,18 +187,10 @@ def test_streaming_forwards_all_chunks():
 
 
 def test_streaming_injects_server_fields():
-    http_mock = MagicMock(spec=httpx.Client)
+    app, http_mock = _make_app()
     resp_mock = _resp_mock(b"{}")
     resp_mock.iter_bytes.return_value = iter([b"{}"])
     http_mock.send.return_value = resp_mock
-
-    app = FastAPI()
-    router = create_chatagent_v2_router(
-        http_client=http_mock,
-        chatagent_ap_name="TestAP",
-        chatagent_api_url="http://upstream",
-    )
-    app.include_router(router)
 
     with TestClient(app) as client:
         client.post(
@@ -225,16 +208,8 @@ def test_streaming_injects_server_fields():
 
 
 def test_streaming_upstream_error_returns_502():
-    http_mock = MagicMock(spec=httpx.Client)
+    app, http_mock = _make_app()
     http_mock.send.side_effect = httpx.RequestError("conn refused")
-
-    app = FastAPI()
-    router = create_chatagent_v2_router(
-        http_client=http_mock,
-        chatagent_ap_name="TestAP",
-        chatagent_api_url="http://upstream",
-    )
-    app.include_router(router)
 
     with TestClient(app) as client:
         r = client.post(
@@ -247,18 +222,10 @@ def test_streaming_upstream_error_returns_502():
 
 
 def test_streaming_forwards_upstream_content_type():
-    http_mock = MagicMock(spec=httpx.Client)
+    app, http_mock = _make_app()
     resp_mock = _resp_mock(b"data: chunk\n\n", content_type="text/event-stream")
     resp_mock.iter_bytes.return_value = iter([b"data: chunk\n\n"])
     http_mock.send.return_value = resp_mock
-
-    app = FastAPI()
-    router = create_chatagent_v2_router(
-        http_client=http_mock,
-        chatagent_ap_name="TestAP",
-        chatagent_api_url="http://upstream",
-    )
-    app.include_router(router)
 
     with TestClient(app) as client:
         r = client.post(
@@ -274,8 +241,6 @@ def test_streaming_forwards_upstream_content_type():
 
 
 def test_rate_limited_returns_429():
-    from ragent.clients.rate_limiter import RateLimiter
-
     rl_mock = MagicMock(spec=RateLimiter)
     result = MagicMock(spec=RateLimitResult)
     result.allowed = False
