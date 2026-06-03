@@ -30,7 +30,7 @@ def _send_mock(raw: bytes, content_type: str = "application/json"):
     m = MagicMock(spec=httpx.Response)
     m.raise_for_status.return_value = None
     m.headers = {"content-type": content_type}
-    m.read.return_value = raw
+    m.content = raw
     m.iter_bytes.return_value = iter([raw])
     return m
 

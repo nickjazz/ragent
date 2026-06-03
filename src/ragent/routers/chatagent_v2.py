@@ -105,7 +105,9 @@ def create_chatagent_v2_router(
                     json=upstream_payload,
                     headers=_headers,
                 )
-                resp = await run_in_threadpool(http_client.send, req, stream=True, timeout=timeout)
+                resp = await run_in_threadpool(
+                    http_client.send, req, stream=body.stream, timeout=timeout
+                )
                 resp.raise_for_status()
             except httpx.TimeoutException:
                 if resp is not None:
@@ -131,10 +133,6 @@ def create_chatagent_v2_router(
 
                 return StreamingResponse(iterate_in_threadpool(_gen()), media_type=content_type)
 
-            try:
-                content = await run_in_threadpool(resp.read)
-            finally:
-                resp.close()
-            return Response(content=content, media_type=content_type)
+            return Response(content=resp.content, media_type=content_type)
 
     return router
