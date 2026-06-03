@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from ragent.schemas.chat import ChatRequest
 
 
@@ -12,3 +14,20 @@ class ChatAgentRequest(ChatRequest):
     """
 
     session: str | None = None
+
+
+class ChatAgentV2Metadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session: str | None = None
+
+
+class ChatAgentV2InputData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str
+
+
+class ChatAgentV2Request(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    metadata: ChatAgentV2Metadata = Field(default_factory=ChatAgentV2Metadata)
+    inputData: ChatAgentV2InputData
+    stream: bool = False
