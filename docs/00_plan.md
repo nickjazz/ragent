@@ -301,3 +301,67 @@
 |---|---|---|:---:|---|
 | T-DEL2.1 | Behavioral | • **Achieve:** `_delete_indices()` deduplicates — if `candidate_index == stable_index`, only one `delete_by_query` call is issued.<br>• **Deliver:** Guard `candidate and candidate != stable` in `_delete_indices()`; `test_delete_indices_deduplicates_when_candidate_equals_stable` in `test_vector_extractor.py`. | [x] | Dev |
 | T-DEL2.2 | Behavioral | • **Achieve:** Reconciler warms `ActiveModelRegistry` before fan-out so `VectorExtractor.delete()` sees live indices during CANDIDATE/CUTOVER.<br>• **Deliver:** `await container.embedding_registry.refresh()` in `_PerTickRunner._tick()`; source-inspection test `test_per_tick_runner_refreshes_embedding_registry` in `test_retired_embedding_sweep.py`. Update `test_engine_pool_config.py` mock. | [x] | Dev |
+
+---
+
+## Track T-CAv2 — ChatAgent v2 Raw-Proxy Endpoint
+
+> Source: 2026-06-03 feature request.
+> Adds `POST /chatagent/v2` — a thin raw-proxy that accepts the upstream payload shape
+> directly (minus the three server-managed fields `apName`/`user`/`userToken`), forwards
+> it verbatim, and streams the upstream response back to the client unchanged.
+>
+> **Key differences from v1:**
+> - Input schema mirrors the upstream wire format; server injects `apName`, `user`,
+>   `userToken` before forwarding (both streaming and non-streaming paths).
+> - Output is the upstream response forwarded as-is (no JSON reshaping).
+> - `stream: true` triggers chunked forwarding via `StreamingResponse`.
+
+### Input / Output Samples
+
+#### Non-streaming (`stream: false`)
+
+**Client → ragent**
+```
+POST /chatagent/v2
+Content-Type: application/json
+X-User-Id: alice
+
+{"metadata": {"session": "sess-abc"}, "inputData": {"message": "What are the product features?"}, "stream": false}
+```
+
+**ragent → upstream** *(server injects apName, user, userToken — in both streaming and non-streaming)*
+```json
+{"metadata": {"apName": "MyApp", "session": "sess-abc", "user": "alice", "userToken": "Bearer eyJ..."}, "inputData": {"message": "What are the product features?"}, "stream": false}
+```
+
+**Upstream → client** *(forwarded byte-for-byte)*
+```json
+{"returnCode": 96200, "returnData": {"messages": [{"role": "assistant", "content": "The features include...", "message_id": "m1"}]}}
+```
+
+#### Streaming (`stream: true`)
+
+**Client → ragent**
+```
+POST /chatagent/v2
+Content-Type: application/json
+X-User-Id: alice
+
+{"metadata": {"session": "sess-abc"}, "inputData": {"message": "Summarise the release notes."}, "stream": true}
+```
+
+**Upstream → client** *(Transfer-Encoding: chunked; Content-Type copied from upstream)*
+```
+{"returnCode": 96200, "returnData": {"delta": "The release notes "}}
+{"returnCode": 96200, "returnData": {"delta": "cover..."}}
+{"returnCode": 96200, "returnData": {"done": true}}
+```
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv2.S1 | Structural | • **Achieve:** `ChatAgentV2Request` schema — nested `V2Metadata` (`session: str \| None`) and `V2InputData` (`message: str`); `stream: bool = False`; all with `extra="forbid"`.<br>• **Deliver:** Extend `src/ragent/schemas/chatagent.py`; `tests/unit/test_chatagent_v2_schema.py`. | [x] | Dev |
+| T-CAv2.R1 | Behavioral | • **Achieve:** `POST /chatagent/v2` non-streaming — inject server fields, POST to upstream, forward raw bytes + upstream `Content-Type`.<br>• **Deliver:** `src/ragent/routers/chatagent_v2.py::create_chatagent_v2_router()`; unit tests for happy path, timeout, upstream error. | [x] | Dev |
+| T-CAv2.R2 | Behavioral | • **Achieve:** `POST /chatagent/v2` streaming — `stream: true` uses unified `build_request`+`send(stream=True)` path, validates upstream status before committing HTTP response, returns `StreamingResponse` via `iterate_in_threadpool` forwarding each byte-chunk immediately with upstream Content-Type.<br>• **Deliver:** Streaming branch in `chatagent_v2.py`; unit tests assert all chunks forwarded, upstream Content-Type forwarded, upstream error returns 502 before first byte. | [x] | Dev |
+| T-CAv2.R3 | Behavioral | • **Achieve:** Rate limiting with key `"chatagent:{user_id}"` → 429 `CHATAGENT_RATE_LIMITED`.<br>• **Deliver:** Unit test `test_rate_limited_returns_429`. | [x] | Dev |
+| T-CAv2.W1 | Behavioral | • **Achieve:** Router registered in `bootstrap/app.py` under the existing `CHATAGENT_API_URL` guard.<br>• **Deliver:** `app.py` wiring; `tests/integration/test_chatagent_v2_endpoint.py` — non-streaming, streaming, error paths, session auto-generation. | [x] | Dev |

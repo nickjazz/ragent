@@ -327,6 +327,56 @@ Returns session object with `messages[]` array (role, content, timestamps).
 
 ---
 
+### `POST /chatagent/v2` — Raw-proxy chat (with streaming)
+
+Accepts the upstream wire format directly. Client omits `apName`, `user`, and `userToken` — the server injects them before forwarding. Upstream response is forwarded byte-for-byte with no reshaping. Registered only when `CHATAGENT_API_URL` is set.
+
+**Request body:**
+
+```json
+{
+  "metadata": { "session": "optional-caller-id" },
+  "inputData": { "message": "What are our Q3 OKRs?" },
+  "stream": false
+}
+```
+
+`metadata` is optional (session auto-generated when absent). `stream` defaults to `false`.
+
+**Non-streaming (`stream: false`):**
+
+```bash
+curl -X POST http://localhost:8000/chatagent/v2 \
+  -H "X-Auth-Token: <jwt>" -H "Content-Type: application/json" \
+  -d '{"inputData": {"message": "What are our Q3 OKRs?"}, "stream": false}'
+```
+
+```json
+// 200 OK — upstream JSON forwarded byte-for-byte
+{"returnCode":96200,"returnData":{"messages":[{"role":"assistant","content":"根據所提供的資料...","message_id":"m1"}]}}
+```
+
+**Streaming (`stream: true`):**
+
+```bash
+curl -X POST http://localhost:8000/chatagent/v2 \
+  -H "X-Auth-Token: <jwt>" -H "Content-Type: application/json" \
+  -d '{"inputData": {"message": "Summarise the release notes."}, "stream": true}'
+```
+
+```
+// 200 OK — Transfer-Encoding: chunked; each upstream chunk forwarded immediately
+{"returnCode":96200,"returnData":{"delta":"The release notes "}}
+{"returnCode":96200,"returnData":{"delta":"cover..."}}
+{"returnCode":96200,"returnData":{"done":true}}
+```
+
+The response `Content-Type` is forwarded from the upstream response (e.g. `application/json`, `text/event-stream`). Upstream errors before the first byte return `502`/`504` — not `200` with an empty body.
+
+Errors: `429 CHATAGENT_RATE_LIMITED` · `502 CHATAGENT_UPSTREAM_ERROR` · `504 CHATAGENT_TIMEOUT`.
+
+---
+
 ## Retrieve
 
 ### `POST /retrieve/v1` — Retrieve chunks without LLM
