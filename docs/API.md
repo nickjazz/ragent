@@ -336,7 +336,7 @@ curl -X PUT http://localhost:8000/chatagent/v1/session \
   -d '{"session": "abc123", "sessionName": "My Chat"}'
 ```
 
-Returns the upstream response unchanged. Registered only when `CHATAGENT_SESSION_API_URL` is set.
+Returns the upstream response unchanged (including `204 No Content` when the upstream returns no body). Registered only when `CHATAGENT_SESSION_API_URL` is set.
 
 Errors: `502 CHATAGENT_UPSTREAM_ERROR` · `504 CHATAGENT_TIMEOUT`.
 
@@ -351,7 +351,7 @@ curl -X DELETE http://localhost:8000/chatagent/v1/session \
   -d '{"session": "abc123"}'
 ```
 
-Returns the upstream response unchanged. Registered only when `CHATAGENT_SESSION_API_URL` is set.
+Returns the upstream response unchanged (including `204 No Content` when the upstream returns no body). Registered only when `CHATAGENT_SESSION_API_URL` is set.
 
 Errors: `502 CHATAGENT_UPSTREAM_ERROR` · `504 CHATAGENT_TIMEOUT`.
 

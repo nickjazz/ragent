@@ -175,6 +175,8 @@ def create_chatagent_router(
                 timeout=timeout,
             )
             resp.raise_for_status()
+            if resp.status_code == 204 or not resp.content:
+                return Response(status_code=resp.status_code)
             return JSONResponse(resp.json())
         except httpx.TimeoutException:
             logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
