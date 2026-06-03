@@ -116,7 +116,9 @@ def test_window_expiry_resets_counter():
 )
 def test_redis_error_is_fail_open(exc: Exception) -> None:
     mock_redis = MagicMock(spec=redis.Redis)
-    mock_redis.pipeline.side_effect = exc
+    mock_pipe = MagicMock()
+    mock_pipe.execute.side_effect = exc
+    mock_redis.pipeline.return_value = mock_pipe
     limiter = _make_limiter(fake_redis=mock_redis)
     result = limiter.check("user:henry", limit=5, window_seconds=60)
     assert result.allowed is True
