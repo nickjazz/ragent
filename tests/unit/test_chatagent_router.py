@@ -19,7 +19,7 @@ from ragent.errors.codes import HttpErrorCode
 
 
 def _make_jwt(payload: dict) -> str:
-    """Build a minimal unsigned JWT stub for testing payload decode."""
+    """Build a minimal unsigned JWT stub (header.payload.sig) for userToken passthrough tests."""
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
     return f"header.{encoded}.sig"
 
@@ -126,22 +126,23 @@ def test_post_session_generated_when_absent():
     assert isinstance(session_val, str) and len(session_val) > 0
 
 
-def test_post_sub_extracted_from_jwt():
+def test_post_x_user_id_used_as_user_even_when_jwt_present():
+    """user in proxy metadata must come from get_user_id (RAGENT_JWT_CLAIM_USER_ID),
+    not from any JWT claim."""
     http_mock = MagicMock()
     http_mock.post.return_value = _post_response()
     app = _make_app(http_mock=http_mock, jwt_header="X-Auth-Token")
-    token = _make_jwt({"sub": "user-sub-123", "iss": "test"})
     with TestClient(app) as client:
         client.post(
             "/chatagent/v1",
             json={"messages": [{"role": "user", "content": "hi"}]},
-            headers={"X-User-Id": "alice", "X-Auth-Token": token},
+            headers={"X-User-Id": "alice", "X-Auth-Token": "header.payload.sig"},
         )
     payload = http_mock.post.call_args[1]["json"]
-    assert payload["metadata"]["user"] == "user-sub-123"
+    assert payload["metadata"]["user"] == "alice"
 
 
-def test_post_sub_falls_back_to_user_id():
+def test_post_user_id_used_as_user_without_jwt():
     http_mock = MagicMock()
     http_mock.post.return_value = _post_response()
     app = _make_app(http_mock=http_mock)

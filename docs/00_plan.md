@@ -266,7 +266,7 @@
 |---|---|---|:---:|---|
 | T-CA.S1 | Structural | • **Achieve:** `CHATAGENT_UPSTREAM_ERROR`, `CHATAGENT_TIMEOUT`, `CHATAGENT_RATE_LIMITED` in `HttpErrorCode`.<br>• **Deliver:** `src/ragent/errors/codes.py`. | [x] | Dev |
 | T-CA.S2 | Structural | • **Achieve:** `ChatAgentRequest(ChatRequest)` with optional `session: str \| None`.<br>• **Deliver:** `src/ragent/schemas/chatagent.py`; `tests/unit/test_chatagent_schema.py`. | [x] | Dev |
-| T-CA.R1 | Behavioral | • **Achieve:** `POST /chatagent/v1` proxies to `CHATAGENT_API_URL`; JWT sub, session generation, rate limiting, error mapping.<br>• **Deliver:** `src/ragent/routers/chatagent.py::create_chatagent_router`; `tests/unit/test_chatagent_router.py` POST tests. | [x] | Dev |
+| T-CA.R1 | Behavioral | • **Achieve:** `POST /chatagent/v1` proxies to `CHATAGENT_API_URL`; user_id (RAGENT_JWT_CLAIM_USER_ID), session generation, rate limiting, error mapping.<br>• **Deliver:** `src/ragent/routers/chatagent.py::create_chatagent_router`; `tests/unit/test_chatagent_router.py` POST tests. | [x] | Dev |
 | T-CA.R2 | Behavioral | • **Achieve:** `GET /chatagent/v1/sessionList` proxies to `CHATAGENT_SESSIONLIST_API_URL`; injects user/apName.<br>• **Deliver:** route in `chatagent.py`; GET sessionList unit tests. | [x] | Dev |
 | T-CA.R3 | Behavioral | • **Achieve:** `GET /chatagent/v1/session` proxies to `CHATAGENT_SESSION_API_URL`; injects user/apName/session.<br>• **Deliver:** route in `chatagent.py`; GET session unit tests. | [x] | Dev |
 | T-CA.I1 | Behavioral | • **Achieve:** Routes registered conditionally by URL env var; integration tests via TestClient + mocked httpx.<br>• **Deliver:** `tests/integration/test_chatagent_endpoint.py`. | [x] | Dev |
