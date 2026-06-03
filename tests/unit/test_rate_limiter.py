@@ -1,9 +1,11 @@
 """T3.13 — RateLimiter: fixed-window per-key INCR+EXPIRE counter (B31)."""
 
 import time
+from unittest.mock import MagicMock
 
 import fakeredis
 import pytest
+import redis
 
 
 def _make_limiter(fake_redis=None):
@@ -102,4 +104,19 @@ def test_window_expiry_resets_counter():
     # Manually expire the key to simulate window reset
     fake.delete("ratelimit:user:grace")
     result = limiter.check("user:grace", limit=3, window_seconds=1)
+    assert result.allowed is True
+
+
+# --- fail-open: Redis unavailable ---
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [redis.ConnectionError("connection refused"), redis.TimeoutError("timed out")],
+)
+def test_redis_error_is_fail_open(exc: Exception) -> None:
+    mock_redis = MagicMock(spec=redis.Redis)
+    mock_redis.pipeline.side_effect = exc
+    limiter = _make_limiter(fake_redis=mock_redis)
+    result = limiter.check("user:henry", limit=5, window_seconds=60)
     assert result.allowed is True
