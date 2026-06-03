@@ -286,7 +286,7 @@ Three proxy endpoints under `/chatagent/v1` that forward requests to external se
 
 ### `POST /chatagent/v1` — Chat via external agent service
 
-Same request body as `/chat/v1` plus optional `session` field (session ID; auto-generated when absent). Injects `user` (sub claim/user_id) and `userToken` (raw JWT) server-side. Forwards to `CHATAGENT_API_URL`.
+Same request body as `/chat/v1` plus optional `session` field (session ID; auto-generated when absent). Injects `user` (resolved via `RAGENT_JWT_CLAIM_USER_ID`, same as all other endpoints) and `userToken` (raw JWT) server-side. Forwards to `CHATAGENT_API_URL`.
 
 ```bash
 curl -X POST http://localhost:8000/chatagent/v1 \
