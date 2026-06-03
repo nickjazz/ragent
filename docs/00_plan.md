@@ -273,3 +273,31 @@
 | T-CA.W1 | Behavioral | • **Achieve:** Composition root reads 5 new env vars; app.py registers router when any URL is set.<br>• **Deliver:** `composition.py` Container fields + build_container(); `app.py` registration block. | [x] | Dev |
 | T-CA.D1 | Structural | • **Achieve:** All new env vars documented (B28); API.md + third-party API doc updated.<br>• **Deliver:** `docs/spec/env_vars.md`, `docs/API.md`, `docs/00_rule_third_party_api.md`. | [x] | Dev |
 | T-CA.R4 | Behavioral | • **Achieve:** `POST /chatagent/v1` response body includes `session` field — the value used for this request (either caller-supplied or auto-generated via `new_id()`).<br>• **Deliver:** `"session"` key added to `JSONResponse` dict in `chatagent.py`; two new tests in `test_chatagent_router.py` covering supplied vs generated session echo. | [x] | Dev |
+
+
+---
+
+## Track T-DEL1 — VectorExtractor.delete() candidate-index alignment (issue #147)
+
+> `VectorExtractor.delete()` only cleans the stable index. During CANDIDATE/CUTOVER lifecycle,
+> `DocumentEmbedder._run_dual` writes to both `stable_index` and `candidate_index`.
+> Deleting a document in that window orphans chunks in the candidate index.
+> Fix: inject `ActiveModelRegistry` (via `_IndexProvider` Protocol) into `VectorExtractor` so
+> `delete()` fans out across all live write targets. Decision Log: B62.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-DEL1.1 | Behavioral | • **Achieve:** `VectorExtractor.delete()` issues `delete_by_query` for every live index (`stable_index` + `candidate_index` when not None).<br>• **Deliver:** `_IndexProvider` Protocol in `vector.py`; `registry: _IndexProvider \| None` constructor arg; `_delete_indices()` helper; tests in `tests/unit/test_vector_extractor.py` — stable-only and dual-index cases. | [x] | Dev |
+| T-DEL1.2 | Behavioral | • **Achieve:** Composition wires `ActiveModelRegistry` into `VectorExtractor` so production deployments use the live-index fan-out path.<br>• **Deliver:** Reorder `composition.py` to build `embedding_registry` before `VectorExtractor`; pass `registry=embedding_registry`. Update `tests/unit/test_chunks_index_env_audit.py` to assert `registry` kwarg is wired. | [x] | Dev |
+
+## Track T-DEL2 — PR #149 review findings (Gemini + Codex)
+
+> Two review findings on PR #149:
+> (1) Gemini: `_delete_indices()` must deduplicate when `candidate == stable`.
+> (2) Codex: `_PerTickRunner._tick()` must refresh `embedding_registry` before `fan_out_delete`
+>     so the cold-cache path during CANDIDATE/CUTOVER doesn't silently skip candidate cleanup.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-DEL2.1 | Behavioral | • **Achieve:** `_delete_indices()` deduplicates — if `candidate_index == stable_index`, only one `delete_by_query` call is issued.<br>• **Deliver:** Guard `candidate and candidate != stable` in `_delete_indices()`; `test_delete_indices_deduplicates_when_candidate_equals_stable` in `test_vector_extractor.py`. | [x] | Dev |
+| T-DEL2.2 | Behavioral | • **Achieve:** Reconciler warms `ActiveModelRegistry` before fan-out so `VectorExtractor.delete()` sees live indices during CANDIDATE/CUTOVER.<br>• **Deliver:** `await container.embedding_registry.refresh()` in `_PerTickRunner._tick()`; source-inspection test `test_per_tick_runner_refreshes_embedding_registry` in `test_retired_embedding_sweep.py`. Update `test_engine_pool_config.py` mock. | [x] | Dev |
