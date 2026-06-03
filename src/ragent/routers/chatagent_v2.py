@@ -106,9 +106,7 @@ def create_chatagent_v2_router(
                     headers=_headers,
                     timeout=timeout,
                 )
-                resp = await run_in_threadpool(
-                    http_client.send, req, stream=body.stream
-                )
+                resp = await run_in_threadpool(http_client.send, req, stream=body.stream)
                 resp.raise_for_status()
             except httpx.TimeoutException:
                 if resp is not None:

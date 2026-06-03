@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from ragent.clients.rate_limiter import RateLimitResult
 from ragent.errors.codes import HttpErrorCode
 from ragent.routers.chatagent_v2 import create_chatagent_v2_router
 
@@ -170,7 +171,7 @@ def test_rate_limit_returns_429():
     from ragent.clients.rate_limiter import RateLimiter
 
     rl = MagicMock(spec=RateLimiter)
-    result = MagicMock()
+    result = MagicMock(spec=RateLimitResult)
     result.allowed = False
     result.reset_at = 9999999999.0
     rl.check.return_value = result
