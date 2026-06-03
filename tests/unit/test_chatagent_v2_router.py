@@ -89,6 +89,56 @@ def test_non_streaming_auto_generates_session_when_absent():
     assert payload["metadata"]["session"]  # non-empty auto-generated id
 
 
+def test_non_streaming_forwards_extra_input_fields():
+    """Arbitrary inputData fields are forwarded verbatim to upstream."""
+    app, http_mock = _make_app()
+    http_mock.send.return_value = _resp_mock(b"{}")
+
+    with TestClient(app) as client:
+        client.post(
+            "/chatagent/v2",
+            json={"inputData": {"message": "hi", "messageMeta": {"foo": "bar"}}},
+            headers={"X-User-Id": "alice"},
+        )
+
+    payload = http_mock.build_request.call_args.kwargs["json"]
+    assert payload["inputData"]["messageMeta"] == {"foo": "bar"}
+
+
+def test_non_streaming_forwards_unknown_top_level_fields():
+    """Unknown top-level fields are forwarded verbatim to upstream."""
+    app, http_mock = _make_app()
+    http_mock.send.return_value = _resp_mock(b"{}")
+
+    with TestClient(app) as client:
+        client.post(
+            "/chatagent/v2",
+            json={"inputData": {"message": "hi"}, "customField": "value"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    payload = http_mock.build_request.call_args.kwargs["json"]
+    assert payload["customField"] == "value"
+
+
+def test_non_streaming_server_fields_overwrite_caller_metadata():
+    """Server-injected fields always win over caller-supplied metadata."""
+    app, http_mock = _make_app()
+    http_mock.send.return_value = _resp_mock(b"{}")
+
+    with TestClient(app) as client:
+        client.post(
+            "/chatagent/v2",
+            json={"metadata": {"apName": "Fake", "user": "hacker", "userToken": "stolen"}},
+            headers={"X-User-Id": "alice", "X-Auth-Token": "real-tok"},
+        )
+
+    payload = http_mock.build_request.call_args.kwargs["json"]
+    assert payload["metadata"]["apName"] == "TestAP"
+    assert payload["metadata"]["user"] == "alice"
+    assert payload["metadata"]["userToken"] == "real-tok"
+
+
 def test_non_streaming_timeout_returns_504():
     app, http_mock = _make_app()
     http_mock.send.side_effect = httpx.TimeoutException("timed out")
