@@ -244,15 +244,28 @@
 > Source: 2026-06-01 review session.
 > Two improvements to `POST /mcp/v1` `retrieve` tool:
 > (1) `inputSchema` hardening — `additionalProperties:false` + richer field descriptions so MCP hosts and agents have an accurate closed schema.
-> (2) Response text aligned with `_render_context()` convention — `[資料來源 #N]` + `---` format with metadata header so calling agents can cite chunks without a second `json.loads`.
+> (2) Response text aligned with `_render_context()` convention using numbered source labels plus `---` dividers and a metadata header so calling agents can cite chunks without a second `json.loads`.
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
 | T-MCP2.1 | Behavioral | • **Achieve:** `inputSchema` is a closed schema — unknown arguments are rejected with -32602.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_rejects_unknown_argument` — extra field → -32602 `MCP_TOOL_INPUT_INVALID`. Add `additionalProperties:false` + improve field descriptions. | [x] | Dev |
-| T-MCP2.2 | Behavioral | • **Achieve:** `tools/call retrieve` response `content[0].text` is `[資料來源 #N]`-formatted text, not a JSON blob.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_text_format_*` (numbered sources, metadata header, empty result, excerpt truncation). Update existing JSON-parse tests to match new format. | [x] | Dev |
-| T-MCP2.3 | Behavioral | • **Achieve:** Header metadata fields (source_app, document_id, source_title) have CR/LF stripped to prevent injection of fake `[資料來源 #N]` header lines.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_sanitizes_newlines_in_header_metadata`; `_header_field()` helper in `routers/mcp.py`; integration test contract updated to `[資料來源 #N]` text format. | [x] | Dev |
+| T-MCP2.2 | Behavioral | • **Achieve:** `tools/call retrieve` response `content[0].text` is numbered source text, not a JSON blob.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_text_format_*` (numbered sources, metadata header, empty result, excerpt truncation). Update existing JSON-parse tests to match new format. | [x] | Dev |
+| T-MCP2.3 | Behavioral | • **Achieve:** Header metadata fields (source_app, document_id, source_title) have CR/LF stripped to prevent injection of fake source header lines.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_sanitizes_newlines_in_header_metadata`; `_header_field()` helper in `routers/mcp.py`; integration test contract updated to numbered source text format. | [x] | Dev |
 
 
+
+---
+
+## Track T-MCP3 - First-party MCP tool registry and retrieve projection
+
+> Source: 2026-06-04 review session. Prevent REST/MCP schema drift while still giving MCP hosts rich descriptions and constrained inputs.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-MCP3.1 | Structural | **Achieve:** Move retrieve request/response models to `src/ragent/schemas/retrieve.py` so REST and MCP share one Pydantic contract.<br>**Deliver:** Router imports shared `RetrieveRequest`; no second MCP-only request model. | [x] | Dev |
+| T-MCP3.2 | Behavioral | **Achieve:** Project MCP input schemas from Pydantic `Field(...)` metadata while allowing MCP-only exposure rules.<br>**Deliver:** `src/ragent/mcp_tools/schema.py` strips `x-mcp-*`, hides `source_meta` and `min_score`, applies `additionalProperties:false`, and exposes `source_app` only from `RAGENT_MCP_RETRIEVE_SOURCE_APP_ALLOWLIST`. | [x] | Dev |
+| T-MCP3.3 | Behavioral | **Achieve:** Route `tools/list` and `tools/call` through a first-party registry instead of hand-written tool constants.<br>**Deliver:** `src/ragent/mcp_tools/registry.py`, `src/ragent/mcp_tools/retrieve.py`, endpoint-level tests for hidden fields, enum validation, default propagation, and REST unaffected by MCP projection. | [x] | Dev |
+| T-MCP3.4 | Process | **Achieve:** Capture the repeatable API-to-MCP onboarding workflow for future tools.<br>**Deliver:** `.agents/skills/onboard-mcp-tool/SKILL.md` and `.claude/skills/onboard-mcp-tool/SKILL.md`. | [x] | Dev |
 
 ---
 

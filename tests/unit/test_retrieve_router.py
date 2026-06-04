@@ -325,9 +325,11 @@ def test_min_score_env_driven_default_flows_to_router(monkeypatch):
 
     monkeypatch.setenv("RETRIEVAL_MIN_SCORE", "0.6")
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    sys.modules.pop("ragent.schemas.retrieve", None)
     sys.modules.pop("ragent.routers.retrieve", None)
     sys.modules.pop("ragent.schemas.chat", None)
     importlib.import_module("ragent.pipelines.retrieve")
+    importlib.import_module("ragent.schemas.retrieve")
     importlib.import_module("ragent.routers.retrieve")
 
     from ragent.routers.retrieve import RetrieveRequest
@@ -337,8 +339,38 @@ def test_min_score_env_driven_default_flows_to_router(monkeypatch):
 
     # Teardown: restore clean module state
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    sys.modules.pop("ragent.schemas.retrieve", None)
     sys.modules.pop("ragent.routers.retrieve", None)
     sys.modules.pop("ragent.schemas.chat", None)
     importlib.import_module("ragent.pipelines.retrieve")
+    importlib.import_module("ragent.schemas.retrieve")
     importlib.import_module("ragent.routers.retrieve")
     importlib.import_module("ragent.schemas.chat")
+
+
+def test_retrieve_rest_source_app_not_limited_by_mcp_allowlist(app, monkeypatch):
+    from ragent.routers.retrieve import create_retrieve_router as fresh_create_retrieve_router
+
+    monkeypatch.setenv("RAGENT_MCP_RETRIEVE_SOURCE_APP_ALLOWLIST", "confluence")
+    calls: list = []
+    local_app = FastAPI()
+    local_app.include_router(fresh_create_retrieve_router(retrieval_pipeline=MagicMock()))
+    client = _client_capture(local_app, monkeypatch, calls)
+    resp = client.post(
+        "/retrieve/v1",
+        json={
+            "query": "q",
+            "source_app": "jira",
+            "source_meta": "project-a",
+            "min_score": 0.2,
+        },
+    )
+    assert resp.status_code == 200
+    assert calls[0]["filters"] == {
+        "operator": "AND",
+        "conditions": [
+            {"field": "source_app", "operator": "==", "value": "jira"},
+            {"field": "source_meta", "operator": "==", "value": "project-a"},
+        ],
+    }
+    assert calls[0]["min_score"] == pytest.approx(0.2)

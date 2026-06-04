@@ -498,15 +498,22 @@ Dual-write: MariaDB `feedback` (truth) → ES `feedback_v1` (serving view). ES f
 
 ## MCP (Phase 2)
 
-`POST /mcp/v1` — Model Context Protocol server (JSON-RPC 2.0, spec `2024-11-05`). Exposes the corpus as a single `retrieve` tool. Full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
+`POST /mcp/v1` is the Model Context Protocol server (JSON-RPC 2.0, spec
+`2024-11-05`). It exposes the corpus as a single read-only `retrieve` tool. Full
+spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
 
 | Method | Purpose |
 |---|---|
 | `initialize` | Capability negotiation. |
 | `notifications/initialized` | Client signals init complete; server returns 204. |
-| `tools/list` | Returns the `retrieve` tool with `inputSchema` and `annotations: {readOnlyHint: true}` (MCP 2025-03-26+). |
-| `tools/call` | Invokes `retrieve`. Result `content[0].text` is `[資料來源 #N]`-formatted text. Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`. |
+| `tools/list` | Returns the `retrieve` tool with a closed `inputSchema` projected from `RetrieveRequest` and `annotations: {readOnlyHint: true}`. |
+| `tools/call` | Invokes `retrieve`. Result `content[0].text` is numbered source text with `Found N chunk(s).` and `---` dividers. Unknown or hidden args return `-32602 MCP_TOOL_INPUT_INVALID`. |
 | `ping` | Returns `{}`. |
+
+By default MCP exposes `query`, `top_k`, and `dedupe`. `source_app` is exposed
+only when `RAGENT_MCP_RETRIEVE_SOURCE_APP_ALLOWLIST` is set; the configured
+values become the enum. `source_meta` and `min_score` remain REST-only inputs,
+though omitted MCP calls still inherit the shared Pydantic defaults.
 
 Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
 

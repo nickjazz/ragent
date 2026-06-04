@@ -15,15 +15,15 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from haystack.core.pipeline import Pipeline
 
 from ragent.routers.mcp import create_mcp_router
 
 
 @pytest.fixture
 def app() -> FastAPI:
-    pipeline = MagicMock()
     a = FastAPI()
-    a.include_router(create_mcp_router(retrieval_pipeline=pipeline))
+    a.include_router(create_mcp_router(retrieval_pipeline=MagicMock(spec=Pipeline)))
     return a
 
 
@@ -80,7 +80,7 @@ def test_tools_call_input_schema_violations(
     assert err["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID", constraint
 
 
-def test_tools_call_pipeline_failure(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tools_call_pipeline_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """S67 — pipeline raises → JSON-RPC error envelope with -32001 and
     MCP_TOOL_EXECUTION_FAILED. NOT a success response with isError:true
     (which would be reserved for a soft-error future case).
@@ -90,7 +90,9 @@ def test_tools_call_pipeline_failure(app: FastAPI, monkeypatch: pytest.MonkeyPat
         raise RuntimeError("pipeline blew up")
 
     monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _boom)
-    client = TestClient(app)
+    app_local = FastAPI()
+    app_local.include_router(create_mcp_router(retrieval_pipeline=MagicMock(spec=Pipeline)))
+    client = TestClient(app_local)
     body = _call(client, name="retrieve", arguments={"query": "q"})
     assert "result" not in body
     err = body["error"]

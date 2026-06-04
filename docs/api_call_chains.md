@@ -258,23 +258,25 @@ POST /retrieve/v1
 
 ---
 
-## 10. POST /mcp/v1 (tools/call retrieve) — MCP retrieve
+## 10. POST /mcp/v1 (tools/call retrieve) - MCP retrieve
 
-JSON-RPC 2.0 envelope → `tools/call` → `_handle_tools_call()` → `run_retrieval()`
+JSON-RPC 2.0 envelope -> `tools/call` -> MCP tool registry -> retrieve tool -> `run_retrieval()`
 
 ```
 POST /mcp/v1
-  └── McpRouter.mcp_jsonrpc()
-        ├── JSON parse / schema validate
-        ├── tools/list   → no upstream calls
-        │     returns _RETRIEVE_TOOL_SCHEMA including:
-        │       annotations.readOnlyHint=true   (MCP 2025-03-26+; older clients ignore)
-        ├── initialize   → no upstream calls
-        └── tools/call retrieve
-              └── run_retrieval()   [same Haystack pipeline — §9]
-                    └── doc_to_source_entry(d, max_chars=excerpt_max_chars)
-                          excerpt_max_chars bound at router-creation from EXCERPT_MAX_CHARS env
-                          (same value as POST /retrieve/v1 — they share the container config)
+  McpRouter.mcp_jsonrpc()
+    JSON parse / request validation
+    tools/list
+      no upstream calls
+      returns the registry-projected retrieve schema from RetrieveRequest
+    initialize
+      no upstream calls
+    tools/call retrieve
+      projected JSON Schema validation rejects hidden or unknown MCP args
+      Pydantic RetrieveRequest validation applies shared REST defaults
+      run_retrieval()   [same Haystack pipeline as section 9]
+        doc_to_source_entry(d, max_chars=excerpt_max_chars)
+          excerpt_max_chars is bound at router creation from EXCERPT_MAX_CHARS
 ```
 
 **Exception handling**:
@@ -286,12 +288,13 @@ POST /mcp/v1
 | Unknown method | JSON-RPC `-32601` + `MCP_METHOD_NOT_FOUND` |
 | Input schema violation (jsonschema) | JSON-RPC `-32602` + `MCP_TOOL_INPUT_INVALID` |
 | Unknown tool name | JSON-RPC `-32602` + `MCP_TOOL_NOT_FOUND` |
-| Any exception from `run_retrieval()` | JSON-RPC `-32001` + `MCP_TOOL_EXECUTION_FAILED` — **all upstream failures are wrapped as tool errors**; HTTP status stays 200 per JSON-RPC spec |
+| Any exception from `run_retrieval()` | JSON-RPC `-32001` + `MCP_TOOL_EXECUTION_FAILED`; HTTP status stays 200 per JSON-RPC spec |
 | Body > `MCP_REQUEST_MAX_BYTES` (default 256 KiB) | HTTP 413 `MCP_INVALID_REQUEST` (problem+json, not JSON-RPC) |
 
-> **MCP specificity**: `run_retrieval` failures (embedding down, ES down, etc.)
-> surface as `{"isError": true}` tool result or as a JSON-RPC `-32001` error envelope,
-> **not** as HTTP 5xx. MCP clients must inspect the JSON-RPC layer, not HTTP status.
+> **MCP specificity:** `run_retrieval` failures (embedding down, ES down, etc.)
+> surface as a JSON-RPC `-32001` error envelope, not as HTTP 5xx and not as a
+> successful tool result. MCP clients must inspect the JSON-RPC layer, not only
+> the HTTP status.
 
 ---
 
