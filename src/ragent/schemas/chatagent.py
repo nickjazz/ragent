@@ -14,6 +14,8 @@ class ChatAgentRequest(ChatRequest):
     """
 
     session: str | None = None
+    stream: bool = False
+    node_filter: str | None = None
 
 
 class SessionRenameRequest(BaseModel):

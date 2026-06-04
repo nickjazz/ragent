@@ -42,3 +42,17 @@ def test_inherits_provider_allowlist():
             messages=[{"role": "user", "content": "hi"}],
             provider="anthropic",
         )
+
+
+def test_node_filter_defaults_none():
+    from ragent.schemas.chatagent import ChatAgentRequest
+
+    req = ChatAgentRequest(messages=[{"role": "user", "content": "hi"}])
+    assert req.node_filter is None
+
+
+def test_stream_defaults_false():
+    from ragent.schemas.chatagent import ChatAgentRequest
+
+    req = ChatAgentRequest(messages=[{"role": "user", "content": "hi"}])
+    assert req.stream is False

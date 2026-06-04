@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Annotated
@@ -10,7 +11,8 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 
 from ragent.auth.deps import get_user_id
 from ragent.clients.rate_limiter import RateLimiter
@@ -100,8 +102,54 @@ def create_chatagent_router(
                     "userToken": raw_token,
                 },
                 "inputData": {"message": last_user},
-                "stream": False,
+                "stream": body.stream,
             }
+
+            if body.stream:
+                node_filter = body.node_filter
+                try:
+                    req = http_client.build_request(
+                        "POST",
+                        chatagent_api_url,
+                        json=proxy_payload,
+                        headers=_headers,
+                        timeout=timeout,
+                    )
+                    stream_resp = await run_in_threadpool(http_client.send, req, stream=True)
+                    stream_resp.raise_for_status()
+                except httpx.TimeoutException:
+                    logger.warning("chatagent.timeout", http_status=504)
+                    return _timeout_error()
+                except (httpx.HTTPStatusError, httpx.RequestError):
+                    logger.warning("chatagent.upstream_error", http_status=502)
+                    return _upstream_error()
+
+                def _gen():
+                    try:
+                        logger.info("chatagent.stream_request", user_id=user_id, http_status=200)
+                        for line in stream_resp.iter_lines():
+                            if not line.startswith("data: "):
+                                yield line.encode() + b"\n"
+                                continue
+                            if node_filter is None:
+                                yield line.encode() + b"\n"
+                                continue
+                            try:
+                                chunk = json.loads(line[len("data: ") :])
+                            except ValueError:
+                                continue
+                            msgs = (chunk.get("returnData") or {}).get("messages") or []
+                            if any(
+                                (m.get("messageMeta") or {}).get("langgraph_node") == node_filter
+                                for m in msgs
+                            ):
+                                yield line.encode() + b"\n"
+                    finally:
+                        stream_resp.close()
+
+                return StreamingResponse(
+                    iterate_in_threadpool(_gen()), media_type="text/event-stream"
+                )
 
             try:
                 resp = await run_in_threadpool(
