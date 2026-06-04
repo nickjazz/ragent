@@ -71,7 +71,9 @@ class McpToolRegistry:
     def list_tools(self) -> list[dict[str, Any]]:
         return [spec.as_tool() for spec in self._specs.values()]
 
-    async def call(self, name: str, arguments: Any) -> dict[str, Any]:
+    async def call(self, name: Any, arguments: Any) -> dict[str, Any]:
+        if not isinstance(name, str):
+            raise McpToolNotFound(f"unknown tool: {name!r}")
         spec = self._specs.get(name)
         if spec is None:
             raise McpToolNotFound(f"unknown tool: {name!r}")

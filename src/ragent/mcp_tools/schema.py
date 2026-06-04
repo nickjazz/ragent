@@ -41,6 +41,7 @@ def build_mcp_input_schema(model: type[BaseModel]) -> dict[str, Any]:
     }
     if "$defs" in source:
         schema["$defs"] = deepcopy(source["$defs"])
+        _strip_mcp_extensions(schema["$defs"])
     return schema
 
 

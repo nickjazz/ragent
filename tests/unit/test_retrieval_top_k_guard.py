@@ -25,7 +25,9 @@ def _reload_chat(monkeypatch: pytest.MonkeyPatch):
             monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
         else:
             monkeypatch.setenv("RETRIEVAL_TOP_K", retrieval_top_k)
+        sys.modules.pop("ragent.utility.retrieval_defaults", None)
         sys.modules.pop("ragent.pipelines.retrieve", None)
+        importlib.import_module("ragent.utility.retrieval_defaults")
         importlib.import_module("ragent.pipelines.retrieve")
 
     yield _reload
@@ -34,7 +36,9 @@ def _reload_chat(monkeypatch: pytest.MonkeyPatch):
     # next import picks up the restored value. Re-import explicitly so any
     # downstream test in the same process sees a usable module.
     monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+    sys.modules.pop("ragent.utility.retrieval_defaults", None)
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    importlib.import_module("ragent.utility.retrieval_defaults")
     importlib.import_module("ragent.pipelines.retrieve")
 
 
@@ -73,12 +77,16 @@ def _reload_chat_min_score(monkeypatch: pytest.MonkeyPatch):
             monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
         else:
             monkeypatch.setenv("RETRIEVAL_MIN_SCORE", retrieval_min_score)
+        sys.modules.pop("ragent.utility.retrieval_defaults", None)
         sys.modules.pop("ragent.pipelines.retrieve", None)
+        importlib.import_module("ragent.utility.retrieval_defaults")
         importlib.import_module("ragent.pipelines.retrieve")
 
     yield _reload
     monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
+    sys.modules.pop("ragent.utility.retrieval_defaults", None)
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    importlib.import_module("ragent.utility.retrieval_defaults")
     importlib.import_module("ragent.pipelines.retrieve")
 
 

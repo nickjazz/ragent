@@ -100,6 +100,18 @@ def test_tools_call_pipeline_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     assert err["data"]["error_code"] == "MCP_TOOL_EXECUTION_FAILED"
 
 
+@pytest.mark.parametrize("name", [[], {}, 42, None])
+def test_tools_call_non_string_name(client: TestClient, name: object) -> None:
+    """S62 — non-string name (e.g. array/object) → -32602 MCP_TOOL_NOT_FOUND, not TypeError."""
+    body = client.post(
+        "/mcp/v1",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}},
+    ).json()
+    err = body["error"]
+    assert err["code"] == -32602
+    assert err["data"]["error_code"] == "MCP_TOOL_NOT_FOUND"
+
+
 def test_tools_call_missing_params(client: TestClient) -> None:
     """`params` absent from envelope → -32602 (tools/call requires `name`)."""
     body = client.post(

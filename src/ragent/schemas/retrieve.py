@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ragent.pipelines.retrieve import DEFAULT_MIN_SCORE, DEFAULT_TOP_K
+from ragent.utility.retrieval_defaults import DEFAULT_MIN_SCORE, DEFAULT_TOP_K
 from ragent.schemas.ingest import SOURCE_META_MAX
 
 SOURCE_APP_MAX = 64

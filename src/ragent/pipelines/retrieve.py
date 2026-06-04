@@ -23,7 +23,7 @@ from ragent.bootstrap.metrics import record_rerank_degraded
 from ragent.errors.upstream import UpstreamServiceError, UpstreamTimeoutError
 from ragent.pipelines.observability import wrap_pipeline_component
 from ragent.utility.datetime import utcnow
-from ragent.utility.env import int_env, optional_float_env
+from ragent.utility.retrieval_defaults import DEFAULT_MIN_SCORE, DEFAULT_TOP_K
 from ragent.utility.wilson import wilson_lower_bound
 
 # Spec §4.6 default; composition.py reads EXCERPT_MAX_CHARS env and threads
@@ -36,14 +36,12 @@ EXCERPT_MAX_CHARS_DEFAULT = 512
 # the advertised maximum, MCP clients calling with omitted top_k would silently
 # over-fetch past the contract. Fast-fail at boot instead.
 MAX_TOP_K = 200
-DEFAULT_TOP_K = int_env("RETRIEVAL_TOP_K", 20)
 if not 1 <= DEFAULT_TOP_K <= MAX_TOP_K:
     raise RuntimeError(
         f"RETRIEVAL_TOP_K={DEFAULT_TOP_K} is outside the advertised [1, {MAX_TOP_K}] "
         f"contract (spec §3.4.4 / §3.8.3). MCP clients calling with omitted top_k "
         f"would bypass the schema maximum."
     )
-DEFAULT_MIN_SCORE: float | None = optional_float_env("RETRIEVAL_MIN_SCORE")
 if DEFAULT_MIN_SCORE is not None and DEFAULT_MIN_SCORE < 0.0:
     raise RuntimeError(
         f"RETRIEVAL_MIN_SCORE={DEFAULT_MIN_SCORE} must be >= 0.0 — "
