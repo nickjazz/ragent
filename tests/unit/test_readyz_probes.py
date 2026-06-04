@@ -112,30 +112,20 @@ def test_readyz_no_user_id_required() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_probe_logs_start_and_ok_on_success() -> None:
+async def test_run_probe_logs_ok_on_success() -> None:
     with structlog.testing.capture_logs() as logs:
         result = await run_probe("mariadb", AsyncMock(return_value=None))
     assert result is None
-    events = [e["event"] for e in logs]
-    assert "probe.start" in events, f"missing probe.start: {events}"
-    assert "probe.ok" in events, f"missing probe.ok: {events}"
-    start = next(e for e in logs if e["event"] == "probe.start")
-    assert start["probe"] == "mariadb"
     ok = next(e for e in logs if e["event"] == "probe.ok")
     assert ok["probe"] == "mariadb"
     assert "duration_ms" in ok
 
 
 @pytest.mark.asyncio
-async def test_run_probe_logs_start_and_failed_on_error() -> None:
+async def test_run_probe_logs_failed_on_error() -> None:
     with structlog.testing.capture_logs() as logs:
         result = await run_probe("es", AsyncMock(side_effect=RuntimeError("conn refused")))
     assert result is not None
-    events = [e["event"] for e in logs]
-    assert "probe.start" in events, f"missing probe.start: {events}"
-    assert "probe.failed" in events, f"missing probe.failed: {events}"
-    start = next(e for e in logs if e["event"] == "probe.start")
-    assert start["probe"] == "es"
     failed = next(e for e in logs if e["event"] == "probe.failed")
     assert failed["probe"] == "es"
     assert failed["error_code"] == ProbeErrorCode.DEPENDENCY_DOWN

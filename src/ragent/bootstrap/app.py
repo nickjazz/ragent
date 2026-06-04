@@ -75,21 +75,18 @@ _DEFAULT_JWT_CLAIM = "preferred_username"
 _REQUIRED_TASK_LABELS = ("ingest.pipeline", "ingest.supersede")
 
 
-async def _check_infra_ready(container: Any, broker: Any) -> None:
-    """Verify DB, ES, and TaskIQ broker are ready before serving traffic.
+async def _check_infra_ready(probes: dict, broker: Any, container: Any) -> None:
+    """Verify all readiness probes, TaskIQ tasks, and AI token exchange before serving traffic.
 
     Raises ``RuntimeError`` on first failure so the lifespan aborts boot
     rather than silently degrading on first request.
     """
-    from ragent.routers.health_probes import probe_es, probe_mariadb, run_probe
+    from ragent.routers.health_probes import run_probe
 
-    db_failure = await run_probe("mariadb", probe_mariadb(container.engine))
-    if db_failure is not None:
-        raise RuntimeError(f"infra not ready: mariadb {db_failure.error_code}: {db_failure.detail}")
-
-    es_failure = await run_probe("es", probe_es(container.es_client, index_names=[]))
-    if es_failure is not None:
-        raise RuntimeError(f"infra not ready: es {es_failure.error_code}: {es_failure.detail}")
+    for name, probe_fn in probes.items():
+        failure = await run_probe(name, probe_fn)
+        if failure is not None:
+            raise RuntimeError(f"infra not ready: {name} {failure.error_code}: {failure.detail}")
 
     for label in _REQUIRED_TASK_LABELS:
         if broker.find_task(label) is None:
@@ -343,6 +340,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     from ragent.services.ingest_service import IngestService
 
     container = get_container()
+    probes = _build_probes(container)
     # IngestService is async (post-aiomysql migration); FastAPI awaits it directly,
     # so the producer-side dispatcher must also be async to avoid blocking the loop.
     dispatcher = TaskiqDispatcher(taskiq_broker)
@@ -354,13 +352,13 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
         # /readyz instead of silently 500-ing on first ingest.
         await taskiq_broker.startup()
         init_schema()
-        await _check_infra_ready(container, taskiq_broker)
+        await _check_infra_ready(probes, taskiq_broker, container)
         # B50 T-EM.21: warm the embedding-model registry so the first
         # ingest/chat after boot doesn't raise ActiveModelRegistryNotReady.
         # Refresh failures degrade to stale-warning per the registry's
         # contract — they don't abort boot.
         await container.embedding_registry.refresh()
-        logger.info("api.startup.infra_ready", db=True, es=True, broker=True)
+        logger.info("api.startup.infra_ready", probes=list(probes.keys()), broker=True)
         try:
             yield
         finally:
@@ -482,7 +480,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
             broker=dispatcher,
         )
     )
-    app.include_router(create_health_router(probes=_build_probes(container)))
+    app.include_router(create_health_router(probes=probes))
     setup_metrics(app)
     _register_document_stats_collector()
 
