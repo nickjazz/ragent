@@ -82,7 +82,6 @@ class IndexMissing(Exception):
 
 
 async def run_probe(name: str, probe: Callable[[], Awaitable[None]]) -> ProbeFailure | None:
-    logger.info("probe.start", probe=name)
     started = time.monotonic()
     failure: ProbeFailure | None
     try:
