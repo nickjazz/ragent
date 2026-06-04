@@ -107,6 +107,7 @@ def create_chatagent_router(
 
             if body.stream:
                 node_filter = body.node_filter
+                stream_resp = None
                 try:
                     req = http_client.build_request(
                         "POST",
@@ -118,16 +119,20 @@ def create_chatagent_router(
                     stream_resp = await run_in_threadpool(http_client.send, req, stream=True)
                     stream_resp.raise_for_status()
                 except httpx.TimeoutException:
+                    if stream_resp is not None:
+                        stream_resp.close()
                     logger.warning("chatagent.timeout", http_status=504)
                     return _timeout_error()
                 except (httpx.HTTPStatusError, httpx.RequestError):
+                    if stream_resp is not None:
+                        stream_resp.close()
                     logger.warning("chatagent.upstream_error", http_status=502)
                     return _upstream_error()
 
                 def _should_yield(event_lines: list[str]) -> bool:
                     if node_filter is None:
                         return True
-                    data_lines = [l for l in event_lines if l.startswith("data: ")]
+                    data_lines = [ln for ln in event_lines if ln.startswith("data: ")]
                     if not data_lines:
                         return False
                     for dl in data_lines:
@@ -154,8 +159,8 @@ def create_chatagent_router(
                             if not line:
                                 if buffer:
                                     if _should_yield(buffer):
-                                        for l in buffer:
-                                            yield l.encode() + b"\n"
+                                        for ln in buffer:
+                                            yield ln.encode() + b"\n"
                                         yield b"\n"
                                     buffer = []
                                 elif node_filter is None:
@@ -163,8 +168,8 @@ def create_chatagent_router(
                             else:
                                 buffer.append(line)
                         if buffer and _should_yield(buffer):
-                            for l in buffer:
-                                yield l.encode() + b"\n"
+                            for ln in buffer:
+                                yield ln.encode() + b"\n"
                     finally:
                         stream_resp.close()
 
