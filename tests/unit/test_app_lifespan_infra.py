@@ -42,7 +42,9 @@ def _make_probes(container: SimpleNamespace) -> dict:
 
     return {
         "mariadb": probe_mariadb(container.engine),
-        "es": probe_es(container.es_client, []),  # index check not needed; tests cover cluster-health path only
+        "es": probe_es(
+            container.es_client, []
+        ),  # index check not needed; tests cover cluster-health path only
     }
 
 
