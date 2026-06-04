@@ -15,5 +15,6 @@ jobs:
         id: pragent
         uses: Codium-ai/pr-agent@main
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI.KEY: ${{ secrets.GEMINI_API_KEY }}
           CONFIG.MODEL: "gemini/gemini-2.5-pro"
