@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -289,8 +290,6 @@ def _register_document_stats_collector() -> None:
     global _document_stats_registered
     if _document_stats_registered:
         return
-    import os
-
     from prometheus_client import REGISTRY
 
     dsn = os.environ.get("MARIADB_DSN", "")
@@ -481,6 +480,18 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
         )
     )
     app.include_router(create_health_router(probes=probes))
+
+    from twp_ai import DirectLLMAgent
+    from twp_ai import create_router as create_twp_router
+    from twp_ai.callers.ragent import RagentCaller
+
+    app.include_router(
+        create_twp_router(
+            DirectLLMAgent(RagentCaller(container.llm_client)),
+            default_model=str_env("TWP_DEFAULT_MODEL", ""),
+        ),
+        prefix="/twp/v1",
+    )
     setup_metrics(app)
     _register_document_stats_collector()
 
