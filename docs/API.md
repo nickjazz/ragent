@@ -407,6 +407,65 @@ Errors: `429 CHATAGENT_RATE_LIMITED` · `502 CHATAGENT_UPSTREAM_ERROR` · `504 C
 
 ---
 
+## twp-ai
+
+Agent-User Interaction adapter for page-aware, client-tool runs (`packages/twp-ai`), mounted at `/twp/v1`. Emits twp-ai camelCase SSE events. Standard auth applies (`X-User-Id` or `X-Auth-Token`, same as other endpoints).
+
+### `POST /twp/v1/run` — Page-aware agent run (SSE)
+
+**Request body** (camelCase). Required: `threadId`, `runId`, `messages`, `tools`, `state`, `context`, `forwardedProps`. Optional: `parentRunId`, `model` (falls back to `TWP_DEFAULT_MODEL` when omitted). `tools` carries the page's client-side tool definitions; `context` carries page facts; `state` is the current app/page state.
+
+```json
+{
+  "threadId": "thread_1",
+  "runId": "run_1",
+  "state": { "page": { "title": "Edit product" } },
+  "messages": [{ "id": "msg_1", "role": "user", "content": "Fill the description" }],
+  "tools": [
+    {
+      "name": "fill_form",
+      "description": "Use only when the user asks to fill or update form fields.",
+      "parameters": { "type": "object", "properties": { "description": { "type": "string" } } }
+    }
+  ],
+  "context": [{ "description": "Current page", "value": "{\"title\":\"Edit product\",\"fields\":[\"description\"]}" }],
+  "forwardedProps": { "source": "form-page" },
+  "model": "gptoss-120b"
+}
+```
+
+```bash
+curl -X POST http://localhost:8000/twp/v1/run \
+  -H "X-User-Id: user-123" -H "Content-Type: application/json" \
+  -d '{"threadId":"t1","runId":"r1","state":{},"messages":[{"id":"m1","role":"user","content":"Fill the description"}],"tools":[],"context":[],"forwardedProps":{}}' \
+  --no-buffer
+```
+
+**Response:** `text/event-stream`. Each event is a `data: {…}\n\n` line carrying a camelCase JSON payload tagged by `type`. A text answer streams as:
+
+```
+data: {"type":"RUN_STARTED","runId":"r1","threadId":"t1"}
+data: {"type":"TEXT_MESSAGE_START","messageId":"a1","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"Done — "}
+data: {"type":"TEXT_MESSAGE_END","messageId":"a1"}
+data: {"type":"RUN_FINISHED","runId":"r1","threadId":"t1"}
+```
+
+When the LLM calls a client-side tool, the run emits the tool-call lifecycle and then finishes — it does **not** synthesize a result or run a confirmation turn:
+
+```
+data: {"type":"TOOL_CALL_START","toolCallId":"tc1","toolCallName":"fill_form"}
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"tc1","delta":"{\"description\":\"...\"}"}
+data: {"type":"TOOL_CALL_END","toolCallId":"tc1"}
+data: {"type":"RUN_FINISHED","runId":"r1","threadId":"t1"}
+```
+
+The frontend executes the tool and sends the real result back as a `role="tool"` message in a **continuation run** (same `threadId`); that run preserves the tool-result history into the next LLM turn. Errors surface as `{"type":"RUN_ERROR","message":"...","code":"...","runId":"r1","threadId":"t1"}`.
+
+Event types: `RUN_STARTED` · `TEXT_MESSAGE_START`/`TEXT_MESSAGE_CONTENT`/`TEXT_MESSAGE_END` · `TOOL_CALL_START`/`TOOL_CALL_ARGS`/`TOOL_CALL_END` · `RUN_FINISHED` · `RUN_ERROR`.
+
+---
+
 ## Retrieve
 
 ### `POST /retrieve/v1` — Retrieve chunks without LLM
