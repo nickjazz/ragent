@@ -7,6 +7,7 @@ WORKDIR /app
 # Dependency layer: install third-party packages without the project first, so
 # source edits do not invalidate the heavy dependency cache.
 COPY pyproject.toml uv.lock ./
+COPY packages/ packages/
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ src/
