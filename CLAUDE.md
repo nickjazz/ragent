@@ -49,7 +49,25 @@ Whenever team start to work or user says "go" or "continue", follow these steps 
     the freshness window, AND the audit log shows BOTH /simplify and /review
     ran for the current diff. It then consumes the marker.)_
 10. **Documentation**: Follow "RESOURCES" Section to update each document accordingly.
-11. **Next**: Start new round and repeat the workflow until all plans matches successful criteria.
+11. **PR**: After every `git push`, immediately create a pull request using
+    `mcp__github__create_pull_request` with a body containing all three required
+    sections from `docs/00_rule.md §PR description rule`:
+    **總結決策** / **業務意涵** / **異動檔案簡述** (Markdown table).
+    Never skip this step; a PR body copied from the commit message alone is non-compliant.
+    Immediately after creating the PR, call `mcp__github__subscribe_pr_activity`
+    then call `mcp__github__pull_request_read` (method: `get_review_comments`) to
+    fetch any automated review comments already posted, and triage them before
+    ending the turn.
+    If the push was made **in response to PR review comments**, reply to every
+    addressed comment via `mcp__github__add_reply_to_pull_request_comment` before
+    ending the turn — one reply per comment, stating what was changed.
+12. **PR comment triage rule**: Whenever a PR comment is mentioned or a review
+    event arrives, ALWAYS call `mcp__github__pull_request_read`
+    (method: `get_review_comments`) first to load **all** unresolved threads.
+    Never address a single comment in isolation — triage every thread, state your
+    verdict (fix / decline / defer) for each, then implement all accepted fixes
+    together.
+13. **Next**: Start new round and repeat the workflow until all plans matches successful criteria.
 
 ---
 

@@ -1,4 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
+-- Latest migration folded in: 012_documents_status_created_index.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS documents (
   PRIMARY KEY (id),
   UNIQUE KEY uq_document_id (document_id),
   INDEX idx_status_updated (status, updated_at),
+  INDEX idx_status_created (status, created_at),
   INDEX idx_source_app_id_status_created (source_app, source_id, status, created_at),
   INDEX idx_create_user_document (create_user, document_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

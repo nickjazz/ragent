@@ -591,3 +591,48 @@ Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ER
 - `503` — `/backfill` when broker is not wired; `/embedding/v1/state` as `EMBEDDING_REGISTRY_NOT_READY` when the registry has not completed its first refresh.
 
 Cutover hard gates: `state_is_candidate`, `field_dim_matches`, `candidate_coverage` (≥ 99%), `dual_write_warmup` (≥ 2 × cache TTL). See [`docs/team/2026_05_15_embedding_model_lifecycle.md`](team/2026_05_15_embedding_model_lifecycle.md) for full semantics.
+
+---
+
+## Operational Endpoints (`/ops/v1`)
+
+### `POST /ops/v1/retry` — Batch force-retry stuck documents
+
+Immediately re-queues documents in `UPLOADED`, `PENDING`, or `FAILED` states without waiting for the reconciler's 5-minute window. Use `dry_run: true` to preview affected counts before executing.
+
+**Auth:** `x-user-id` header required.
+
+**Request body:**
+```json
+{
+  "statuses": ["FAILED"],          // required; one or more of UPLOADED/PENDING/FAILED
+  "dry_run": false,                // true = preview only, no mutations (default false)
+  "source_app": "my-app",          // optional — scope to one application
+  "source_id": "doc-123",          // optional — scope to one logical document
+  "created_after": "2026-06-04T00:00:00Z", // optional — incident window filter
+  "limit": 100                     // optional — batch cap 1–500 (default 500)
+}
+```
+
+**Response `200`:**
+```json
+{
+  "dry_run": false,
+  "counts": {
+    "FAILED":  {"before": 5, "after": 0},
+    "PENDING": {"before": 2, "after": 0}
+  },
+  "queued": 7,    // documents marked PENDING + enqueued (always 0 when dry_run)
+  "skipped": 0    // documents that transitioned between list and mark (always 0 when dry_run)
+}
+```
+
+**Notes:**
+- When `dry_run: true`, `counts.before == counts.after` and `queued == skipped == 0`. `limit` is ignored — `counts.before` reflects the **total** matching rows across the whole DB, letting the operator see full scope before choosing a batch size.
+- When `dry_run: false`, documents are processed FIFO (oldest `created_at` first). Each document is atomically claimed via `mark_for_rerun` before enqueueing; documents that transition state between the list scan and the mark are counted as `skipped` (race-safe).
+- `limit` caps the number of documents retried in one call; run multiple times to drain a large backlog.
+
+**Notes on `counts`:** all statuses listed in `statuses` always appear as keys, even if their count is 0 in both before and after snapshots.
+
+**Non-2xx cases:**
+- `422` — `statuses` missing or empty; `limit` outside 1–500; unrecognised status value; unknown fields in request body (e.g. typo `dryrun` instead of `dry_run`).

@@ -8,6 +8,7 @@ delete and supersede cleanup only derived stores such as ES chunks.
 
 from __future__ import annotations
 
+import datetime
 import io
 from dataclasses import dataclass
 from typing import Any
@@ -199,6 +200,70 @@ class IngestService:
             raise DocumentNotRerunnable(document_id)
         await self._broker.enqueue("ingest.pipeline", document_id=document_id)
         logger.info("ingest.rerun_dispatched", document_id=document_id)
+
+    async def batch_rerun(
+        self,
+        *,
+        statuses: list[str],
+        source_app: str | None = None,
+        source_id: str | None = None,
+        created_after: datetime.datetime | None = None,
+        limit: int = 500,
+        dry_run: bool = False,
+        operator_id: str | None = None,
+    ) -> tuple[dict[str, int], dict[str, int], int, int]:
+        filter_kwargs = dict(
+            source_app=source_app,
+            source_id=source_id,
+            created_after=created_after,
+        )
+        logger.info(
+            "ingest.batch_rerun_started",
+            statuses=statuses,
+            **filter_kwargs,
+            limit=limit,
+            dry_run=dry_run,
+            operator_id=operator_id,
+        )
+        before = await self._repo.count_by_statuses(statuses, **filter_kwargs)
+        if dry_run:
+            logger.info(
+                "ingest.batch_rerun_preview",
+                statuses=statuses,
+                **filter_kwargs,
+                before=before,
+                operator_id=operator_id,
+            )
+            return before, before, 0, 0
+
+        docs = await self._repo.list_by_statuses(statuses, **filter_kwargs, limit=limit)
+        queued = skipped = 0
+        for doc in docs:
+            outcome = await self._repo.mark_for_rerun(doc.document_id)
+            if outcome == "ok":
+                await self._broker.enqueue("ingest.pipeline", document_id=doc.document_id)
+                logger.info(
+                    "ingest.batch_rerun_item_dispatched",
+                    document_id=doc.document_id,
+                    operator_id=operator_id,
+                )
+                queued += 1
+            else:
+                skipped += 1
+
+        after = await self._repo.count_by_statuses(statuses, **filter_kwargs)
+        logger.info(
+            "ingest.batch_rerun_dispatched",
+            statuses=statuses,
+            **filter_kwargs,
+            limit=limit,
+            before=before,
+            after=after,
+            queued=queued,
+            skipped=skipped,
+            operator_id=operator_id,
+        )
+        return before, after, queued, skipped
 
     async def delete(self, document_id: str) -> None:
         doc = await self._repo.claim_for_deletion(document_id)

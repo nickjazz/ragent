@@ -380,3 +380,17 @@ X-User-Id: alice
 | T-CAv2.R2 | Behavioral | • **Achieve:** `POST /chatagent/v2` streaming — `stream: true` uses unified `build_request`+`send(stream=True)` path, validates upstream status before committing HTTP response, returns `StreamingResponse` via `iterate_in_threadpool` forwarding each byte-chunk immediately with upstream Content-Type.<br>• **Deliver:** Streaming branch in `chatagent_v2.py`; unit tests assert all chunks forwarded, upstream Content-Type forwarded, upstream error returns 502 before first byte. | [x] | Dev |
 | T-CAv2.R3 | Behavioral | • **Achieve:** Rate limiting with key `"chatagent:{user_id}"` → 429 `CHATAGENT_RATE_LIMITED`.<br>• **Deliver:** Unit test `test_rate_limited_returns_429`. | [x] | Dev |
 | T-CAv2.W1 | Behavioral | • **Achieve:** Router registered in `bootstrap/app.py` under the existing `CHATAGENT_API_URL` guard.<br>• **Deliver:** `app.py` wiring; `tests/integration/test_chatagent_v2_endpoint.py` — non-streaming, streaming, error paths, session auto-generation. | [x] | Dev |
+
+---
+
+## Track T-OPS: Batch Retry Operation API
+
+> Adds `POST /ops/v1/retry` so operators can immediately force-retry documents in UPLOADED/PENDING/FAILED states with a `dry_run` preview mode.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-OPS.R1 | Behavioral | • **Achieve:** `DocumentRepository.count_by_statuses()` + `list_by_statuses()` with optional source_app/source_id/created_after filters.<br>• **Deliver:** `src/ragent/repositories/document_repository.py` — two new methods + `_status_filter_clauses` helper; `tests/unit/test_document_repository_ops.py` (12 tests). | [x] | Dev |
+| T-OPS.R2 | Behavioral | • **Achieve:** `IngestService.batch_rerun()` — dry_run preview, per-doc mark+enqueue loop, before/after count snapshot.<br>• **Deliver:** `src/ragent/services/ingest_service.py`; `tests/unit/test_ingest_service_batch_rerun.py` (11 tests). | [x] | Dev |
+| T-OPS.R3 | Behavioral | • **Achieve:** `POST /ops/v1/retry` endpoint with OpsRetryRequest/OpsRetryResponse schemas.<br>• **Deliver:** `src/ragent/routers/admin_ops.py`; `tests/unit/test_admin_ops_router.py` (10 tests). | [x] | Dev |
+| T-OPS.W1 | Behavioral | • **Achieve:** Register admin_ops router in `bootstrap/app.py`.<br>• **Deliver:** `app.include_router(create_admin_ops_router(svc=ingest_svc))` wired after ingest router. | [x] | Dev |
+| T-OPS.R4 | Behavioral | • **Achieve:** PR review hardening — entry log before DB call, per-item dispatch log, operator_id audit field, extra-field rejection (`ConfigDict(extra="forbid")`), counts keyed by requested statuses, `idx_status_created` index for `(status, created_at)` queries.<br>• **Deliver:** `ingest_service.py`, `admin_ops.py`, `migrations/012_documents_status_created_index.sql`, `schema.sql`; 16 tests in `test_ingest_service_batch_rerun.py`, 14 tests in `test_admin_ops_router.py`. | [x] | Dev |
