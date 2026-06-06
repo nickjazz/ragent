@@ -18,28 +18,17 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
 from ragent.clients.embedding_model_config import InvalidEmbeddingModelConfig
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
+from ragent.schemas.embedding import CutoverRequest, PromoteRequest
 from ragent.services.active_model_registry import ActiveModelRegistryNotReady
 from ragent.services.embedding_lifecycle_service import (
     CutoverPreflightFailed,
     EmbeddingFieldCollision,
 )
 from ragent.utility.embedding_lifecycle import IllegalEmbeddingTransition
-
-
-class PromoteRequest(BaseModel):
-    name: str = Field(min_length=1)
-    dim: int
-    api_url: str = Field(min_length=1)
-    model_arg: str = Field(min_length=1)
-
-
-class CutoverRequest(BaseModel):
-    force: bool = False
 
 
 _EXCEPTION_MAP: list[tuple[type, int, HttpErrorCode]] = [
