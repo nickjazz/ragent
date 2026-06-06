@@ -2,40 +2,56 @@
 
 from __future__ import annotations
 
-import dataclasses
-from datetime import datetime
 from typing import Any
 
-import anyio.from_thread
-import httpx
+import anyio.from_thread  # noqa: F401 — test seam: test_distributed_seam_logs patches retrieve_mod.anyio.from_thread.run
 import structlog
 from haystack.components.joiners import DocumentJoiner
-from haystack.core.component import component
 from haystack.core.pipeline import Pipeline
 from haystack.dataclasses import Document
 from haystack_integrations.components.retrievers.elasticsearch import (
     ElasticsearchBM25Retriever,
     ElasticsearchEmbeddingRetriever,
 )
-from haystack_integrations.document_stores.elasticsearch.filters import _normalize_filters
 
-from ragent.bootstrap.metrics import record_rerank_degraded
-from ragent.errors.upstream import UpstreamServiceError, UpstreamTimeoutError
 from ragent.pipelines.observability import wrap_pipeline_component
-from ragent.utility.datetime import utcnow
+from ragent.pipelines.retrieve._constants import (
+    _VALID_MODES,
+    EXCERPT_MAX_CHARS_DEFAULT,
+    MAX_TOP_K,
+)
+from ragent.pipelines.retrieve.hydrator import (
+    _ExcerptTruncator,
+    _LLMGenerator,
+    _Reranker,
+    _SourceHydrator,
+)
+from ragent.pipelines.retrieve.joiner import (
+    _HAYSTACK_JOIN_MODE,
+    build_es_filters,
+    dedupe_by_document,
+    doc_to_source_entry,
+)
+from ragent.pipelines.retrieve.query_embedder import (
+    _ES_EMBEDDING_FIELD,
+    _DynamicFieldEmbeddingRetriever,
+    _QueryEmbedder,
+)
+from ragent.pipelines.retrieve.retriever import (
+    _FEEDBACK_CHUNK_FAN_OUT,
+    _FEEDBACK_KNN_NUM_CANDIDATES,
+    _FEEDBACK_KNN_SIZE,
+    _VOTE_DISLIKE,
+    _VOTE_LIKE,
+    _FeedbackMemoryRetriever,
+)
 from ragent.utility.env import int_env, optional_float_env
-from ragent.utility.wilson import wilson_lower_bound
 
-# Spec §4.6 default; composition.py reads EXCERPT_MAX_CHARS env and threads
-# the runtime value into build_retrieval_pipeline + create_{chat,retrieve}_router
-# so doc_to_source_entry and _ExcerptTruncator share one value.
-EXCERPT_MAX_CHARS_DEFAULT = 512
-# Upper bound on top_k — pinned by spec §3.4.4 (`POST /retrieve/v1` Pydantic
-# `le=200`) and §3.8.3 (MCP retrieve tool `maximum: 200`). DEFAULT_TOP_K is the
-# fallback when callers omit `top_k`; if an operator sets RETRIEVAL_TOP_K above
-# the advertised maximum, MCP clients calling with omitted top_k would silently
-# over-fetch past the contract. Fast-fail at boot instead.
-MAX_TOP_K = 200
+# Re-read env at __init__ import time so that the boot-time guard re-fires
+# when this module is reloaded (e.g. in tests).  _constants.py is cached
+# after first import so its assignments are only evaluated once; the guard
+# lives here to catch operator misconfiguration on every fresh import of
+# ragent.pipelines.retrieve.
 DEFAULT_TOP_K = int_env("RETRIEVAL_TOP_K", 20)
 if not 1 <= DEFAULT_TOP_K <= MAX_TOP_K:
     raise RuntimeError(
@@ -49,524 +65,41 @@ if DEFAULT_MIN_SCORE is not None and DEFAULT_MIN_SCORE < 0.0:
         f"RETRIEVAL_MIN_SCORE={DEFAULT_MIN_SCORE} must be >= 0.0 — "
         f"score thresholds cannot be negative."
     )
-_VALID_MODES = frozenset({"rrf", "concatenate", "vector_only", "bm25_only"})
 
 _logger = structlog.get_logger(__name__)
 
-
-def build_es_filters(source_app: str | None, source_meta: str | None) -> dict | None:
-    clauses = []
-    if source_app:
-        clauses.append({"field": "source_app", "operator": "==", "value": source_app})
-    if source_meta:
-        clauses.append({"field": "source_meta", "operator": "==", "value": source_meta})
-    if not clauses:
-        return None
-    if len(clauses) == 1:
-        return clauses[0]
-    return {"operator": "AND", "conditions": clauses}
-
-
-def dedupe_by_document(docs: list[Any]) -> list[Any]:
-    """Keep one chunk per `document_id`, preserving order; chunks without a
-    `document_id` are passed through unchanged."""
-    seen: set[str] = set()
-    out = []
-    for doc in docs:
-        doc_id = (doc.meta or {}).get("document_id")
-        if doc_id not in seen:
-            if doc_id is not None:
-                seen.add(doc_id)
-            out.append(doc)
-    return out
-
-
-def doc_to_source_entry(doc: Any, *, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> dict:
-    meta = doc.meta or {}
-    excerpt_src = meta.get("raw_content") or (doc.content or "")
-    return {
-        "document_id": meta.get("document_id"),
-        "source_app": meta.get("source_app"),
-        "source_id": meta.get("source_id"),
-        "source_meta": meta.get("source_meta"),
-        "type": "knowledge",
-        "source_title": meta.get("source_title"),
-        "source_url": meta.get("source_url"),
-        "mime_type": meta.get("mime_type"),
-        "excerpt": excerpt_src[:max_chars],
-        "score": doc.score if hasattr(doc, "score") else None,
-    }
-
-
-_HAYSTACK_JOIN_MODE = {"rrf": "reciprocal_rank_fusion", "concatenate": "concatenate"}
-
-# Every ES index in the index-per-model lifecycle (chunks_v1, chunks_v2, …)
-# uses this single dense_vector field name.  Lifecycle cutover flips the read
-# alias, not the field name (B61).
-_ES_EMBEDDING_FIELD = "embedding"
-
-
-@component
-class _QueryEmbedder:
-    """Embed the query for kNN retrieval.
-
-    Two construction modes (back-compat during the B50 rollout):
-
-    - **Legacy single-model**: ``_QueryEmbedder(embedder)`` calls
-      ``embedder.embed([q], query=True)`` and emits ``{query, query_embedding}``.
-      Kept for the existing pre-T-EM integration tests.
-
-    - **Registry mode**: ``_QueryEmbedder(registry=, embed_callable=)`` calls
-      ``registry.read_model()`` per request, embeds with that one model via
-      ``embed_callable(model, texts)``, and always emits
-      ``embedding_field="embedding"``.  Every index in the index-per-model
-      lifecycle (``chunks_v1``, ``chunks_v2``, …) uses the same
-      ``"embedding"`` dense_vector field name; lifecycle cutover works by
-      flipping the read alias (``chunks_v1_active``), not by switching field
-      names.  The fresh ``read_model()`` lookup on every run is intentional
-      — a cutover (alias flip) takes effect on the next query without
-      restarting the App.
-    """
-
-    def __init__(
-        self,
-        embedder: Any = None,
-        *,
-        registry: Any = None,
-        embed_callable: Any = None,
-    ) -> None:
-        if registry is not None:
-            if embed_callable is None:
-                raise ValueError("registry mode requires embed_callable")
-            self._mode = "registry"
-            self._registry = registry
-            self._embed = embed_callable
-            self._embedder = None
-        else:
-            self._mode = "legacy"
-            self._embedder = embedder
-            self._registry = None
-            self._embed = None
-
-    @component.output_types(query=str, query_embedding=list[float], embedding_field=str)
-    def run(self, query: str) -> dict:
-        if self._mode == "legacy":
-            embedding = self._embedder.embed([query], query=True)[0]
-            return {"query": query, "query_embedding": embedding}
-        model = self._registry.read_model()
-        embedding = self._embed(model, [query])[0]
-        return {
-            "query": query,
-            "query_embedding": embedding,
-            "embedding_field": _ES_EMBEDDING_FIELD,
-        }
-
-
-@component
-class _DynamicFieldEmbeddingRetriever:
-    """ES kNN retriever that targets a runtime-provided dense_vector field.
-
-    Replaces ``ElasticsearchEmbeddingRetriever`` when the embedding field
-    name is determined per-query by the ``ActiveModelRegistry`` (B50).
-    Without it, the upstream `_QueryEmbedder`'s `embedding_field` output
-    would have no consumer and the kNN query would fall back to
-    ``_ES_EMBEDDING_FIELD`` (``"embedding"``).
-
-    Reaches into ``document_store._search_documents(**body)`` to bypass the
-    haystack-elasticsearch retriever's hardcoded ``"field": "embedding"``.
-    The store's public API does not expose a per-call field override yet.
-    Because that path skips the store's own filter normalisation (which
-    ``_bm25_retrieval`` / ``_embedding_retrieval`` do), filters must be
-    normalised to ES query DSL here before reaching the client.
-    """
-
-    def __init__(
-        self,
-        document_store: Any,
-        top_k: int = DEFAULT_TOP_K,
-        num_candidates: int | None = None,
-    ) -> None:
-        self._store = document_store
-        self._top_k = top_k
-        self._num_candidates = num_candidates
-
-    @component.output_types(documents=list[Document])
-    def run(
-        self,
-        query_embedding: list[float],
-        embedding_field: str = _ES_EMBEDDING_FIELD,
-        filters: dict | None = None,
-        top_k: int | None = None,
-    ) -> dict:
-        if not query_embedding:
-            raise ValueError("query_embedding must be a non-empty list of floats")
-        k = top_k if top_k is not None else self._top_k
-        num_candidates = self._num_candidates or k * 10
-        body: dict[str, Any] = {
-            "knn": {
-                "field": embedding_field,
-                "query_vector": query_embedding,
-                "k": k,
-                "num_candidates": num_candidates,
-            },
-        }
-        if filters:
-            body["knn"]["filter"] = _normalize_filters(filters)
-        docs = self._store._search_documents(**body)
-        return {"documents": docs}
-
-
-@component
-class _SourceHydrator:
-    """Enrich READY chunks with source metadata; drop the rest (B36).
-
-    Acts as the retrieval correctness gate: chunks whose ``document_id`` is
-    not in the READY rows returned by ``get_sources_by_document_ids`` are
-    dropped, so orphan / mid-flight / demoted chunks never reach LLM
-    context or ``sources[]`` regardless of cleanup-path completeness.
-    """
-
-    def __init__(self, doc_repo: Any) -> None:
-        self._repo = doc_repo
-
-    @component.output_types(documents=list[Document])
-    def run(self, documents: list[Document]) -> dict:
-        ids = [d.meta.get("document_id") for d in documents if d.meta.get("document_id")]
-        sources = anyio.from_thread.run(self._repo.get_sources_by_document_ids, ids) if ids else {}
-        result = []
-        for doc in documents:
-            doc_id = doc.meta.get("document_id")
-            if not (doc_id and doc_id in sources):
-                continue
-            source_app, source_id, source_title = sources[doc_id]
-            meta = {
-                **doc.meta,
-                "source_app": source_app,
-                "source_id": source_id,
-                "source_title": source_title,
-            }
-            result.append(dataclasses.replace(doc, meta=meta))
-        before = len(documents)
-        after = len(result)
-        if after < before:
-            _logger.info(
-                "chat.hydrator.dropped",
-                before_count=before,
-                after_count=after,
-                dropped_count=before - after,
-            )
-        return {"documents": result}
-
-
-@component
-class _Reranker:
-    """Wrap RerankClient as a Haystack component.
-
-    Sits between the joiner (or single retriever) and source_hydrator so
-    rerank scoring sees full chunk content, before excerpt truncation.
-    """
-
-    def __init__(self, rerank_client: Any, top_k: int = DEFAULT_TOP_K) -> None:
-        self._client = rerank_client
-        self._top_k = top_k
-
-    @component.output_types(documents=list[Document])
-    def run(self, query: str, documents: list[Document], top_k: int | None = None) -> dict:
-        if not documents:
-            return {"documents": []}
-        k = top_k if top_k is not None else self._top_k
-        texts = [d.content or "" for d in documents]
-        try:
-            results = self._client.rerank(query=query, texts=texts, top_k=k)
-        except UpstreamServiceError as exc:
-            # 4xx responses (auth failures, bad-request config errors) are NOT
-            # transient — re-raise so they surface as hard errors instead of
-            # silently degrading ranking. Only 5xx / timeout warrant fail-open.
-            cause = exc.__cause__
-            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code < 500:
-                raise
-            # UpstreamTimeoutError is a subclass of UpstreamServiceError; check
-            # it first so the reason label discriminates timeout from 5xx errors.
-            reason = "timeout" if isinstance(exc, UpstreamTimeoutError) else "5xx"
-            _logger.warning("rerank.degraded", reason=reason, candidate_count=len(documents))
-            record_rerank_degraded(reason)
-            return {"documents": documents[:k]}
-        ordered: list[Document] = []
-        invalid = 0
-        for r in results[:k]:
-            i = r.get("index")
-            # bool is an int subclass, so isinstance(True, int) is True; reject
-            # explicitly so {"index": True} is not silently treated as docs[1].
-            if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(documents):
-                invalid += 1
-                continue
-            score = r.get("score")
-            doc = documents[i]
-            ordered.append(dataclasses.replace(doc, score=score) if score is not None else doc)
-        if invalid:
-            # Reranker returned indices outside the candidate set — surfaces
-            # contract drift between retrieval top_k and rerank result_count.
-            _logger.warning(
-                "rerank.invalid_indices",
-                invalid_count=invalid,
-                result_count=len(results),
-                document_count=len(documents),
-            )
-        return {"documents": ordered}
-
-
-@component
-class _LLMGenerator:
-    """Wrap LLMClient.chat as a Haystack component.
-
-    Terminal node for non-streaming chat: takes RAG-built messages plus
-    cited documents, returns the answer string and passes documents
-    through for citation rendering.
-    """
-
-    def __init__(self, llm_client: Any) -> None:
-        self._client = llm_client
-
-    @component.output_types(answer=str, documents=list[Document], usage=dict)
-    def run(
-        self,
-        messages: list[dict],
-        documents: list[Document],
-        model: str,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-    ) -> dict:
-        result = self._client.chat(
-            messages=messages, model=model, temperature=temperature, max_tokens=max_tokens
-        )
-        return {"answer": result["content"], "documents": documents, "usage": result["usage"]}
-
-
-@component
-class _ExcerptTruncator:
-    """Truncate chunk content to EXCERPT_MAX_CHARS for response payloads."""
-
-    def __init__(self, max_chars: int = EXCERPT_MAX_CHARS_DEFAULT) -> None:
-        self._max = max_chars
-
-    @component.output_types(documents=list[Document])
-    def run(self, documents: list[Document]) -> dict:
-        result = []
-        for doc in documents:
-            # Display layer prefers raw byte slice; fall back to normalized
-            # content for legacy chunks predating raw_content.
-            source = (doc.meta or {}).get("raw_content") or (doc.content or "")
-            truncated = source[: self._max]
-            if truncated != doc.content:
-                result.append(dataclasses.replace(doc, content=truncated))
-            else:
-                result.append(doc)
-        return {"documents": result}
-
-
-# Feedback retriever ES knobs — sized for the dedup-by-source flow:
-# kNN returns up to FEEDBACK_KNN_SIZE raw hits, which collapse into ≤ top_k
-# distinct (source_app, source_id) buckets after aggregation. num_candidates
-# is the ES HNSW recall budget per shard.
-_FEEDBACK_KNN_SIZE = 100
-_FEEDBACK_KNN_NUM_CANDIDATES = 400
-# Fan-out per source on the chunks_v1 lookup — most documents have ≤ 10 chunks
-# in the active READY revision, so top_k*10 caps the post-aggregation page.
-_FEEDBACK_CHUNK_FAN_OUT = 10
-_VOTE_LIKE = 1
-_VOTE_DISLIKE = -1
-
-
-@component
-class _FeedbackMemoryRetriever:
-    """3rd RRF input: boost sources liked on semantically-similar past queries (B54).
-
-    Pipeline within ``run()``:
-      1. ES kNN on ``feedback_v1.query_embedding`` (filter: ``ts > now-90d``,
-         optional source_app/source_meta, score floor for cosine ≥ 0.7).
-      2. Aggregate per (source_app, source_id) → (likes, dislikes, ts_max).
-      3. Gate ``(likes+dislikes) ≥ min_votes``.
-      4. score = wilson_lb(likes, total) × 0.5 ** (days_since_ts_max / half_life_days).
-      5. DocumentRepository.get_document_ids_by_source(pairs) → current READY docs.
-      6. Single ES `terms` query on ``chunks_v1.document_id`` (NOT N+1).
-      7. Each chunk inherits the parent source's Wilson-decayed score.
-
-    Both ES calls pass ``request_timeout=ES_QUERY_TIMEOUT_SECONDS`` so the
-    feedback path shares the existing chat-retrieval budget.
-    """
-
-    # Score floor: ES cosine similarity maps cos∈[-1,1] → score=(1+cos)/2 ∈ [0,1].
-    # cosine_threshold=0.7 ⇒ min_score = (1 + 0.7) / 2 = 0.85.
-    def __init__(
-        self,
-        es_client: Any,
-        doc_repo: Any,
-        *,
-        feedback_index: str = "feedback_v1",
-        chunks_index: str = "chunks_v1",
-        top_k: int = DEFAULT_TOP_K,
-        min_votes: int = 3,
-        half_life_days: int = 14,
-        cosine_threshold: float = 0.7,
-        lookback_days: int = 90,
-        request_timeout: float | None = None,
-    ) -> None:
-        self._es = es_client
-        self._repo = doc_repo
-        self._feedback_index = feedback_index
-        self._chunks_index = chunks_index
-        self._top_k = top_k
-        self._min_votes = min_votes
-        self._half_life_days = half_life_days
-        self._min_score = (1.0 + cosine_threshold) / 2.0
-        self._lookback_days = lookback_days
-        # Default matches ES_QUERY_TIMEOUT_SECONDS at the call site in composition.py.
-        self._request_timeout = request_timeout
-
-    def _search_kwargs(self) -> dict:
-        return (
-            {"request_timeout": self._request_timeout} if self._request_timeout is not None else {}
-        )
-
-    @component.output_types(documents=list[Document])
-    def run(
-        self,
-        query_embedding: list[float],
-        filters: dict | None = None,
-        top_k: int | None = None,
-    ) -> dict:
-        k = top_k if top_k is not None else self._top_k
-        # 1. kNN feedback_v1
-        knn_filter: list[dict] = [{"range": {"ts": {"gte": f"now-{self._lookback_days}d"}}}]
-        if filters:
-            sa = filters.get("source_app")
-            sm = filters.get("source_meta")
-            if sa:
-                knn_filter.append({"term": {"source_app": sa}})
-            if sm:
-                knn_filter.append({"term": {"source_meta": sm}})
-        knn_body = {
-            "size": _FEEDBACK_KNN_SIZE,
-            "min_score": self._min_score,
-            "knn": {
-                "field": "query_embedding",
-                "query_vector": query_embedding,
-                "k": _FEEDBACK_KNN_SIZE,
-                "num_candidates": _FEEDBACK_KNN_NUM_CANDIDATES,
-                "filter": {"bool": {"filter": knn_filter}},
-            },
-            "_source": ["source_app", "source_id", "vote", "ts"],
-        }
-        hits = self._es.search(index=self._feedback_index, body=knn_body, **self._search_kwargs())[
-            "hits"
-        ]["hits"]
-        if not hits:
-            # Cold-start / unrelated query — operators want to see the rate
-            # so they know whether feedback boost ever fires.  No content,
-            # only the bool filter shape and zero count (no embedding logged).
-            _logger.debug(
-                "feedback.retriever.empty_knn",
-                source_app_filter=bool(filters and filters.get("source_app")),
-                source_meta_filter=bool(filters and filters.get("source_meta")),
-            )
-            return {"documents": []}
-
-        # 2. Aggregate per (source_app, source_id)
-        agg: dict[tuple[str, str], dict] = {}
-        for h in hits:
-            src = h["_source"]
-            key = (src["source_app"], src["source_id"])
-            bucket = agg.setdefault(key, {"likes": 0, "dislikes": 0, "ts_max": None})
-            if src["vote"] == _VOTE_LIKE:
-                bucket["likes"] += 1
-            elif src["vote"] == _VOTE_DISLIKE:
-                bucket["dislikes"] += 1
-            ts = src["ts"]
-            # ISO 8601 with fixed UTC offset is lexicographically monotonic, so
-            # string > comparison is correct without parsing every hit.
-            if bucket["ts_max"] is None or ts > bucket["ts_max"]:
-                bucket["ts_max"] = ts
-
-        # 3-4. Gate + score
-        now = utcnow()
-        scored: list[tuple[tuple[str, str], float]] = []
-        for key, b in agg.items():
-            total = b["likes"] + b["dislikes"]
-            if total < self._min_votes:
-                continue
-            wilson = wilson_lower_bound(b["likes"], total)
-            # Python 3.11+ fromisoformat handles trailing Z natively.
-            ts_max = datetime.fromisoformat(b["ts_max"])
-            age_days = max(0.0, (now - ts_max).total_seconds() / 86400.0)
-            decay = 0.5 ** (age_days / self._half_life_days)
-            scored.append((key, wilson * decay))
-        scored.sort(key=lambda kv: kv[1], reverse=True)
-        scored = scored[:k]
-        if not scored:
-            _logger.info(
-                "feedback.retriever.below_min_votes",
-                hit_count=len(hits),
-                source_count=len(agg),
-                min_votes=self._min_votes,
-            )
-            return {"documents": []}
-
-        # 5. MariaDB: pair → current READY document_id
-        pairs = [k for k, _ in scored]
-        doc_id_map = anyio.from_thread.run(self._repo.get_document_ids_by_source, pairs)
-        scored_by_doc = {doc_id_map[k]: s for k, s in scored if k in doc_id_map}
-        if not scored_by_doc:
-            # All scored sources lacked a READY row (B36 alignment): possible
-            # after recent supersede or full DELETE. Surface for ops.
-            _logger.info(
-                "feedback.retriever.hydration_miss",
-                scored_count=len(scored),
-                resolved_count=0,
-            )
-            return {"documents": []}
-
-        # 6. Single ES terms query on chunks_v1
-        terms_body = {
-            "size": k * _FEEDBACK_CHUNK_FAN_OUT,
-            "query": {"terms": {"document_id": list(scored_by_doc.keys())}},
-        }
-        chunk_hits = self._es.search(
-            index=self._chunks_index, body=terms_body, **self._search_kwargs()
-        )["hits"]["hits"]
-
-        # 7. Build Document list, inherit parent score
-        result: list[Document] = []
-        for ch in chunk_hits:
-            src = ch["_source"]
-            doc_id = src.get("document_id")
-            if doc_id not in scored_by_doc:
-                continue
-            result.append(
-                Document(
-                    content=src.get("text") or "",
-                    meta={
-                        "document_id": doc_id,
-                        "chunk_id": src.get("chunk_id"),
-                        "source_app": src.get("source_app"),
-                        "source_meta": src.get("source_meta"),
-                        "source_url": src.get("source_url"),
-                        "raw_content": src.get("raw_content"),
-                    },
-                    score=scored_by_doc[doc_id],
-                )
-            )
-        # Per-request scoring trace — debug (chat QPS could be high). The two
-        # short-circuit branches above stay at info because they are rare and
-        # operationally meaningful (cold-start, hydration miss).
-        _logger.debug(
-            "feedback.retriever.scored",
-            hit_count=len(hits),
-            source_count=len(agg),
-            scored_count=len(scored),
-            resolved_count=len(scored_by_doc),
-            chunk_count=len(result),
-        )
-        return {"documents": result}
+__all__ = [
+    # constants (re-exported from _constants)
+    "EXCERPT_MAX_CHARS_DEFAULT",
+    "MAX_TOP_K",
+    "DEFAULT_TOP_K",
+    "DEFAULT_MIN_SCORE",
+    "_VALID_MODES",
+    # joiner
+    "build_es_filters",
+    "dedupe_by_document",
+    "doc_to_source_entry",
+    "_HAYSTACK_JOIN_MODE",
+    # query_embedder
+    "_QueryEmbedder",
+    "_DynamicFieldEmbeddingRetriever",
+    "_ES_EMBEDDING_FIELD",
+    # hydrator
+    "_SourceHydrator",
+    "_Reranker",
+    "_LLMGenerator",
+    "_ExcerptTruncator",
+    # retriever
+    "_FeedbackMemoryRetriever",
+    "_FEEDBACK_KNN_SIZE",
+    "_FEEDBACK_KNN_NUM_CANDIDATES",
+    "_FEEDBACK_CHUNK_FAN_OUT",
+    "_VOTE_LIKE",
+    "_VOTE_DISLIKE",
+    # factory / runner (defined here)
+    "build_retrieval_pipeline",
+    "run_retrieval",
+]
 
 
 def build_retrieval_pipeline(

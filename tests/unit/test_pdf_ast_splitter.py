@@ -103,7 +103,7 @@ def test_pdf_splitter_calls_to_markdown_per_page(monkeypatch):
         calls.append(pages)
         return f"Page {pages[0]} content\n"
 
-    with patch("ragent.pipelines.ingest.pymupdf4llm") as mock_module:
+    with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
         mock_module.to_markdown.side_effect = fake_to_markdown
         data = _make_pdf_bytes(["Alpha", "Beta"])
         _run_splitter(data)
@@ -117,7 +117,7 @@ def test_pdf_empty_markdown_page_skipped(monkeypatch):
     """Pages where to_markdown returns blank markdown produce no atoms."""
     from unittest.mock import patch
 
-    with patch("ragent.pipelines.ingest.pymupdf4llm") as mock_module:
+    with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
         mock_module.to_markdown.return_value = "   "
         data = _make_pdf_bytes(["anything"])
         atoms = _run_splitter(data)
@@ -129,7 +129,7 @@ def test_pdf_to_markdown_fallback_on_failure(monkeypatch):
     """When to_markdown raises, falls back to plain fitz text; page is still ingested."""
     from unittest.mock import patch
 
-    with patch("ragent.pipelines.ingest.pymupdf4llm") as mock_module:
+    with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
         mock_module.to_markdown.side_effect = RuntimeError("rapidocr internal error")
         data = _make_pdf_bytes(["Fallback text"])
         atoms = _run_splitter(data)
@@ -160,10 +160,10 @@ def test_pdf_page_count_exceeds_cap_raises(monkeypatch):
     BEFORE the per-page extraction loop runs."""
     import pytest
 
-    from ragent.pipelines import ingest
+    import ragent.pipelines.ingest.splitter as splitter_mod
     from ragent.security.archive_guard import PdfTooManyPagesError
 
-    monkeypatch.setattr(ingest, "INGEST_MAX_PDF_PAGES", 2)
+    monkeypatch.setattr(splitter_mod, "INGEST_MAX_PDF_PAGES", 2)
     data = _make_pdf_bytes(["A", "B", "C"])  # 3 pages > cap of 2
 
     with pytest.raises(PdfTooManyPagesError) as exc_info:
@@ -178,9 +178,9 @@ def test_pdf_page_count_exceeds_cap_raises(monkeypatch):
 
 def test_pdf_page_count_at_cap_passes(monkeypatch):
     """A PDF exactly at the cap is accepted (boundary)."""
-    from ragent.pipelines import ingest
+    import ragent.pipelines.ingest.splitter as splitter_mod
 
-    monkeypatch.setattr(ingest, "INGEST_MAX_PDF_PAGES", 3)
+    monkeypatch.setattr(splitter_mod, "INGEST_MAX_PDF_PAGES", 3)
     data = _make_pdf_bytes(["A", "B", "C"])  # exactly 3 pages
     atoms = _run_splitter(data)
     page_numbers = {a.meta["page_number"] for a in atoms}
@@ -203,16 +203,16 @@ def test_pdf_margins_passed_to_to_markdown(monkeypatch):
     """INGEST_PDF_MARGIN_PTS is forwarded as margins=(0,v,0,v) to to_markdown."""
     from unittest.mock import patch
 
-    from ragent.pipelines import ingest
+    import ragent.pipelines.ingest.splitter as splitter_mod
 
-    monkeypatch.setattr(ingest, "INGEST_PDF_MARGIN_PTS", 50.0)
+    monkeypatch.setattr(splitter_mod, "INGEST_PDF_MARGIN_PTS", 50.0)
     received = {}
 
     def fake_to_markdown(pdf, *, pages, use_ocr, margins, **kwargs):
         received["margins"] = margins
         return "content\n"
 
-    with patch("ragent.pipelines.ingest.pymupdf4llm") as mock_module:
+    with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
         mock_module.to_markdown.side_effect = fake_to_markdown
         data = _make_pdf_bytes(["text"])
         _run_splitter(data)
@@ -222,6 +222,6 @@ def test_pdf_margins_passed_to_to_markdown(monkeypatch):
 
 def test_pdf_margins_default_zero():
     """Default INGEST_PDF_MARGIN_PTS is 0 (no clipping)."""
-    from ragent.pipelines import ingest
+    import ragent.pipelines.ingest.splitter as splitter_mod
 
-    assert ingest.INGEST_PDF_MARGIN_PTS == 0.0
+    assert splitter_mod.INGEST_PDF_MARGIN_PTS == 0.0

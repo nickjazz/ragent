@@ -107,16 +107,16 @@ def test_hard_split_caps_pieces_per_atom(monkeypatch) -> None:
     """Pathological config (overlap >= target) must not produce unbounded chunks."""
     import pytest
 
-    from ragent.pipelines import ingest as ingest_mod
+    import ragent.pipelines.ingest.chunker as chunker_mod
 
-    monkeypatch.setattr(ingest_mod, "CHUNK_TARGET_CHARS", 50)
-    monkeypatch.setattr(ingest_mod, "CHUNK_MAX_CHARS", 75)
-    monkeypatch.setattr(ingest_mod, "CHUNK_OVERLAP_CHARS", 49)
-    monkeypatch.setattr(ingest_mod, "CHUNK_MAX_PIECES_PER_ATOM", 16)
+    monkeypatch.setattr(chunker_mod, "CHUNK_TARGET_CHARS", 50)
+    monkeypatch.setattr(chunker_mod, "CHUNK_MAX_CHARS", 75)
+    monkeypatch.setattr(chunker_mod, "CHUNK_OVERLAP_CHARS", 49)
+    monkeypatch.setattr(chunker_mod, "CHUNK_MAX_PIECES_PER_ATOM", 16)
 
     from ragent.pipelines.observability import IngestStepError
 
     big = _atom("z" * 10_000)
     with pytest.raises(IngestStepError) as exc:
-        ingest_mod._BudgetChunker().run([big])
+        chunker_mod._BudgetChunker().run([big])
     assert exc.value.error_code == "CHUNK_BUDGET_EXCEEDED"
