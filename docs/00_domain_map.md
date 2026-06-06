@@ -150,8 +150,17 @@
 
 | 檔案 | 職責 |
 |---|---|
-| `ingest/__init__.py` | `build_ingest_pipeline()` — TextLoader → MimeAwareSplitter → BudgetChunker → DocumentEmbedder |
-| `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — QueryEmbedder → ESVector+BM25 → RRF Joiner → SourceHydrator |
+| `ingest/__init__.py` | `build_ingest_pipeline()` — 公用介面；re-exports 所有 sub-module 符號 |
+| `ingest/loader.py` | `_TextLoader`、`ALLOWED_MIMES` |
+| `ingest/splitter.py` | `_MimeAwareSplitter`、`_MarkdownASTSplitter`、`_HtmlASTSplitter`、`_DocxASTSplitter`、`_PptxASTSplitter`、`_PdfASTSplitter`、`INGEST_PDF_MARGIN_PTS` |
+| `ingest/chunker.py` | `_BudgetChunker`、`_pack_atoms`、`validate_chunk_config`、`CHUNK_TARGET_CHARS`、`CHUNK_MAX_CHARS`、`CHUNK_OVERLAP_CHARS`、`CHUNK_MAX_PIECES_PER_ATOM` |
+| `ingest/embedder.py` | `_DocumentEmbedder` |
+| `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — 公用介面；re-exports 所有 sub-module 符號 |
+| `retrieve/_constants.py` | `DEFAULT_TOP_K`、`DEFAULT_MIN_SCORE`、`MAX_TOP_K`、`EXCERPT_MAX_CHARS_DEFAULT`、`_VALID_MODES` |
+| `retrieve/joiner.py` | `build_es_filters`、`dedupe_by_document`、`doc_to_source_entry` |
+| `retrieve/query_embedder.py` | `_QueryEmbedder`、`_DynamicFieldEmbeddingRetriever` |
+| `retrieve/hydrator.py` | `_SourceHydrator`、`_Reranker`、`_LLMGenerator`、`_ExcerptTruncator` |
+| `retrieve/retriever.py` | `_FeedbackMemoryRetriever` |
 | `observability.py` | `wrap_pipeline_component()` — 每個 Haystack component 的 structlog + OTEL 雙發射封裝 |
 
 ---
