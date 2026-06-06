@@ -13,8 +13,6 @@ from ragent.services.ingest_service import IngestService
 
 OPS_RETRY_BATCH_LIMIT = 500
 
-_Statuses = list[Literal["UPLOADED", "PENDING", "FAILED"]]
-
 
 class OpsStatusCount(BaseModel):
     before: int
@@ -22,7 +20,7 @@ class OpsStatusCount(BaseModel):
 
 
 class OpsRetryRequest(BaseModel):
-    statuses: _Statuses = Field(min_length=1)
+    statuses: list[Literal["UPLOADED", "PENDING", "FAILED"]] = Field(min_length=1)
     source_app: str | None = None
     source_id: str | None = None
     created_after: datetime.datetime | None = None
