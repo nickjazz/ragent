@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from ragent.plugins.vector import Chunk, VectorExtractor
+from ragent.extractors.vector import Chunk, VectorExtractor
 
 
 @dataclass

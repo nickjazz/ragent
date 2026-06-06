@@ -3,8 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from ragent.plugins import ExtractorPlugin
-from ragent.plugins.vector import Chunk, VectorExtractor
+from ragent.extractors import ExtractorPlugin
+from ragent.extractors.vector import Chunk, VectorExtractor
 
 
 @dataclass

@@ -74,9 +74,9 @@ def test_async_engine_pool_pre_ping_and_recycle(_env: None) -> None:
         patch("ragent.repositories.document_repository.DocumentRepository", MagicMock()),
         patch("ragent.storage.minio_registry.MinioSiteRegistry", MagicMock()),
         patch("ragent.clients.rate_limiter.RateLimiter", MagicMock()),
-        patch("ragent.plugins.registry.PluginRegistry", MagicMock()),
-        patch("ragent.plugins.vector.VectorExtractor", MagicMock()),
-        patch("ragent.plugins.stub_graph.StubGraphExtractor", MagicMock()),
+        patch("ragent.extractors.registry.PluginRegistry", MagicMock()),
+        patch("ragent.extractors.vector.VectorExtractor", MagicMock()),
+        patch("ragent.extractors.stub_graph.StubGraphExtractor", MagicMock()),
         patch("httpx.Client"),
     ):
         import ragent.bootstrap.composition as comp
@@ -129,9 +129,9 @@ def test_async_engine_pool_recycle_env_override(
         patch("ragent.repositories.document_repository.DocumentRepository", MagicMock()),
         patch("ragent.storage.minio_registry.MinioSiteRegistry", MagicMock()),
         patch("ragent.clients.rate_limiter.RateLimiter", MagicMock()),
-        patch("ragent.plugins.registry.PluginRegistry", MagicMock()),
-        patch("ragent.plugins.vector.VectorExtractor", MagicMock()),
-        patch("ragent.plugins.stub_graph.StubGraphExtractor", MagicMock()),
+        patch("ragent.extractors.registry.PluginRegistry", MagicMock()),
+        patch("ragent.extractors.vector.VectorExtractor", MagicMock()),
+        patch("ragent.extractors.stub_graph.StubGraphExtractor", MagicMock()),
         patch("httpx.Client"),
     ):
         import ragent.bootstrap.composition as comp

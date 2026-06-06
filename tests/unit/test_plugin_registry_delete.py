@@ -39,7 +39,7 @@ class _ErrorPlugin:
 
 
 def test_fan_out_delete_calls_every_plugin() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     p1 = _OkPlugin(name="vec")
     p2 = _OkPlugin(name="graph", required=False)
@@ -55,7 +55,7 @@ def test_fan_out_delete_calls_every_plugin() -> None:
 
 
 def test_fan_out_delete_idempotent_on_already_deleted() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     p = _OkPlugin(name="vec")
     reg = PluginRegistry()
@@ -68,7 +68,7 @@ def test_fan_out_delete_idempotent_on_already_deleted() -> None:
 
 
 def test_fan_out_delete_error_captured_in_result() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     reg = PluginRegistry()
     reg.register(_ErrorPlugin())
@@ -81,14 +81,14 @@ def test_fan_out_delete_error_captured_in_result() -> None:
 
 
 def test_fan_out_delete_timeout_returns_timeout_result() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     p = _OkPlugin(name="vec")
     reg = PluginRegistry()
     reg.register(p)
 
     timeout_mock = AsyncMock(side_effect=TimeoutError)
-    with patch("ragent.plugins.registry.asyncio.wait_for", timeout_mock):
+    with patch("ragent.extractors.registry.asyncio.wait_for", timeout_mock):
         results = asyncio.run(reg.fan_out_delete("doc_x"))
 
     assert results[0].error == "timeout"
@@ -103,7 +103,7 @@ def test_fan_out_delete_runs_outside_db_transaction() -> None:
     """
     import inspect
 
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     sig = inspect.signature(PluginRegistry.fan_out_delete)
     params = list(sig.parameters.keys())

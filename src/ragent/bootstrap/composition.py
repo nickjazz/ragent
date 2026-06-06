@@ -79,9 +79,9 @@ def build_container() -> Container:
     from ragent.clients.rerank import RerankClient
     from ragent.pipelines.ingest import DocumentEmbedder, build_ingest_pipeline
     from ragent.pipelines.retrieve import EXCERPT_MAX_CHARS_DEFAULT, build_retrieval_pipeline
-    from ragent.plugins.registry import PluginRegistry
-    from ragent.plugins.stub_graph import StubGraphExtractor
-    from ragent.plugins.vector import VectorExtractor
+    from ragent.extractors.registry import PluginRegistry
+    from ragent.extractors.stub_graph import StubGraphExtractor
+    from ragent.extractors.vector import VectorExtractor
     from ragent.repositories.document_repository import DocumentRepository
     from ragent.repositories.system_settings_repository import SystemSettingsRepository
     from ragent.services.active_model_registry import ActiveModelRegistry
