@@ -8,7 +8,17 @@ from ragent.schemas._common import FILTER_MAX_LEN, FILTER_META_MAX_LEN, validate
 from ragent.utility.env import int_env, optional_float_env
 
 DEFAULT_TOP_K: int = int_env("RETRIEVAL_TOP_K", 20)
+if not 1 <= DEFAULT_TOP_K <= 200:
+    raise RuntimeError(
+        f"RETRIEVAL_TOP_K={DEFAULT_TOP_K} violates the [1, 200] top_k field constraint "
+        f"(spec §3.4.4); omitted top_k in requests would bypass the API contract."
+    )
 DEFAULT_MIN_SCORE: float | None = optional_float_env("RETRIEVAL_MIN_SCORE")
+if DEFAULT_MIN_SCORE is not None and DEFAULT_MIN_SCORE < 0.0:
+    raise RuntimeError(
+        f"RETRIEVAL_MIN_SCORE={DEFAULT_MIN_SCORE} must be >= 0.0 — "
+        f"score thresholds cannot be negative."
+    )
 
 
 class RetrieveRequest(BaseModel):

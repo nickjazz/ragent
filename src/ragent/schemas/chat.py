@@ -12,7 +12,17 @@ from ragent.schemas._common import FILTER_MAX_LEN, FILTER_META_MAX_LEN, validate
 from ragent.utility.env import int_env, optional_float_env
 
 _DEFAULT_TOP_K: int = int_env("RETRIEVAL_TOP_K", 20)
+if not 1 <= _DEFAULT_TOP_K <= 200:
+    raise RuntimeError(
+        f"RETRIEVAL_TOP_K={_DEFAULT_TOP_K} violates the [1, 200] top_k field constraint "
+        f"(spec §3.4.4); omitted top_k in chat requests would bypass the API contract."
+    )
 _DEFAULT_MIN_SCORE: float | None = optional_float_env("RETRIEVAL_MIN_SCORE")
+if _DEFAULT_MIN_SCORE is not None and _DEFAULT_MIN_SCORE < 0.0:
+    raise RuntimeError(
+        f"RETRIEVAL_MIN_SCORE={_DEFAULT_MIN_SCORE} must be >= 0.0 — "
+        f"score thresholds cannot be negative."
+    )
 
 _DEFAULT_PROVIDER = os.environ.get("RAGENT_DEFAULT_LLM_PROVIDER", "openai")
 _DEFAULT_MODEL = os.environ.get("RAGENT_DEFAULT_LLM_MODEL", "gptoss-120b")
