@@ -37,7 +37,7 @@ from ragent.utility.embedding_lifecycle import next_state
 
 logger = structlog.get_logger(__name__)
 
-_ES_RESOURCES = Path(__file__).parents[3] / "resources" / "es"
+_ES_RESOURCES = Path(__file__).parents[4] / "resources" / "es"
 
 
 class EmbeddingFieldCollision(Exception):

@@ -150,16 +150,8 @@
 
 | 檔案 | 職責 |
 |---|---|
-| `ingest/__init__.py` | `build_ingest_pipeline()` — re-exports all ingest components |
-| `ingest/loader.py` | `_TextLoader` — 單文件 Document 建構 |
-| `ingest/splitter.py` | `_MimeAwareSplitter` + 各格式 AST splitter（MD / HTML / DOCX / PPTX / PDF）|
-| `ingest/chunker.py` | `_BudgetChunker`、`_pack_atoms` — mime-agnostic budget chunking |
-| `ingest/embedder.py` | `DocumentEmbedder` — 多 model 雙寫 ES embedder |
-| `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — re-exports all retrieve components |
-| `retrieve/query_embedder.py` | `_QueryEmbedder`、`_DynamicFieldEmbeddingRetriever` |
-| `retrieve/retriever.py` | `_FeedbackMemoryRetriever` + feedback 相關常數 |
-| `retrieve/hydrator.py` | `_SourceHydrator`、`_ExcerptTruncator`、`_Reranker`、`_LLMGenerator` |
-| `retrieve/joiner.py` | `build_es_filters`、`dedupe_by_document`、`doc_to_source_entry`、retrieval helpers |
+| `ingest/__init__.py` | `build_ingest_pipeline()` — TextLoader → MimeAwareSplitter → BudgetChunker → DocumentEmbedder |
+| `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — QueryEmbedder → ESVector+BM25 → RRF Joiner → SourceHydrator |
 | `observability.py` | `wrap_pipeline_component()` — 每個 Haystack component 的 structlog + OTEL 雙發射封裝 |
 
 ---
