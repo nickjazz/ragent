@@ -22,20 +22,6 @@ from typing import Any
 from haystack.core.pipeline import Pipeline
 
 from ragent.errors.codes import TaskErrorCode
-from ragent.pipelines.observability import wrap_pipeline_component
-from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES  # noqa: F401 — re-exported
-
-from ragent.pipelines.ingest.loader import ALLOWED_MIMES, _TextLoader  # noqa: F401
-from ragent.pipelines.ingest.splitter import (  # noqa: F401
-    INGEST_PDF_MARGIN_PTS,
-    _DocxASTSplitter,
-    _HtmlASTSplitter,
-    _MarkdownASTSplitter,
-    _MimeAwareSplitter,
-    _PdfASTSplitter,
-    _PptxASTSplitter,
-    _SPLITTER_LABEL,
-)
 from ragent.pipelines.ingest.chunker import (  # noqa: F401
     CHUNK_MAX_CHARS,
     CHUNK_MAX_PIECES_PER_ATOM,
@@ -46,7 +32,19 @@ from ragent.pipelines.ingest.chunker import (  # noqa: F401
     validate_chunk_config,
 )
 from ragent.pipelines.ingest.embedder import DocumentEmbedder  # noqa: F401
-
+from ragent.pipelines.ingest.loader import ALLOWED_MIMES, _TextLoader  # noqa: F401
+from ragent.pipelines.ingest.splitter import (  # noqa: F401
+    _SPLITTER_LABEL,
+    INGEST_PDF_MARGIN_PTS,
+    _DocxASTSplitter,
+    _HtmlASTSplitter,
+    _MarkdownASTSplitter,
+    _MimeAwareSplitter,
+    _PdfASTSplitter,
+    _PptxASTSplitter,
+)
+from ragent.pipelines.observability import wrap_pipeline_component
+from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES  # noqa: F401 — re-exported
 
 # ---------------------------------------------------------------------------
 # build_ingest_pipeline — v2 graph

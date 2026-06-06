@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import structlog
 from haystack.core.component import component
 from haystack.dataclasses import Document
 
 from ragent.schemas.ingest import IngestMime
-
-_logger = structlog.get_logger(__name__)
 
 ALLOWED_MIMES = (
     "text/plain",

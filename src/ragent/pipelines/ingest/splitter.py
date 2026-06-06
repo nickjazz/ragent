@@ -18,8 +18,6 @@ from ragent.schemas.ingest import IngestMime
 from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES
 from ragent.utility.env import float_env
 
-from ragent.pipelines.ingest.loader import ALLOWED_MIMES  # noqa: F401 — re-exported
-
 _logger = structlog.get_logger(__name__)
 
 # PDF page margin in points (1 pt ≈ 0.35 mm). Header/footer zones at the

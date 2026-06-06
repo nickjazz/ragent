@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
-import structlog
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import structlog
 from haystack.core.component import component
 from haystack.dataclasses import Document
 
