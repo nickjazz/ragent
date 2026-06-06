@@ -632,5 +632,7 @@ Immediately re-queues documents in `UPLOADED`, `PENDING`, or `FAILED` states wit
 - When `dry_run: false`, documents are processed FIFO (oldest `created_at` first). Each document is atomically claimed via `mark_for_rerun` before enqueueing; documents that transition state between the list scan and the mark are counted as `skipped` (race-safe).
 - `limit` caps the number of documents retried in one call; run multiple times to drain a large backlog.
 
+**Notes on `counts`:** all statuses listed in `statuses` always appear as keys, even if their count is 0 in both before and after snapshots.
+
 **Non-2xx cases:**
-- `422` — `statuses` missing or empty; `limit` outside 1–500; unrecognised status value.
+- `422` — `statuses` missing or empty; `limit` outside 1–500; unrecognised status value; unknown fields in request body (e.g. typo `dryrun` instead of `dry_run`).

@@ -6,7 +6,7 @@ import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ragent.auth.deps import get_user_id
 from ragent.services.ingest_service import IngestService
@@ -20,6 +20,8 @@ class OpsStatusCount(BaseModel):
 
 
 class OpsRetryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     statuses: list[Literal["UPLOADED", "PENDING", "FAILED"]] = Field(min_length=1)
     source_app: str | None = None
     source_id: str | None = None
@@ -41,7 +43,7 @@ def create_admin_ops_router(svc: IngestService) -> APIRouter:
     @router.post("/retry", status_code=200)
     async def ops_retry(
         body: OpsRetryRequest,
-        _user_id: Annotated[str, Depends(get_user_id)],
+        user_id: Annotated[str, Depends(get_user_id)],
     ) -> OpsRetryResponse:
         before, after, queued, skipped = await svc.batch_rerun(
             statuses=body.statuses,
@@ -50,10 +52,10 @@ def create_admin_ops_router(svc: IngestService) -> APIRouter:
             created_after=body.created_after,
             limit=body.limit,
             dry_run=body.dry_run,
+            operator_id=user_id,
         )
-        all_statuses = set(before) | set(after)
         counts = {
-            s: OpsStatusCount(before=before.get(s, 0), after=after.get(s, 0)) for s in all_statuses
+            s: OpsStatusCount(before=before.get(s, 0), after=after.get(s, 0)) for s in body.statuses
         }
         return OpsRetryResponse(
             dry_run=body.dry_run,

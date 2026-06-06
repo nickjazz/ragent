@@ -189,6 +189,77 @@ async def test_log_dispatched_emitted():
     assert any(e["event"] == "ingest.batch_rerun_dispatched" for e in logs)
 
 
+async def test_log_started_emitted_on_execute():
+    import structlog
+
+    svc, repo, broker = _make_service()
+    repo.list_by_statuses.return_value = []
+    repo.count_by_statuses.return_value = {}
+
+    with structlog.testing.capture_logs() as logs:
+        await svc.batch_rerun(statuses=["FAILED"])
+
+    assert any(e["event"] == "ingest.batch_rerun_started" for e in logs)
+
+
+async def test_log_started_emitted_on_dry_run():
+    import structlog
+
+    svc, repo, broker = _make_service()
+    repo.count_by_statuses.return_value = {}
+
+    with structlog.testing.capture_logs() as logs:
+        await svc.batch_rerun(statuses=["FAILED"], dry_run=True)
+
+    assert any(e["event"] == "ingest.batch_rerun_started" for e in logs)
+
+
+async def test_log_started_before_db_call():
+    import structlog
+
+    svc, repo, broker = _make_service()
+    order: list[str] = []
+    repo.count_by_statuses.side_effect = lambda *a, **k: order.append("db") or {}
+    repo.list_by_statuses.return_value = []
+
+    with structlog.testing.capture_logs() as logs:
+        await svc.batch_rerun(statuses=["FAILED"])
+
+    started_idx = next(i for i, e in enumerate(logs) if e["event"] == "ingest.batch_rerun_started")
+    assert started_idx == 0
+    assert order[0] == "db"  # db called after started log emitted at index 0
+
+
+async def test_log_per_item_dispatch_emitted():
+    import structlog
+
+    svc, repo, broker = _make_service()
+    repo.list_by_statuses.return_value = [_doc("D1"), _doc("D2")]
+    repo.mark_for_rerun.return_value = "ok"
+    repo.count_by_statuses.side_effect = [{"FAILED": 2}, {"FAILED": 0}]
+
+    with structlog.testing.capture_logs() as logs:
+        await svc.batch_rerun(statuses=["FAILED"])
+
+    item_logs = [e for e in logs if e["event"] == "ingest.batch_rerun_item_dispatched"]
+    assert len(item_logs) == 2
+    assert {e["document_id"] for e in item_logs} == {"D1", "D2"}
+
+
+async def test_operator_id_in_started_log():
+    import structlog
+
+    svc, repo, broker = _make_service()
+    repo.count_by_statuses.return_value = {}
+    repo.list_by_statuses.return_value = []
+
+    with structlog.testing.capture_logs() as logs:
+        await svc.batch_rerun(statuses=["FAILED"], operator_id="ops-user")
+
+    started = next(e for e in logs if e["event"] == "ingest.batch_rerun_started")
+    assert started["operator_id"] == "ops-user"
+
+
 # ---------------------------------------------------------------------------
 # filter kwargs forwarding
 # ---------------------------------------------------------------------------

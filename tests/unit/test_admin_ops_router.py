@@ -198,3 +198,78 @@ def test_missing_user_id_returns_401_or_422():
     )
 
     assert resp.status_code in (200, 401, 422)
+
+
+# ---------------------------------------------------------------------------
+# extra field rejection (model_config extra="forbid")
+# ---------------------------------------------------------------------------
+
+
+def test_typo_dryrun_instead_of_dry_run_returns_422():
+    """dryrun typo must not silently default dry_run=False and mutate."""
+    client = _make_app()
+
+    resp = client.post(
+        "/ops/v1/retry",
+        json={"statuses": ["FAILED"], "dryrun": True},
+        headers={"x-user-id": "ops"},
+    )
+
+    assert resp.status_code == 422
+
+
+def test_unknown_field_returns_422():
+    client = _make_app()
+
+    resp = client.post(
+        "/ops/v1/retry",
+        json={"statuses": ["FAILED"], "unknown_field": "oops"},
+        headers={"x-user-id": "ops"},
+    )
+
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# counts always include all requested statuses (even zero-count)
+# ---------------------------------------------------------------------------
+
+
+def test_counts_includes_zero_count_requested_status():
+    """If a requested status has 0 docs, it must still appear in counts."""
+    svc = _default_svc(
+        before={"FAILED": 3},
+        after={"FAILED": 0},
+        queued=3,
+    )
+    client = _make_app(svc)
+
+    resp = client.post(
+        "/ops/v1/retry",
+        json={"statuses": ["FAILED", "PENDING"]},
+        headers={"x-user-id": "ops"},
+    )
+
+    body = resp.json()
+    assert "PENDING" in body["counts"]
+    assert body["counts"]["PENDING"]["before"] == 0
+    assert body["counts"]["PENDING"]["after"] == 0
+
+
+# ---------------------------------------------------------------------------
+# operator_id forwarding
+# ---------------------------------------------------------------------------
+
+
+def test_operator_id_forwarded_from_user_header():
+    svc = _default_svc()
+    client = _make_app(svc)
+
+    client.post(
+        "/ops/v1/retry",
+        json={"statuses": ["FAILED"]},
+        headers={"x-user-id": "alice"},
+    )
+
+    call_kwargs = svc.batch_rerun.call_args.kwargs
+    assert call_kwargs["operator_id"] == "alice"
