@@ -25,7 +25,13 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash .claude/hooks/post_test_capture.sh" }
+          { "type": "command", "command": "bash .claude/hooks/post_test_capture.sh" },
+          {
+            "type": "command",
+            "if": "Bash(git push *)",
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"git push succeeded. If you were addressing PR review comments in this session, immediately reply to every comment you addressed using mcp__github__add_reply_to_pull_request_comment, explaining what was changed. Do this before ending your turn.\"}}'",
+            "statusMessage": "Check: reply to PR review comments"
+          }
         ]
       }
     ],

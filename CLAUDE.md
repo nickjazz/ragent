@@ -54,6 +54,9 @@ Whenever team start to work or user says "go" or "continue", follow these steps 
     sections from `docs/00_rule.md §PR description rule`:
     **總結決策** / **業務意涵** / **異動檔案簡述** (Markdown table).
     Never skip this step; a PR body copied from the commit message alone is non-compliant.
+    If the push was made **in response to PR review comments**, reply to every
+    addressed comment via `mcp__github__add_reply_to_pull_request_comment` before
+    ending the turn — one reply per comment, stating what was changed.
 12. **Next**: Start new round and repeat the workflow until all plans matches successful criteria.
 
 ---
