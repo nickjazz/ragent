@@ -79,6 +79,26 @@ def _rows_to_docs(rows: Any) -> list[DocumentRow]:
     return [DocumentRow.from_mapping(r) for r in rows]
 
 
+def _status_filter_clauses(
+    statuses: list[str],
+    source_app: str | None,
+    source_id: str | None,
+    created_after: datetime.datetime | None,
+) -> tuple[list[str], dict[str, Any]]:
+    clauses = ["status IN :statuses"]
+    params: dict[str, Any] = {"statuses": tuple(statuses)}
+    if source_app is not None:
+        clauses.append("source_app = :source_app")
+        params["source_app"] = source_app
+    if source_id is not None:
+        clauses.append("source_id = :source_id")
+        params["source_id"] = source_id
+    if created_after is not None:
+        clauses.append("created_at > :created_after")
+        params["created_after"] = created_after
+    return clauses, params
+
+
 class DocumentRepository:
     def __init__(self, engine: Any) -> None:
         self._engine = engine
@@ -485,6 +505,46 @@ class DocumentRepository:
                 """
             ),
             {"before": updated_before},
+        )
+        return _rows_to_docs(rows)
+
+    async def count_by_statuses(
+        self,
+        statuses: list[str],
+        *,
+        source_app: str | None = None,
+        source_id: str | None = None,
+        created_after: datetime.datetime | None = None,
+    ) -> dict[str, int]:
+        clauses, params = _status_filter_clauses(statuses, source_app, source_id, created_after)
+        sql = (
+            "SELECT status, COUNT(*) AS cnt FROM documents WHERE "
+            + " AND ".join(clauses)
+            + " GROUP BY status"
+        )
+        rows = await self._fetch_all(
+            text(sql).bindparams(bindparam("statuses", expanding=True)), params
+        )
+        return {row["status"]: row["cnt"] for row in rows}
+
+    async def list_by_statuses(
+        self,
+        statuses: list[str],
+        *,
+        source_app: str | None = None,
+        source_id: str | None = None,
+        created_after: datetime.datetime | None = None,
+        limit: int = 500,
+    ) -> list[DocumentRow]:
+        clauses, params = _status_filter_clauses(statuses, source_app, source_id, created_after)
+        params["limit"] = limit
+        sql = (
+            "SELECT * FROM documents WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY created_at ASC LIMIT :limit"
+        )
+        rows = await self._fetch_all(
+            text(sql).bindparams(bindparam("statuses", expanding=True)), params
         )
         return _rows_to_docs(rows)
 

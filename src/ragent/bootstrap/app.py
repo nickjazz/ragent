@@ -29,6 +29,7 @@ from ragent.errors.problem import problem
 from ragent.middleware.logging import SCOPE_USER_ID_KEY, RequestLoggingMiddleware
 from ragent.routers.admin_embedding import create_router as create_admin_embedding_router
 from ragent.routers.admin_ingest import create_router as create_upload_ingest_router
+from ragent.routers.admin_ops import create_admin_ops_router
 from ragent.routers.chat import create_chat_router
 from ragent.routers.chatagent import create_chatagent_router
 from ragent.routers.chatagent_v2 import create_chatagent_v2_router
@@ -400,6 +401,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     )
 
     app.include_router(create_ingest_router(svc=ingest_svc))
+    app.include_router(create_admin_ops_router(svc=ingest_svc))
     app.include_router(
         create_upload_ingest_router(
             svc=ingest_svc, max_upload_bytes=container.ingest_upload_max_bytes
