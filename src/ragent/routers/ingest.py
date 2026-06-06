@@ -14,12 +14,17 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
 
 from ragent.auth.deps import get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
-from ragent.schemas.ingest import IngestRequest
+from ragent.schemas.ingest import (
+    IngestCreatedResponse,
+    IngestDetailResponse,
+    IngestListItem,
+    IngestListResponse,
+    IngestRequest,
+)
 from ragent.services.ingest_service import (
     DocumentNotFound,
     DocumentNotRerunnable,
@@ -31,45 +36,6 @@ from ragent.services.ingest_service import (
 from ragent.utility.datetime import to_iso
 
 logger = structlog.get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
-
-
-class IngestCreatedResponse(BaseModel):
-    document_id: str
-
-
-class IngestListItem(BaseModel):
-    document_id: str
-    status: str
-    source_id: str
-    source_app: str
-    source_title: str
-    updated_at: str | None
-
-
-class IngestListResponse(BaseModel):
-    items: list[IngestListItem]
-    next_cursor: str | None
-
-
-class IngestDetailResponse(BaseModel):
-    document_id: str
-    status: str
-    attempt: int
-    updated_at: str | None
-    ingest_type: str
-    minio_site: str | None
-    source_id: str
-    source_app: str
-    source_title: str
-    source_meta: str | None
-    source_url: str | None
-    error_code: str | None
-    error_reason: str | None
 
 
 # ---------------------------------------------------------------------------

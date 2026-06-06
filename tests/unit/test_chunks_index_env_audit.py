@@ -67,7 +67,7 @@ def test_composition_threads_es_chunks_index_to_vector_extractor(
     vector_spy = MagicMock(name="VectorExtractor")
 
     with (
-        patch("ragent.plugins.vector.VectorExtractor", vector_spy),
+        patch("ragent.extractors.vector.VectorExtractor", vector_spy),
         patch("ragent.bootstrap.init_schema.patch_aiomysql_ping"),
         patch("sqlalchemy.ext.asyncio.create_async_engine", MagicMock()),
         patch("ragent.clients.embedding.EmbeddingClient", MagicMock()),
@@ -84,8 +84,8 @@ def test_composition_threads_es_chunks_index_to_vector_extractor(
         patch("ragent.repositories.document_repository.DocumentRepository", MagicMock()),
         patch("ragent.storage.minio_registry.MinioSiteRegistry", MagicMock()),
         patch("ragent.clients.rate_limiter.RateLimiter", MagicMock()),
-        patch("ragent.plugins.registry.PluginRegistry", MagicMock()),
-        patch("ragent.plugins.stub_graph.StubGraphExtractor", MagicMock()),
+        patch("ragent.extractors.registry.PluginRegistry", MagicMock()),
+        patch("ragent.extractors.stub_graph.StubGraphExtractor", MagicMock()),
         patch("httpx.Client"),
     ):
         import ragent.bootstrap.composition as comp
@@ -138,9 +138,9 @@ def test_composition_threads_es_chunks_index_to_feedback_retriever(
         patch("ragent.repositories.feedback_repository.FeedbackRepository", MagicMock()),
         patch("ragent.storage.minio_registry.MinioSiteRegistry", MagicMock()),
         patch("ragent.clients.rate_limiter.RateLimiter", MagicMock()),
-        patch("ragent.plugins.registry.PluginRegistry", MagicMock()),
-        patch("ragent.plugins.vector.VectorExtractor", MagicMock()),
-        patch("ragent.plugins.stub_graph.StubGraphExtractor", MagicMock()),
+        patch("ragent.extractors.registry.PluginRegistry", MagicMock()),
+        patch("ragent.extractors.vector.VectorExtractor", MagicMock()),
+        patch("ragent.extractors.stub_graph.StubGraphExtractor", MagicMock()),
         patch("httpx.Client"),
     ):
         import ragent.bootstrap.composition as comp

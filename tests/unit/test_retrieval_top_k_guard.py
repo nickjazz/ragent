@@ -111,3 +111,131 @@ def test_default_min_score_negative_refuses_to_import(_reload_chat_min_score, ba
     """Negative RETRIEVAL_MIN_SCORE raises at import — score thresholds cannot be negative."""
     with pytest.raises(RuntimeError, match="RETRIEVAL_MIN_SCORE"):
         _reload_chat_min_score(bad_value)
+
+
+# ---------------------------------------------------------------------------
+# Schema-level guards — ragent.schemas.retrieve and ragent.schemas.chat
+# Pydantic v2 does not validate Field defaults (validate_default=False by
+# default), so an out-of-range RETRIEVAL_TOP_K env var would silently pass
+# through as the omitted-top_k default, bypassing the le=200 constraint.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _reload_retrieve_schema(monkeypatch: pytest.MonkeyPatch):
+    """Force re-import of `ragent.schemas.retrieve` with a patched env."""
+
+    def _reload(retrieval_top_k: str | None) -> None:
+        if retrieval_top_k is None:
+            monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+        else:
+            monkeypatch.setenv("RETRIEVAL_TOP_K", retrieval_top_k)
+        sys.modules.pop("ragent.schemas.retrieve", None)
+        importlib.import_module("ragent.schemas.retrieve")
+
+    yield _reload
+    monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+    sys.modules.pop("ragent.schemas.retrieve", None)
+    importlib.import_module("ragent.schemas.retrieve")
+
+
+@pytest.fixture
+def _reload_chat_schema(monkeypatch: pytest.MonkeyPatch):
+    """Force re-import of `ragent.schemas.chat` with a patched env."""
+
+    def _reload(retrieval_top_k: str | None) -> None:
+        if retrieval_top_k is None:
+            monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+        else:
+            monkeypatch.setenv("RETRIEVAL_TOP_K", retrieval_top_k)
+        sys.modules.pop("ragent.schemas.chat", None)
+        importlib.import_module("ragent.schemas.chat")
+
+    yield _reload
+    monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+    sys.modules.pop("ragent.schemas.chat", None)
+    importlib.import_module("ragent.schemas.chat")
+
+
+@pytest.mark.parametrize("bad_value", ["0", "201", "500", "-1"])
+def test_retrieve_schema_top_k_out_of_range_refuses_import(
+    _reload_retrieve_schema, bad_value
+) -> None:
+    """ragent.schemas.retrieve raises at import when RETRIEVAL_TOP_K is out of [1,200]."""
+    with pytest.raises(RuntimeError, match="RETRIEVAL_TOP_K"):
+        _reload_retrieve_schema(bad_value)
+
+
+@pytest.mark.parametrize("bad_value", ["0", "201", "500", "-1"])
+def test_chat_schema_top_k_out_of_range_refuses_import(_reload_chat_schema, bad_value) -> None:
+    """ragent.schemas.chat raises at import when RETRIEVAL_TOP_K is out of [1,200]."""
+    with pytest.raises(RuntimeError, match="RETRIEVAL_TOP_K"):
+        _reload_chat_schema(bad_value)
+
+
+def test_retrieve_schema_top_k_in_range_boots(_reload_retrieve_schema) -> None:
+    """Valid RETRIEVAL_TOP_K=100 → ragent.schemas.retrieve imports cleanly."""
+    _reload_retrieve_schema("100")
+    from ragent.schemas.retrieve import DEFAULT_TOP_K
+
+    assert DEFAULT_TOP_K == 100
+
+
+def test_chat_schema_top_k_in_range_boots(_reload_chat_schema) -> None:
+    """Valid RETRIEVAL_TOP_K=100 → ragent.schemas.chat imports cleanly."""
+    _reload_chat_schema("100")
+    import ragent.schemas.chat as chat_mod
+
+    assert chat_mod._DEFAULT_TOP_K == 100
+
+
+@pytest.fixture
+def _reload_retrieve_schema_min(monkeypatch: pytest.MonkeyPatch):
+    """Force re-import of `ragent.schemas.retrieve` with a patched RETRIEVAL_MIN_SCORE."""
+
+    def _reload(retrieval_min_score: str | None) -> None:
+        if retrieval_min_score is None:
+            monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
+        else:
+            monkeypatch.setenv("RETRIEVAL_MIN_SCORE", retrieval_min_score)
+        sys.modules.pop("ragent.schemas.retrieve", None)
+        importlib.import_module("ragent.schemas.retrieve")
+
+    yield _reload
+    monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
+    sys.modules.pop("ragent.schemas.retrieve", None)
+    importlib.import_module("ragent.schemas.retrieve")
+
+
+@pytest.fixture
+def _reload_chat_schema_min(monkeypatch: pytest.MonkeyPatch):
+    """Force re-import of `ragent.schemas.chat` with a patched RETRIEVAL_MIN_SCORE."""
+
+    def _reload(retrieval_min_score: str | None) -> None:
+        if retrieval_min_score is None:
+            monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
+        else:
+            monkeypatch.setenv("RETRIEVAL_MIN_SCORE", retrieval_min_score)
+        sys.modules.pop("ragent.schemas.chat", None)
+        importlib.import_module("ragent.schemas.chat")
+
+    yield _reload
+    monkeypatch.delenv("RETRIEVAL_MIN_SCORE", raising=False)
+    sys.modules.pop("ragent.schemas.chat", None)
+    importlib.import_module("ragent.schemas.chat")
+
+
+@pytest.mark.parametrize("bad_value", ["-0.1", "-1", "-99.9"])
+def test_retrieve_schema_min_score_negative_refuses_import(
+    _reload_retrieve_schema_min, bad_value
+) -> None:
+    """ragent.schemas.retrieve raises at import when RETRIEVAL_MIN_SCORE is negative."""
+    with pytest.raises(RuntimeError, match="RETRIEVAL_MIN_SCORE"):
+        _reload_retrieve_schema_min(bad_value)
+
+
+@pytest.mark.parametrize("bad_value", ["-0.1", "-1", "-99.9"])
+def test_chat_schema_min_score_negative_refuses_import(_reload_chat_schema_min, bad_value) -> None:
+    """ragent.schemas.chat raises at import when RETRIEVAL_MIN_SCORE is negative."""
+    with pytest.raises(RuntimeError, match="RETRIEVAL_MIN_SCORE"):
+        _reload_chat_schema_min(bad_value)

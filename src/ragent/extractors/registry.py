@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ragent.plugins.protocol import ExtractorPlugin
+    from ragent.extractors.protocol import ExtractorPlugin
 
 
 @dataclass

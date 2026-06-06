@@ -1,7 +1,7 @@
 """Phase 1 W2 — Plugin Protocol v1 contract tests (spec §5 S4, S5)."""
 
-from ragent.plugins import ExtractorPlugin
-from ragent.plugins.stub_graph import StubGraphExtractor
+from ragent.extractors import ExtractorPlugin
+from ragent.extractors.stub_graph import StubGraphExtractor
 
 
 class _GoodPlugin:

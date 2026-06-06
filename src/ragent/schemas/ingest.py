@@ -1,4 +1,4 @@
-"""T2v.23 — Pydantic models for v2 ingest API (spec §3.1).
+"""T2v.23 — Pydantic models for v2 ingest API (spec §3.1, §4.1).
 
 Discriminated union over `ingest_type`:
   - inline: `content` is in the JSON body.
@@ -23,6 +23,50 @@ from ragent.utility.compat import StrEnum
 
 SOURCE_URL_MAX = 2048
 SOURCE_META_MAX = 1024
+
+
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
+
+
+class IngestCreatedResponse(BaseModel):
+    document_id: str
+
+
+class IngestListItem(BaseModel):
+    document_id: str
+    status: str
+    source_id: str
+    source_app: str
+    source_title: str
+    updated_at: str | None
+
+
+class IngestListResponse(BaseModel):
+    items: list[IngestListItem]
+    next_cursor: str | None
+
+
+class IngestDetailResponse(BaseModel):
+    document_id: str
+    status: str
+    attempt: int
+    updated_at: str | None
+    ingest_type: str
+    minio_site: str | None
+    source_id: str
+    source_app: str
+    source_title: str
+    source_meta: str | None
+    source_url: str | None
+    error_code: str | None
+    error_reason: str | None
+
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
 
 
 class IngestMime(StrEnum):

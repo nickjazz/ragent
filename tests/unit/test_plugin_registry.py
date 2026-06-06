@@ -39,7 +39,7 @@ class _SlowPlugin:
 
 
 def test_register_and_fan_out_calls_all_plugins() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     p1 = _OkPlugin(name="alpha", required=True)
     p2 = _OkPlugin(name="beta", required=False)
@@ -55,7 +55,7 @@ def test_register_and_fan_out_calls_all_plugins() -> None:
 
 
 def test_all_required_ok_true_when_all_required_succeed() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     p = _OkPlugin(name="vec", required=True)
     reg = PluginRegistry()
@@ -65,7 +65,7 @@ def test_all_required_ok_true_when_all_required_succeed() -> None:
 
 
 def test_all_required_ok_false_when_required_plugin_errors() -> None:
-    from ragent.plugins.registry import PluginRegistry, Result
+    from ragent.extractors.registry import PluginRegistry, Result
 
     p = _OkPlugin(name="vec", required=True)
     reg = PluginRegistry()
@@ -75,7 +75,7 @@ def test_all_required_ok_false_when_required_plugin_errors() -> None:
 
 
 def test_all_required_ok_ignores_optional_errors() -> None:
-    from ragent.plugins.registry import PluginRegistry, Result
+    from ragent.extractors.registry import PluginRegistry, Result
 
     p_req = _OkPlugin(name="vec", required=True)
     p_opt = _OkPlugin(name="graph", required=False)
@@ -90,7 +90,7 @@ def test_all_required_ok_ignores_optional_errors() -> None:
 
 
 def test_duplicate_registration_raises() -> None:
-    from ragent.plugins.registry import DuplicatePluginError, PluginRegistry
+    from ragent.extractors.registry import DuplicatePluginError, PluginRegistry
 
     reg = PluginRegistry()
     reg.register(_OkPlugin(name="vec", required=True))
@@ -103,7 +103,7 @@ def test_duplicate_registration_raises() -> None:
 def test_duplicate_does_not_overwrite_existing() -> None:
     import contextlib
 
-    from ragent.plugins.registry import DuplicatePluginError, PluginRegistry
+    from ragent.extractors.registry import DuplicatePluginError, PluginRegistry
 
     p1 = _OkPlugin(name="vec", required=True)
     reg = PluginRegistry()
@@ -116,7 +116,7 @@ def test_duplicate_does_not_overwrite_existing() -> None:
 
 
 def test_fan_out_timeout_returns_timeout_result() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     slow = _SlowPlugin()
     reg = PluginRegistry()
@@ -124,7 +124,7 @@ def test_fan_out_timeout_returns_timeout_result() -> None:
 
     # Mock wait_for to raise TimeoutError so no real threads block process exit.
     timeout_mock = AsyncMock(side_effect=TimeoutError)
-    with patch("ragent.plugins.registry.asyncio.wait_for", timeout_mock):
+    with patch("ragent.extractors.registry.asyncio.wait_for", timeout_mock):
         results = asyncio.run(reg.fan_out("doc_x"))
 
     assert len(results) == 1
@@ -133,20 +133,20 @@ def test_fan_out_timeout_returns_timeout_result() -> None:
 
 
 def test_timeout_on_required_plugin_fails_all_required_ok() -> None:
-    from ragent.plugins.registry import PluginRegistry
+    from ragent.extractors.registry import PluginRegistry
 
     slow = _SlowPlugin(name="slow_req", required=True)
     reg = PluginRegistry()
     reg.register(slow)
 
     timeout_mock = AsyncMock(side_effect=TimeoutError)
-    with patch("ragent.plugins.registry.asyncio.wait_for", timeout_mock):
+    with patch("ragent.extractors.registry.asyncio.wait_for", timeout_mock):
         results = asyncio.run(reg.fan_out("d"))
     assert not reg.all_required_ok(results)
 
 
 def test_result_ok_defaults_to_true() -> None:
-    from ragent.plugins.registry import Result
+    from ragent.extractors.registry import Result
 
     r = Result(plugin_name="x")
     assert r.ok is True

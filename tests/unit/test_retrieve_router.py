@@ -325,18 +325,21 @@ def test_min_score_env_driven_default_flows_to_router(monkeypatch):
 
     monkeypatch.setenv("RETRIEVAL_MIN_SCORE", "0.6")
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    sys.modules.pop("ragent.schemas.retrieve", None)
     sys.modules.pop("ragent.routers.retrieve", None)
     sys.modules.pop("ragent.schemas.chat", None)
     importlib.import_module("ragent.pipelines.retrieve")
+    importlib.import_module("ragent.schemas.retrieve")
     importlib.import_module("ragent.routers.retrieve")
 
-    from ragent.routers.retrieve import RetrieveRequest
+    from ragent.schemas.retrieve import RetrieveRequest
 
     req = RetrieveRequest(query="q")
     assert req.min_score == pytest.approx(0.6)
 
     # Teardown: restore clean module state
     sys.modules.pop("ragent.pipelines.retrieve", None)
+    sys.modules.pop("ragent.schemas.retrieve", None)
     sys.modules.pop("ragent.routers.retrieve", None)
     sys.modules.pop("ragent.schemas.chat", None)
     importlib.import_module("ragent.pipelines.retrieve")

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ragent.plugins.registry import PluginRegistry
+from ragent.extractors.registry import PluginRegistry
 from ragent.routers.ingest import create_router
 from ragent.services.ingest_service import IngestService
 
