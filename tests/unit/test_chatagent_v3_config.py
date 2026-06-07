@@ -56,3 +56,13 @@ def test_fast_intents_strips_whitespace(monkeypatch):
     monkeypatch.setenv("CHATAGENT_V3_FAST_INTENTS", " GREETING , CHITCHAT ")
     cfg = _V3Config.from_env()
     assert cfg.fast_intents == frozenset({"GREETING", "CHITCHAT"})
+
+
+def test_blank_prompt_env_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("CHATAGENT_V3_INTENT_PROMPT", "")
+    monkeypatch.setenv("CHATAGENT_V3_SUFFICIENCY_PROMPT", "")
+    monkeypatch.setenv("CHATAGENT_V3_FAST_PROMPT", "")
+    cfg = _V3Config.from_env()
+    assert cfg.intent_prompt
+    assert cfg.sufficiency_prompt
+    assert cfg.fast_prompt

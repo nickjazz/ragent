@@ -67,9 +67,12 @@ class _V3Config:
             session_history_limit=int_env(
                 "CHATAGENT_V3_SESSION_HISTORY_LIMIT", _DEFAULT_SESSION_HISTORY_LIMIT
             ),
-            intent_prompt=str_env("CHATAGENT_V3_INTENT_PROMPT", _DEFAULT_INTENT_PROMPT),
+            intent_prompt=str_env("CHATAGENT_V3_INTENT_PROMPT", _DEFAULT_INTENT_PROMPT)
+            or _DEFAULT_INTENT_PROMPT,
             sufficiency_prompt=str_env(
                 "CHATAGENT_V3_SUFFICIENCY_PROMPT", _DEFAULT_SUFFICIENCY_PROMPT
-            ),
-            fast_prompt=str_env("CHATAGENT_V3_FAST_PROMPT", _DEFAULT_FAST_PROMPT),
+            )
+            or _DEFAULT_SUFFICIENCY_PROMPT,
+            fast_prompt=str_env("CHATAGENT_V3_FAST_PROMPT", _DEFAULT_FAST_PROMPT)
+            or _DEFAULT_FAST_PROMPT,
         )

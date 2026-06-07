@@ -414,7 +414,7 @@ Same wire format as v2. The server classifies the intent of `inputData.message` 
 - **Fast path** (`X-Ragent-Path: local`): intent ∈ `CHATAGENT_V3_FAST_INTENTS` (default `GREETING,CHITCHAT`), or QUESTION/SUMMARY/GENERATION with session history sufficient to answer — handled by the local LLM immediately.
 - **Slow path** (`X-Ragent-Path: upstream`): all other intents, unknown intent, or any routing-step failure — forwarded to `CHATAGENT_API_URL` byte-for-byte (identical to v2).
 
-Request body is identical to v2. Registered only when `CHATAGENT_API_URL` is set.
+Request body is identical to v2. Registered only when `CHATAGENT_API_URL` is set. Prompt env vars (`CHATAGENT_V3_INTENT_PROMPT`, `CHATAGENT_V3_SUFFICIENCY_PROMPT`, `CHATAGENT_V3_FAST_PROMPT`) fall back to built-in defaults when blank or unset.
 
 **Fast-path response** (`X-Ragent-Path: local`):
 ```json
