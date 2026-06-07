@@ -407,3 +407,42 @@ X-User-Id: alice
 | T-MCP-REG.2 | Behavioral | • **Achieve:** Add agent-oriented `description=` to all six fields of `RetrieveRequest` so both the OpenAPI docs and the MCP `inputSchema` carry actionable guidance for AI callers.<br>• **Deliver:** `src/ragent/schemas/retrieve.py` — all six `Field(...)` calls gain `description=`; `docs/spec/mcp_server.md §3.8.3` updated to reflect new descriptions. | [x] | Dev |
 | T-MCP-REG.3 | Behavioral | • **Achieve:** Fix `_build_mcp_input_schema`: strip `"default": null` after collapsing `anyOf:[{type:T},{type:null}]` — advertised null defaults were contradictory with `type:T` and caused Draft7Validator to reject explicit `null` submissions with -32602.<br>• **Deliver:** `src/ragent/routers/mcp_tools/retrieve.py` (4-line fix); `tests/unit/test_mcp_tools_list.py::test_retrieve_optional_fields_have_no_null_default`; `docs/spec/mcp_server.md §3.8.3` (remove `"default": null` from optional fields). | [x] | Dev |
 | T-MCP-REG.4 | Behavioral | • **Achieve:** Improve `retrieve` tool description UX for AI agents: (1) replace impl-detail "hybrid vector + BM25 search" with behavior-oriented "hybrid semantic + keyword search"; (2) remove misleading `source_app` examples ('confluence', 'jira') and guide agent to derive valid values from previous result metadata.<br>• **Deliver:** `src/ragent/routers/mcp_tools/retrieve.py` (tool description); `src/ragent/schemas/retrieve.py` (source_app description); `docs/spec/mcp_server.md §3.8.3` (synced). | [x] | Dev |
+
+---
+
+## Track T-CAv3 — ChatAgent v3 Smart Router
+
+> Source: 2026-06-07 design session.
+> Adds `POST /chatagent/v3` — same wire format as v2, with server-side smart routing:
+> GREETING/CHITCHAT intents (and QUESTION/SUMMARY/GENERATION with sufficient session history)
+> are answered immediately by a local LLM fast path; all other requests are forwarded to the
+> upstream agent unchanged (slow path). Caller sees no input change; routing is transparent
+> via the `X-Ragent-Path: local|upstream` response header.
+>
+> **Routing logic:**
+> 1. Parallel: intent classification (no history) + session history fetch
+> 2. `intent ∈ CHATAGENT_V3_FAST_INTENTS` → fast path
+> 3. `intent ∈ {QUESTION,SUMMARY,GENERATION}` → sufficiency check (with history) → fast or slow
+> 4. Unknown intent or any fetch/LLM failure → slow path (fail-safe)
+>
+> **Fast path response:** `/chat/v1` JSON shape (`content`, `usage`, `sources: null`) + `X-Ragent-Path: local`.
+> **Slow path response:** upstream bytes forwarded as-is + `X-Ragent-Path: upstream`.
+>
+> **New env vars (5):** `CHATAGENT_V3_FAST_INTENTS`, `CHATAGENT_V3_SESSION_HISTORY_LIMIT`,
+> `CHATAGENT_V3_INTENT_PROMPT`, `CHATAGENT_V3_SUFFICIENCY_PROMPT`, `CHATAGENT_V3_FAST_PROMPT`.
+> All reuse existing: `CHATAGENT_SESSION_API_URL`, `CHATAGENT_API_URL`, `CHATAGENT_AP_NAME`,
+> `CHATAGENT_AUTH`, `CHATAGENT_TIMEOUT_SECONDS`, `RAGENT_DEFAULT_LLM_MODEL`,
+> `RAGENT_DEFAULT_LLM_PROVIDER`, `LLM_TIMEOUT_SECONDS`.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv3.S1 | Structural | • **Achieve:** `_V3Config` dataclass reads all 5 v3 env vars with correct defaults; built-in prompt constants defined as module-level strings.<br>• **Deliver:** `src/ragent/routers/chatagent_v3.py` — `_V3Config(fast_intents, session_history_limit, intent_prompt, sufficiency_prompt, fast_prompt)`; `tests/unit/test_chatagent_v3_config.py` — default values, env override for each field, `fast_intents` parsed as frozenset from comma-separated string. | [ ] | Dev |
+| T-CAv3.R1 | Behavioral | • **Achieve:** `_detect_intent(llm_client, message, config)` calls LLM with `config.intent_prompt`, temp=0, max_tokens=10; returns first-word label uppercased; returns `None` on any exception (caller routes to slow path).<br>• **Deliver:** function in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_intent.py` — known label returned, unknown label returns None, LLM exception returns None. | [ ] | Dev |
+| T-CAv3.R2 | Behavioral | • **Achieve:** `_fetch_history(http_client, session_api_url, session_id, user_id, ap_name, auth_header, limit)` calls `GET CHATAGENT_SESSION_API_URL`; parses `response["messages"]`; returns last `limit` entries as `list[dict]` with only `role`/`content` keys; returns `[]` on any network/parse error.<br>• **Deliver:** function in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_history.py` — happy path (trimmed to limit), empty session (no messages key), HTTP error returns [], parse error returns []. Field-name pins: `messages`, `role`, `content` per `docs/00_rule_third_party_api.md`. | [ ] | Dev |
+| T-CAv3.R3 | Behavioral | • **Achieve:** `_is_sufficient(llm_client, history, message, config)` calls LLM with `config.sufficiency_prompt` + history as context + current message; temp=0, max_tokens=5; returns `True` only when first token is `YES` (case-insensitive); returns `False` on any exception.<br>• **Deliver:** function in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_sufficiency.py` — YES → True, NO → False, "yes please" → True (first word), LLM exception → False. | [ ] | Dev |
+| T-CAv3.R4 | Behavioral | • **Achieve:** `_fast_response(llm_client, history, message, config, model, provider)` builds messages list `[system, *history, user]` with `config.fast_prompt`; calls `llm_client.chat()`; returns `JSONResponse` with `/chat/v1` shape (`content`, `usage`, `model`, `provider`, `sources: null`) and header `X-Ragent-Path: local`.<br>• **Deliver:** function in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_fast_response.py` — history prepended correctly, sources=null, X-Ragent-Path header present, LLM timeout → 504 LLM_TIMEOUT, LLM error → 502 LLM_ERROR. | [ ] | Dev |
+| T-CAv3.R5 | Behavioral | • **Achieve:** `_slow_response(http_client, body, user_id, request, config, chatagent_api_url, ap_name, auth_header, jwt_header, timeout)` injects `apName`/`user`/`userToken` into `body["metadata"]` and forwards to upstream (identical to v2 logic); adds header `X-Ragent-Path: upstream` to the returned response.<br>• **Deliver:** function in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_slow_response.py` — metadata injection verified, upstream timeout → 504, upstream error → 502, X-Ragent-Path header present. | [ ] | Dev |
+| T-CAv3.R6 | Behavioral | • **Achieve:** `POST /chatagent/v3` orchestration — rate-limit check; extract `last_message` from `body["inputData"]["message"]`; run `_detect_intent` and `_fetch_history` concurrently via `asyncio.gather`; route: fast intents → `_fast_response`; QUESTION/SUMMARY/GENERATION → `_is_sufficient` → fast or slow; None/unknown intent → slow; `CHATAGENT_SESSION_API_URL` absent → skip history fetch (history=[]).<br>• **Deliver:** endpoint in `chatagent_v3.py`; `tests/unit/test_chatagent_v3_router.py` — GREETING routes fast, QUESTION+sufficient routes fast, QUESTION+insufficient routes slow, None intent routes slow, rate-limit returns 429. | [ ] | Dev |
+| T-CAv3.I1 | Behavioral | • **Achieve:** Integration tests via TestClient with mocked httpx and mocked LLM client cover the full happy-path and fallback matrix.<br>• **Deliver:** `tests/integration/test_chatagent_v3_endpoint.py` — (1) GREETING → fast, X-Ragent-Path: local; (2) QUESTION + YES → fast, X-Ragent-Path: local; (3) QUESTION + NO → upstream forwarded, X-Ragent-Path: upstream; (4) session history fetch failure → slow path; (5) intent LLM failure → slow path; (6) rate-limit → 429 CHATAGENT_RATE_LIMITED; (7) CHATAGENT_SESSION_API_URL absent → history=[], routing still works. | [ ] | Dev |
+| T-CAv3.W1 | Behavioral | • **Achieve:** Composition root reads 5 new env vars; `app.py` registers `/chatagent/v3` router under the existing `CHATAGENT_API_URL` guard.<br>• **Deliver:** `src/ragent/bootstrap/composition.py` — `Container.chatagent_v3_config: _V3Config`; `src/ragent/bootstrap/app.py` — `app.include_router(create_chatagent_v3_router(...))`. | [ ] | Dev |
+| T-CAv3.D1 | Structural | • **Achieve:** All new env vars and endpoint documented.<br>• **Deliver:** `docs/spec/env_vars.md` (5 new rows — already added); `docs/00_spec.md §3.10` (already added); `docs/API.md` — add `POST /chatagent/v3` entry; `docs/00_rule_third_party_api.md` — no new third-party contract (reuses existing session API). | [ ] | Dev |

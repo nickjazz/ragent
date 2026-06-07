@@ -387,6 +387,79 @@ Standalone FastMCP service that federates arbitrary third-party REST APIs as MCP
 
 ---
 
+### 3.10 ChatAgent v3 Smart Router
+
+`POST /chatagent/v3` accepts the **same wire format as v2** and transparently routes each request to either a local LLM fast path or the upstream agent slow path, with no change to the caller's request or response contract.
+
+#### 3.10.1 Routing Flow
+
+```
+Parallel:
+├── Step 1: Intent Classification  (LLM, temp=0, max_tokens=10, no history)  ~200 ms
+└── Session History Fetch          (GET CHATAGENT_SESSION_API_URL)            ~100 ms
+
+Both complete (~200 ms):
+
+  intent ∈ CHATAGENT_V3_FAST_INTENTS (default: GREETING, CHITCHAT)
+      → fast path
+
+  intent ∈ {QUESTION, SUMMARY, GENERATION}
+      → Step 2: Sufficiency Check (LLM, temp=0, max_tokens=5, with history)  ~200 ms
+            YES → fast path
+            NO  → slow path
+
+  unknown intent → slow path (fail-safe)
+  session history fetch failure → slow path (fail-safe)
+```
+
+#### 3.10.2 Fast Path
+
+Local LLM call using `CHATAGENT_V3_FAST_PROMPT` as system prompt.  
+History from the session API (`messages[].role` + `messages[].content`, last `CHATAGENT_V3_SESSION_HISTORY_LIMIT` turns) is prepended as conversation context.  
+Response header `X-Ragent-Path: local` is added.
+
+**Response shape** (mirrors `/chat/v1`):
+```json
+{
+  "content": "<answer>",
+  "usage": {"promptTokens": 0, "completionTokens": 0},
+  "model": "<RAGENT_DEFAULT_LLM_MODEL>",
+  "provider": "<RAGENT_DEFAULT_LLM_PROVIDER>",
+  "sources": null
+}
+```
+
+#### 3.10.3 Slow Path
+
+Body forwarded verbatim to `CHATAGENT_API_URL` (same behaviour as v2).  
+Response header `X-Ragent-Path: upstream` is added.  
+Upstream response is piped byte-for-byte; `stream: true` uses `StreamingResponse`.
+
+#### 3.10.4 Sufficiency Check Design
+
+The sufficiency prompt (`CHATAGENT_V3_SUFFICIENCY_PROMPT`) must explicitly instruct the LLM to return `NO` when the user requests further search or retrieval ("再幫我找找", "find more", "search again") regardless of how much history is present. Default built-in prompt enforces this rule.
+
+#### 3.10.5 Intent Classification Prompt
+
+`CHATAGENT_V3_INTENT_PROMPT` classifies into one of five labels:
+`GREETING` | `CHITCHAT` | `QUESTION` | `SUMMARY` | `GENERATION`.  
+Unknown or malformed output → treated as unknown intent → slow path (fail-safe).
+
+#### 3.10.6 Error Handling
+
+| Condition | Behaviour |
+|-----------|-----------|
+| Intent LLM call fails | slow path (fail-safe) |
+| Session history fetch fails | slow path (fail-safe) |
+| Sufficiency LLM call fails | slow path (fail-safe) |
+| Fast-path LLM timeout | `504 LLM_TIMEOUT` |
+| Fast-path LLM error | `502 LLM_ERROR` |
+| Slow-path upstream timeout | `504 CHATAGENT_TIMEOUT` |
+| Slow-path upstream error | `502 CHATAGENT_UPSTREAM_ERROR` |
+| Rate limit exceeded | `429 CHATAGENT_RATE_LIMITED` |
+
+---
+
 ## 4. Inventories
 
 ### 4.1 Endpoints

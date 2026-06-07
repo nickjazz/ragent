@@ -407,6 +407,32 @@ Errors: `429 CHATAGENT_RATE_LIMITED` · `502 CHATAGENT_UPSTREAM_ERROR` · `504 C
 
 ---
 
+### `POST /chatagent/v3` — Smart-router chat
+
+Same wire format as v2. The server classifies the intent of `inputData.message` and fetches the session history concurrently, then routes to one of two paths:
+
+- **Fast path** (`X-Ragent-Path: local`): intent ∈ `CHATAGENT_V3_FAST_INTENTS` (default `GREETING,CHITCHAT`), or QUESTION/SUMMARY/GENERATION with session history sufficient to answer — handled by the local LLM immediately.
+- **Slow path** (`X-Ragent-Path: upstream`): all other intents, unknown intent, or any routing-step failure — forwarded to `CHATAGENT_API_URL` byte-for-byte (identical to v2).
+
+Request body is identical to v2. Registered only when `CHATAGENT_API_URL` is set.
+
+**Fast-path response** (`X-Ragent-Path: local`):
+```json
+{"content": "Hello! How can I help?", "usage": {"promptTokens": 42, "completionTokens": 10}, "model": "gptoss-120b", "provider": "openai", "sources": null}
+```
+
+**Slow-path response** (`X-Ragent-Path: upstream`): upstream bytes forwarded byte-for-byte (same as v2).
+
+```bash
+curl -X POST http://localhost:8000/chatagent/v3 \
+  -H "X-Auth-Token: <jwt>" -H "Content-Type: application/json" \
+  -d '{"inputData": {"message": "Hello!"}, "stream": false}'
+```
+
+Errors: `429 CHATAGENT_RATE_LIMITED` · `502 CHATAGENT_UPSTREAM_ERROR` · `502 LLM_ERROR` · `504 CHATAGENT_TIMEOUT` · `504 LLM_TIMEOUT`.
+
+---
+
 ## twp-ai
 
 Agent-User Interaction adapter for page-aware, client-tool runs (`packages/twp-ai`), mounted at `/twp/v1`. Emits twp-ai camelCase SSE events. Standard auth applies (`X-User-Id` or `X-Auth-Token`, same as other endpoints).

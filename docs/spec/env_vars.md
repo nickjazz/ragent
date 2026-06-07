@@ -77,6 +77,11 @@
 | `CHATAGENT_SESSION_API_URL`           | (optional)       | GET `/chatagent/v1/session` proxy endpoint. When unset that route is not registered. |
 | `CHATAGENT_AP_NAME`                   | `ragent`         | `apName` injected into all outbound chatagent requests. |
 | `CHATAGENT_AUTH`                      | (optional)       | Raw value for the `Authorization` header on all outbound chatagent calls (e.g. `Basic dXNlcjpwYXNz`). **Never logged, never echoed.** |
+| `CHATAGENT_V3_FAST_INTENTS`           | `GREETING,CHITCHAT` | Comma-separated intent labels that always route to the local LLM fast path without a sufficiency check. |
+| `CHATAGENT_V3_SESSION_HISTORY_LIMIT`  | `20`             | Maximum number of historical turns (messages) fetched from the session API and prepended to the fast-path LLM context. |
+| `CHATAGENT_V3_INTENT_PROMPT`          | (built-in)       | System prompt for Step 1 intent classification. Must instruct the LLM to reply with exactly one of: `GREETING`, `CHITCHAT`, `QUESTION`, `SUMMARY`, `GENERATION`. |
+| `CHATAGENT_V3_SUFFICIENCY_PROMPT`     | (built-in)       | System prompt for Step 2 sufficiency check. Must instruct the LLM to reply `YES` or `NO`, and to reply `NO` whenever the user requests further search or retrieval. |
+| `CHATAGENT_V3_FAST_PROMPT`            | (built-in)       | System prompt used by the fast-path local LLM response. Applied for all fast-path intents (GREETING, CHITCHAT, and sufficiency-passed QUESTION/SUMMARY/GENERATION). |
 | `TWP_DEFAULT_MODEL`                   | (optional)       | Fallback model for `POST /twp/v1/run` when the request body omits `model`. |
 | `UNPROTECT_ENABLED`                   | `false`          | When `true`, worker calls the unprotect API before passing `file`/`upload` ingest bytes to the pipeline. `ingest_type=inline` rows are always skipped (content is caller-supplied UTF-8 text). On unprotect failure the worker logs a warning and continues with the original MinIO bytes. |
 | `UNPROTECT_API_URL`                   | (required when enabled) | Full URL of the unprotect endpoint (multipart POST). |
