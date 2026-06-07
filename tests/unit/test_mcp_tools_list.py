@@ -35,19 +35,19 @@ def test_tools_list_returns_exactly_one_tool(client: TestClient) -> None:
     assert len(tools) == 1
 
 
-def test_tools_list_deep_equals_spec_literal(client: TestClient) -> None:
-    """S59 plan deliverable: inputSchema deep-equals the spec §3.8.3 literal.
+def test_tools_list_deep_equals_model_dump(client: TestClient) -> None:
+    """S59: tools/list response deep-equals RETRIEVE_TOOL.model_dump(exclude_none=True).
 
-    Catches additions (e.g. a new property slipping in) that per-field tests
-    miss; pinned by importing the module constant so a drift between code
-    and spec surfaces here as a separate failure.
+    Pins the wire format against the mcp.types.Tool descriptor derived from
+    _RetrieveArgs, so any drift between the registry and the serialised response
+    surfaces here as a failure rather than silently reaching MCP clients.
     """
-    from ragent.routers.mcp import _RETRIEVE_TOOL_SCHEMA
+    from ragent.routers.mcp_tools.retrieve import RETRIEVE_TOOL
 
     [tool] = client.post(
         "/mcp/v1", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     ).json()["result"]["tools"]
-    assert tool == _RETRIEVE_TOOL_SCHEMA
+    assert tool == RETRIEVE_TOOL.model_dump(exclude_none=True)
 
 
 def test_tools_list_advertises_retrieve_tool(client: TestClient) -> None:
@@ -97,6 +97,42 @@ def test_retrieve_input_schema_property_types(client: TestClient) -> None:
 
     assert props["dedupe"]["type"] == "boolean"
     assert props["dedupe"]["default"] is False
+
+
+def test_retrieve_optional_fields_have_no_null_default(client: TestClient) -> None:
+    """Optional fields must not advertise default:null in inputSchema.
+
+    After collapsing anyOf:[{type:T},{type:null}] → {type:T}, a lingering
+    default:null is contradictory — null is not a valid value for type:T.
+    An MCP client that materialises the advertised default and submits null
+    would receive -32602 before retrieval runs.  Optionality is expressed via
+    absence from "required", not via default:null.
+    """
+    [tool] = client.post(
+        "/mcp/v1", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    ).json()["result"]["tools"]
+    props = tool["inputSchema"]["properties"]
+    for name in ("source_app", "source_meta", "min_score"):
+        assert props[name].get("default") is not None or "default" not in props[name], (
+            f"inputSchema.properties.{name} must not have default:null "
+            f"(null is not a valid value once the null type branch is collapsed)"
+        )
+
+
+def test_retrieve_input_schema_all_properties_have_descriptions(client: TestClient) -> None:
+    """Every inputSchema property must carry a non-empty description.
+
+    Descriptions are the primary signal an AI agent uses to decide which
+    argument to pass; a missing description silently degrades agent accuracy.
+    """
+    [tool] = client.post(
+        "/mcp/v1", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    ).json()["result"]["tools"]
+    props = tool["inputSchema"]["properties"]
+    for name, prop in props.items():
+        assert "description" in prop and prop["description"], (
+            f"inputSchema.properties.{name} has no description"
+        )
 
 
 def test_retrieve_tool_has_readonly_hint(client: TestClient) -> None:
