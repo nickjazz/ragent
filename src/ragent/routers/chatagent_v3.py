@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ragent.utility.env import int_env, list_env, str_env
 
@@ -53,7 +53,7 @@ _DEFAULT_SESSION_HISTORY_LIMIT = 20
 
 @dataclass(frozen=True)
 class _V3Config:
-    fast_intents: frozenset[str] = field(default=_DEFAULT_FAST_INTENTS)
+    fast_intents: frozenset[str] = _DEFAULT_FAST_INTENTS
     session_history_limit: int = _DEFAULT_SESSION_HISTORY_LIMIT
     intent_prompt: str = _DEFAULT_INTENT_PROMPT
     sufficiency_prompt: str = _DEFAULT_SUFFICIENCY_PROMPT
