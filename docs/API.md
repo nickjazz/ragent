@@ -563,7 +563,7 @@ Dual-write: MariaDB `feedback` (truth) → ES `feedback_v1` (serving view). ES f
 |---|---|
 | `initialize` | Capability negotiation. |
 | `notifications/initialized` | Client signals init complete; server returns 204. |
-| `tools/list` | Returns the `retrieve` tool with `inputSchema` and `annotations: {readOnlyHint: true}` (MCP 2025-03-26+). |
+| `tools/list` | Returns the `retrieve` tool with Pydantic-derived `inputSchema` (agent-oriented field descriptions) and `annotations: {readOnlyHint: true}` (MCP 2025-03-26+). |
 | `tools/call` | Invokes `retrieve`. Result `content[0].text` is `[資料來源 #N]`-formatted text. Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`. |
 | `ping` | Returns `{}`. |
 

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 from jsonschema import Draft7Validator, ValidationError
+from mcp.types import Tool
 
 from ragent import __version__ as _RAGENT_VERSION
 from ragent.errors.codes import HttpErrorCode
@@ -27,6 +28,7 @@ from ragent.pipelines.retrieve import (
     doc_to_source_entry,
     run_retrieval,
 )
+from ragent.routers.mcp_tools.retrieve import RETRIEVE_TOOL
 from ragent.utility.env import int_env
 
 logger = structlog.get_logger(__name__)
@@ -88,70 +90,18 @@ async def _handle_initialize(_params: Any) -> dict[str, Any]:
     }
 
 
-# Tool schema is the single source of truth: `tools/list` advertises it,
-# `tools/call` (T-MCP.10) validates arguments against it. Mirrors
-# §3.8.3 verbatim.
-_RETRIEVE_TOOL_SCHEMA: dict[str, Any] = {
-    "name": "retrieve",
-    "description": (
-        "Retrieve relevant document chunks from the ragent corpus using "
-        "hybrid vector+BM25 search with optional reranking. Returns ranked "
-        "chunks (no LLM synthesis)."
-    ),
-    # readOnlyHint=true: retrieve never writes data — MCP hosts MAY use this
-    # annotation to skip confirmation prompts for read-only tools.
-    # Introduced in MCP protocol 2025-03-26; clients on earlier versions
-    # silently ignore unknown tool fields (additive-only change).
-    "annotations": {"readOnlyHint": True},
-    "inputSchema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "query": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Natural-language search query.",
-            },
-            "top_k": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 200,
-                "default": DEFAULT_TOP_K,
-                "description": f"Number of chunks to return (1–200, default {DEFAULT_TOP_K}).",
-            },
-            "source_app": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64,
-                "description": "Exact-match filter on the source application name.",
-            },
-            "source_meta": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 1024,
-                "description": "Exact-match filter on the document's source_meta tag.",
-            },
-            "min_score": {
-                "type": "number",
-                "minimum": 0,
-                "description": "Drop chunks whose relevance score is below this threshold.",
-            },
-            "dedupe": {
-                "type": "boolean",
-                "default": False,
-                "description": "When true, keep only the highest-scored chunk per document_id.",
-            },
-        },
-        "required": ["query"],
-    },
-}
+# To add a new tool: import its Tool descriptor from mcp_tools/, append here.
+_ALL_TOOLS: list[Tool] = [RETRIEVE_TOOL]
+_ALL_TOOLS_BY_NAME: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
 
 
 async def _handle_tools_list(_params: Any) -> dict[str, Any]:
-    return {"tools": [_RETRIEVE_TOOL_SCHEMA]}
+    return {"tools": [t.model_dump(exclude_none=True) for t in _ALL_TOOLS]}
 
 
-_RETRIEVE_INPUT_VALIDATOR = Draft7Validator(_RETRIEVE_TOOL_SCHEMA["inputSchema"])
+# Uses the same inputSchema already advertised by tools/list — schema and
+# validation can never drift apart.
+_RETRIEVE_INPUT_VALIDATOR = Draft7Validator(RETRIEVE_TOOL.inputSchema)
 
 
 def _validate_retrieve_args(args: Any) -> None:
@@ -241,7 +191,7 @@ def create_mcp_router(
                 "`params` must be an object (named arguments)",
             )
         name = params.get("name")
-        if name != _RETRIEVE_TOOL_SCHEMA["name"]:
+        if name not in _ALL_TOOLS_BY_NAME:
             raise _McpToolError(
                 _INVALID_PARAMS,
                 HttpErrorCode.MCP_TOOL_NOT_FOUND.value,

@@ -394,3 +394,14 @@ X-User-Id: alice
 | T-OPS.R3 | Behavioral | • **Achieve:** `POST /ops/v1/retry` endpoint with OpsRetryRequest/OpsRetryResponse schemas.<br>• **Deliver:** `src/ragent/routers/admin_ops.py`; `tests/unit/test_admin_ops_router.py` (10 tests). | [x] | Dev |
 | T-OPS.W1 | Behavioral | • **Achieve:** Register admin_ops router in `bootstrap/app.py`.<br>• **Deliver:** `app.include_router(create_admin_ops_router(svc=ingest_svc))` wired after ingest router. | [x] | Dev |
 | T-OPS.R4 | Behavioral | • **Achieve:** PR review hardening — entry log before DB call, per-item dispatch log, operator_id audit field, extra-field rejection (`ConfigDict(extra="forbid")`), counts keyed by requested statuses, `idx_status_created` index for `(status, created_at)` queries.<br>• **Deliver:** `ingest_service.py`, `admin_ops.py`, `migrations/012_documents_status_created_index.sql`, `schema.sql`; 16 tests in `test_ingest_service_batch_rerun.py`, 14 tests in `test_admin_ops_router.py`. | [x] | Dev |
+
+---
+
+## Track T-MCP-REG — MCP v1 Tool Registration Best Practices
+
+> Source: 2026-06-07 refactor. Eliminates string-literal JSON schema drift in `mcp/v1` by adopting `mcp.types.Tool` + Pydantic-derived `inputSchema` as the single source of truth.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-MCP-REG.1 | Behavioral | • **Achieve:** Replace hand-written `_RETRIEVE_TOOL_SCHEMA` dict with `mcp.types.Tool` descriptor; derive `inputSchema` from `_RetrieveArgs(RetrieveRequest)` via `_build_mcp_input_schema()`; derive runtime validator from `RETRIEVE_TOOL.inputSchema`; introduce `_ALL_TOOLS` registry so adding a new tool is a one-line change.<br>• **Deliver:** `src/ragent/routers/mcp_tools/__init__.py` + `src/ragent/routers/mcp_tools/retrieve.py` (new); `src/ragent/routers/mcp.py` (uses registry); `tests/unit/test_mcp_tools_list.py` (deep-equals against model_dump + description coverage test). | [x] | Dev |
+| T-MCP-REG.2 | Behavioral | • **Achieve:** Add agent-oriented `description=` to all six fields of `RetrieveRequest` so both the OpenAPI docs and the MCP `inputSchema` carry actionable guidance for AI callers.<br>• **Deliver:** `src/ragent/schemas/retrieve.py` — all six `Field(...)` calls gain `description=`; `docs/spec/mcp_server.md §3.8.3` updated to reflect new descriptions and optional-field `"default": null`. | [x] | Dev |
