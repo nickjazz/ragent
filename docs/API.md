@@ -436,18 +436,135 @@ curl -X POST http://localhost:8000/chatagent/v3 \
   --no-buffer
 ```
 
-**Response:** `text/event-stream`.
+**Response:** `text/event-stream`. Every upstream `data: {json}` SSE line passes through the conversion pipeline and becomes one or more AG-UI events on the response stream. The stream always opens with `RUN_STARTED` and closes with `RUN_FINISHED` (success) or `RUN_ERROR` (any failure).
+
+#### Example 1 — Simple text reply
+
+Upstream emits a single assistant message in chunks; ragent wraps it in a TEXT_MESSAGE block.
 
 ```
+# upstream (ChatAgent SSE — not visible to clients)
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"msg-1","role":"assistant","content":"The release notes "}]}}
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"msg-1","role":"assistant","content":"cover three areas."}]}}
+data: [Done]
+
+# ragent response (twp-ai AG-UI SSE)
 data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
-data: {"type":"TEXT_MESSAGE_START","messageId":"a1","role":"assistant"}
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"The release notes "}
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"cover..."}
-data: {"type":"TEXT_MESSAGE_END","messageId":"a1"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"msg-1","role":"assistant"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg-1","delta":"The release notes "}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg-1","delta":"cover three areas."}
+
+data: {"type":"TEXT_MESSAGE_END","messageId":"msg-1"}
+
 data: {"type":"RUN_FINISHED","runId":"run_1","threadId":"thread_1"}
 ```
 
-On failure the stream ends with `{"type":"RUN_ERROR","message":"…","code":"CHATAGENT_TIMEOUT","runId":"run_1","threadId":"thread_1"}`.
+#### Example 2 — Multi-agent (planner → commander → summarizer)
+
+Each upstream `messageId` maps to an independent TEXT_MESSAGE block. The `messageMeta.langgraph_node` field identifies the agent type (carried in `UpstreamMessage.agent_type`) but does not affect the event type — all produce TEXT_MESSAGE blocks.
+
+```
+# upstream
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"plan-1","role":"assistant","content":"Planning...","messageMeta":{"langgraph_node":"planner"}}]}}
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"cmd-1","role":"assistant","content":"Executing step 1.","messageMeta":{"langgraph_node":"commander"}}]}}
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"sum-1","role":"assistant","content":"Done.","messageMeta":{"langgraph_node":"summarizer"}}]}}
+data: [Done]
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"plan-1","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"plan-1","delta":"Planning..."}
+data: {"type":"TEXT_MESSAGE_END","messageId":"plan-1"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"cmd-1","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"cmd-1","delta":"Executing step 1."}
+data: {"type":"TEXT_MESSAGE_END","messageId":"cmd-1"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"sum-1","role":"assistant"}
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"sum-1","delta":"Done."}
+data: {"type":"TEXT_MESSAGE_END","messageId":"sum-1"}
+
+data: {"type":"RUN_FINISHED","runId":"run_1","threadId":"thread_1"}
+```
+
+#### Example 3 — Tool call + tool result
+
+`finish_reason="tool_calls"` + `tool_calls` → `TOOL_CALL_START/ARGS/END`; a subsequent `role="tool"` message → `TOOL_CALL_RESULT`. The tool-call ID (`{messageId}-{index}`) correlates result to call.
+
+```
+# upstream
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"msg-tc","role":"assistant","content":null,"finish_reason":"tool_calls","tool_calls":[{"type":"function","function":{"name":"search","arguments":"{\"query\":\"release notes\"}"}}],"displayMeta":{"toolName":"search"}}]}}
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"msg-tr","role":"tool","content":"Found 3 results.","displayMeta":{"toolName":"search"}}]}}
+data: [Done]
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+
+data: {"type":"TOOL_CALL_START","toolCallId":"msg-tc-0","toolCallName":"search","parentMessageId":"msg-tc"}
+
+data: {"type":"TOOL_CALL_ARGS","toolCallId":"msg-tc-0","delta":"{\"query\":\"release notes\"}"}
+
+data: {"type":"TOOL_CALL_END","toolCallId":"msg-tc-0"}
+
+data: {"type":"TOOL_CALL_RESULT","messageId":"msg-tr","toolCallId":"msg-tc-0","content":"Found 3 results."}
+
+data: {"type":"RUN_FINISHED","runId":"run_1","threadId":"thread_1"}
+```
+
+#### Example 4 — Human-in-the-loop interrupt
+
+`humanInTheLoopMeta.isInterrupt=true` surfaces as a standalone TEXT_MESSAGE containing `interruptMessage` as the delta.
+
+```
+# upstream
+data: {"returnCode":96200,"returnData":{"messages":[{"messageId":"hitl-1","role":"assistant","content":null,"humanInTheLoopMeta":{"isInterrupt":true,"interruptMessage":"Please confirm before deleting all records.","interruptContent":"ctx"}}]}}
+data: [Done]
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+
+data: {"type":"TEXT_MESSAGE_START","messageId":"hitl-1","role":"assistant"}
+
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"hitl-1","delta":"Please confirm before deleting all records."}
+
+data: {"type":"TEXT_MESSAGE_END","messageId":"hitl-1"}
+
+data: {"type":"RUN_FINISHED","runId":"run_1","threadId":"thread_1"}
+```
+
+#### Example 5 — Error scenarios
+
+All errors surface as `RUN_ERROR` over the same `200 text/event-stream` response (no HTTP error codes for mid-stream failures).
+
+```
+# upstream non-96200 (e.g. quota exceeded)
+data: {"returnCode":96500,"returnMessage":"quota exceeded","returnData":{}}
+data: [Done]
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+data: {"type":"RUN_ERROR","message":"quota exceeded","code":"CHATAGENT_UPSTREAM_ERROR","runId":"run_1","threadId":"thread_1"}
+```
+
+```
+# upstream timeout (httpx.TimeoutException)
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+data: {"type":"RUN_ERROR","message":"chatagent upstream failed: timed out","code":"CHATAGENT_TIMEOUT","runId":"run_1","threadId":"thread_1"}
+```
+
+```
+# truncated stream (upstream closes without [Done])
+
+# ragent response
+data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
+data: {"type":"RUN_ERROR","message":"upstream closed stream without [Done] sentinel","code":"CHATAGENT_UPSTREAM_ERROR","runId":"run_1","threadId":"thread_1"}
+```
 
 > v3 reuses the twp-ai `Agent`/caller abstraction: an `ADKAgent` (in `packages/twp-ai`) owns the event flow, and a ragent-side `ADKCaller` (`src/ragent/clients/adk_caller.py`) does the upstream proxy. This is a separate service from `/twp/v1/run` (which is a native agent host); the two are unrelated.
 
