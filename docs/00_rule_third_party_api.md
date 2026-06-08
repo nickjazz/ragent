@@ -207,7 +207,7 @@ Content-Type: multipart/form-data; boundary=<httpx-generated>
 
 **Response (stream: true — SSE):**
 
-Each event is prefixed `data: ` and terminated by a blank line. The stream ends with the sentinel `data: [Done]`.
+Each event is a single line prefixed `data: ` followed by the JSON payload serialized without newlines, terminated by a blank line (`\n\n`). The stream ends with the sentinel `data: [Done]`. The multi-line formatting below is for readability only.
 
 **First event** (full message object):
 ```
