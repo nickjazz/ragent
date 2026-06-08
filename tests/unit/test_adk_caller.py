@@ -105,6 +105,24 @@ def test_stream_deltas_timeout_raises_timeout_error() -> None:
     assert exc.value.error_code == HttpErrorCode.CHATAGENT_TIMEOUT
 
 
+def test_stream_deltas_mid_stream_timeout_raises_timeout_error() -> None:
+    def _lines():
+        yield '{"returnCode":96200,"returnData":{"delta":"partial"}}'
+        raise httpx.ReadTimeout("stalled mid-stream")
+
+    resp = MagicMock(spec=httpx.Response)
+    resp.raise_for_status.return_value = None
+    resp.iter_lines.return_value = _lines()
+    http_mock = MagicMock(spec=httpx.Client)
+    http_mock.send.return_value = resp
+    caller = _make_caller(http_mock)
+
+    with pytest.raises(UpstreamTimeoutError) as exc:
+        list(caller.stream_deltas(_request(), "m"))
+    assert exc.value.error_code == HttpErrorCode.CHATAGENT_TIMEOUT
+    resp.close.assert_called_once()
+
+
 def test_stream_deltas_request_error_raises_service_error() -> None:
     http_mock = MagicMock(spec=httpx.Client)
     http_mock.send.side_effect = httpx.RequestError("conn refused")

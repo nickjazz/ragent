@@ -26,6 +26,7 @@ from ragent.errors.upstream import UpstreamServiceError, classify_upstream_error
 logger = structlog.get_logger(__name__)
 
 _UPSTREAM_SUCCESS_CODE = 96200
+_HTTPX_ERRORS = (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError)
 
 
 class ADKCaller:
@@ -65,6 +66,8 @@ class ADKCaller:
         resp = self._send(payload)
         try:
             yield from _iter_deltas(resp)
+        except _HTTPX_ERRORS as exc:
+            raise _classify(exc) from exc
         finally:
             resp.close()
 
@@ -77,20 +80,20 @@ class ADKCaller:
             resp = self._http.send(req, stream=True)
             resp.raise_for_status()
             return resp
-        except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError) as exc:
+        except _HTTPX_ERRORS as exc:
             if resp is not None:
                 resp.close()
-            error_code, exc_cls = classify_upstream_error(
-                exc,
-                error_code=HttpErrorCode.CHATAGENT_UPSTREAM_ERROR,
-                timeout_code=HttpErrorCode.CHATAGENT_TIMEOUT,
-            )
-            logger.warning("chatagent_v3.upstream_error", http_status=exc_cls.http_status)
-            raise exc_cls(
-                f"chatagent upstream failed: {exc}",
-                service="chatagent",
-                error_code=error_code,
-            ) from exc
+            raise _classify(exc) from exc
+
+
+def _classify(exc: httpx.HTTPError) -> UpstreamServiceError:
+    error_code, exc_cls = classify_upstream_error(
+        exc,
+        error_code=HttpErrorCode.CHATAGENT_UPSTREAM_ERROR,
+        timeout_code=HttpErrorCode.CHATAGENT_TIMEOUT,
+    )
+    logger.warning("chatagent_v3.upstream_error", http_status=exc_cls.http_status)
+    return exc_cls(f"chatagent upstream failed: {exc}", service="chatagent", error_code=error_code)
 
 
 def _iter_deltas(resp: httpx.Response) -> Generator[str, None, None]:
