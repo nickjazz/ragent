@@ -56,7 +56,9 @@ class ADKCaller:
         self._headers = {"Authorization": auth} if auth else {}
         self._timeout = timeout
 
-    def stream_deltas(self, request: RunAgentInput, model: str) -> Generator[UpstreamMessage, None, None]:
+    def stream_deltas(
+        self, request: RunAgentInput, model: str
+    ) -> Generator[UpstreamMessage, None, None]:
         payload = {
             "metadata": {
                 "apName": self._ap_name,

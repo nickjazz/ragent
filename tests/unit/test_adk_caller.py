@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from twp_ai.callers.adk import UpstreamMessage
 from twp_ai.schemas import RunAgentInput
 
 from ragent.clients.adk_caller import ADKCaller
@@ -117,7 +116,9 @@ def test_stream_deltas_parses_tool_name() -> None:
                 message_id="msg-tc",
                 finish_reason="tool_calls",
                 tool_name="search",
-                tool_calls=[{"type": "function", "function": {"name": "search", "arguments": "{}"}}],
+                tool_calls=[
+                    {"type": "function", "function": {"name": "search", "arguments": "{}"}}
+                ],
             ),
             _done_line(),
         ]
@@ -138,7 +139,11 @@ def test_stream_deltas_parses_hitl_interrupt() -> None:
             _msg_line(
                 None,
                 message_id="hitl-1",
-                hitl={"isInterrupt": True, "interruptMessage": "Confirm?", "interruptContent": "ctx"},
+                hitl={
+                    "isInterrupt": True,
+                    "interruptMessage": "Confirm?",
+                    "interruptContent": "ctx",
+                },
             ),
             _done_line(),
         ]
