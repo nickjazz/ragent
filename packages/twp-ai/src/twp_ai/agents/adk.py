@@ -69,8 +69,8 @@ class ADKAgent:
 def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, None, None]:
     """Map upstream messages to AG-UI events with message-boundary tracking."""
     open_msg_id: str | None = None
-    # Maps function_name → tool_call_id so TOOL_CALL_RESULT can reference the right call.
-    pending_calls: dict[str, str] = {}
+    # Maps function_name → FIFO list of tc_ids so same-named calls resolve in order.
+    pending_calls: dict[str, list[str]] = {}
 
     for msg in upstream:
         if open_msg_id is not None and msg.message_id != open_msg_id:
@@ -101,7 +101,7 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
                     fn = tc.get("function", {})
                     fn_name = fn.get("name", "unknown")
                     tc_id = f"{msg.message_id}-{i}"
-                    pending_calls[fn_name] = tc_id
+                    pending_calls.setdefault(fn_name, []).append(tc_id)
                     yield to_sse(
                         ToolCallStartEvent(
                             tool_call_id=tc_id,
@@ -114,7 +114,8 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
                     yield to_sse(ToolCallEndEvent(tool_call_id=tc_id))
 
         elif msg.role == "tool" and msg.content is not None:
-            tc_id = pending_calls.get(msg.tool_name or "", msg.message_id)
+            fn_queue = pending_calls.get(msg.tool_name or "")
+            tc_id = fn_queue.pop(0) if fn_queue else msg.message_id
             yield to_sse(
                 ToolCallResultEvent(
                     message_id=msg.message_id,

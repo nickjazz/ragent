@@ -116,6 +116,8 @@ def _iter_deltas(resp: httpx.Response) -> Generator[UpstreamMessage, None, None]
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(obj, dict):
+            continue
         return_code = obj.get("returnCode")
         if return_code is not None and return_code != _UPSTREAM_SUCCESS_CODE:
             error_msg = obj.get("returnMessage") or "upstream returned non-success code"
@@ -124,15 +126,23 @@ def _iter_deltas(resp: httpx.Response) -> Generator[UpstreamMessage, None, None]
                 service="chatagent",
                 error_code=HttpErrorCode.CHATAGENT_UPSTREAM_ERROR,
             )
-        messages = (obj.get("returnData") or {}).get("messages") or []
+        return_data = obj.get("returnData")
+        messages = return_data.get("messages") or [] if isinstance(return_data, dict) else []
         for raw in messages:
-            yield _parse_message(raw)
+            if isinstance(raw, dict):
+                yield _parse_message(raw)
 
 
 def _parse_message(raw: dict) -> UpstreamMessage:
-    display_meta = raw.get("displayMeta") or {}
-    message_meta = raw.get("messageMeta") or {}
-    hitl = raw.get("humanInTheLoopMeta") or {}
+    display_meta = raw.get("displayMeta")
+    if not isinstance(display_meta, dict):
+        display_meta = {}
+    message_meta = raw.get("messageMeta")
+    if not isinstance(message_meta, dict):
+        message_meta = {}
+    hitl = raw.get("humanInTheLoopMeta")
+    if not isinstance(hitl, dict):
+        hitl = {}
     return UpstreamMessage(
         message_id=raw.get("messageId") or "",
         role=raw.get("role", "assistant"),
