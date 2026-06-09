@@ -158,7 +158,11 @@ def test_adk_agent_tool_result_produces_tool_call_result() -> None:
                 role="assistant",
                 finish_reason="tool_calls",
                 tool_calls=[
-                    {"id": "call-xyz", "type": "function", "function": {"name": "search", "arguments": "{}"}}
+                    {
+                        "id": "call-xyz",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
                 ],
             ),
             UpstreamMessage(

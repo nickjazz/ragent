@@ -117,7 +117,11 @@ def test_stream_deltas_parses_tool_name() -> None:
                 finish_reason="tool_calls",
                 tool_name="search",
                 tool_calls=[
-                    {"id": "call-abc", "type": "function", "function": {"name": "search", "arguments": "{}"}}
+                    {
+                        "id": "call-abc",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{}"},
+                    }
                 ],
             ),
             _done_line(),
