@@ -86,6 +86,9 @@ class ReasoningStartEvent(BaseEvent):
 class ReasoningMessageStartEvent(BaseEvent):
     type: Literal["REASONING_MESSAGE_START"] = "REASONING_MESSAGE_START"
     message_id: str
+    # AG-UI aligns the reasoning role on "reasoning" (the ReasoningMessage type in
+    # both SDKs); the TS client's parser rejects "assistant".
+    role: Literal["reasoning"] = "reasoning"
 
 
 class ReasoningMessageContentEvent(BaseEvent):

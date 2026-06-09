@@ -477,7 +477,7 @@ data: [Done]
 data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
 
 data: {"type":"REASONING_START"}
-data: {"type":"REASONING_MESSAGE_START","messageId":"plan-1"}
+data: {"type":"REASONING_MESSAGE_START","messageId":"plan-1","role":"reasoning"}
 data: {"type":"REASONING_MESSAGE_CONTENT","messageId":"plan-1","delta":"Planning..."}
 data: {"type":"REASONING_MESSAGE_END","messageId":"plan-1"}
 data: {"type":"REASONING_END"}

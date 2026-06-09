@@ -148,6 +148,8 @@ def test_adk_agent_planner_emits_reasoning_lifecycle() -> None:
     assert content["messageId"] == "plan-1"
     msg_ids = {e["messageId"] for e in events if "messageId" in e}
     assert msg_ids == {"plan-1"}
+    start = next(e for e in events if e["type"] == "REASONING_MESSAGE_START")
+    assert start["role"] == "reasoning"
 
 
 def test_adk_agent_planner_streams_deltas_in_one_reasoning_block() -> None:
