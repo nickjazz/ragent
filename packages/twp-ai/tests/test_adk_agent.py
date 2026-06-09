@@ -86,10 +86,10 @@ def test_adk_agent_multi_agent_produces_separate_message_blocks() -> None:
     caller = FakeADKCaller(
         messages=[
             UpstreamMessage(
-                message_id="plan-1",
+                message_id="cmd-1",
                 role="assistant",
-                content="Planning...",
-                agent_type="planner",
+                content="Executing step 1.",
+                agent_type="commander",
             ),
             UpstreamMessage(
                 message_id="sum-1",
@@ -115,8 +115,101 @@ def test_adk_agent_multi_agent_produces_separate_message_blocks() -> None:
         "RUN_FINISHED",
     ]
     starts = [e for e in events if e["type"] == "TEXT_MESSAGE_START"]
-    assert starts[0]["messageId"] == "plan-1"
+    assert starts[0]["messageId"] == "cmd-1"
     assert starts[1]["messageId"] == "sum-1"
+
+
+def test_adk_agent_planner_emits_reasoning_lifecycle() -> None:
+    caller = FakeADKCaller(
+        messages=[
+            UpstreamMessage(
+                message_id="plan-1",
+                role="assistant",
+                content="Planning...",
+                agent_type="planner",
+            ),
+        ]
+    )
+    request = RunAgentInput.model_validate(_run_input())
+
+    events = _events(list(ADKAgent(caller).run(request, "m")))
+
+    assert [e["type"] for e in events] == [
+        "RUN_STARTED",
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+        "RUN_FINISHED",
+    ]
+    content = next(e for e in events if e["type"] == "REASONING_MESSAGE_CONTENT")
+    assert content["delta"] == "Planning..."
+    assert content["messageId"] == "plan-1"
+    msg_ids = {e["messageId"] for e in events if "messageId" in e}
+    assert msg_ids == {"plan-1"}
+
+
+def test_adk_agent_planner_streams_deltas_in_one_reasoning_block() -> None:
+    caller = FakeADKCaller(
+        messages=[
+            UpstreamMessage(
+                message_id="plan-1", role="assistant", content="Think ", agent_type="planner"
+            ),
+            UpstreamMessage(
+                message_id="plan-1", role="assistant", content="harder", agent_type="planner"
+            ),
+        ]
+    )
+    request = RunAgentInput.model_validate(_run_input())
+
+    events = _events(list(ADKAgent(caller).run(request, "m")))
+
+    assert [e["type"] for e in events] == [
+        "RUN_STARTED",
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+        "RUN_FINISHED",
+    ]
+    deltas = [e["delta"] for e in events if e["type"] == "REASONING_MESSAGE_CONTENT"]
+    assert deltas == ["Think ", "harder"]
+
+
+def test_adk_agent_planner_then_summarizer_closes_reasoning_before_text() -> None:
+    caller = FakeADKCaller(
+        messages=[
+            UpstreamMessage(
+                message_id="plan-1", role="assistant", content="Planning...", agent_type="planner"
+            ),
+            UpstreamMessage(
+                message_id="sum-1", role="assistant", content="Summary.", agent_type="summarizer"
+            ),
+        ]
+    )
+    request = RunAgentInput.model_validate(_run_input())
+
+    events = _events(list(ADKAgent(caller).run(request, "m")))
+
+    assert [e["type"] for e in events] == [
+        "RUN_STARTED",
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]
+    reasoning_msg = next(e for e in events if e["type"] == "REASONING_MESSAGE_START")
+    assert reasoning_msg["messageId"] == "plan-1"
+    text_msg = next(e for e in events if e["type"] == "TEXT_MESSAGE_START")
+    assert text_msg["messageId"] == "sum-1"
 
 
 def test_adk_agent_tool_calls_produce_tool_call_events() -> None:

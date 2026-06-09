@@ -320,7 +320,11 @@ transport to an `ADKCaller` protocol; the concrete proxy lives ragent-side in
   `TEXT_MESSAGE_START`/`TEXT_MESSAGE_END`; `messageId` taken from upstream
   `messages[].messageId`, one block per distinct id).
 - `messageMeta.langgraph_node` (`planner`/`commander`/`summarizer`) → each node
-  gets its own TEXT_MESSAGE block (keyed by its upstream `messageId`).
+  gets its own block (keyed by its upstream `messageId`). The `planner` node is
+  the agent's plan/reasoning step and is surfaced as a reasoning block
+  (`REASONING_START` → `REASONING_MESSAGE_START` / `REASONING_MESSAGE_CONTENT`* /
+  `REASONING_MESSAGE_END` → `REASONING_END`) instead of a `TEXT_MESSAGE` block;
+  every other node produces a `TEXT_MESSAGE` block.
 - `finish_reason="tool_calls"` + `tool_calls` → `TOOL_CALL_START` / `TOOL_CALL_ARGS`
   / `TOOL_CALL_END` events; the upstream's tool-result turn (`role="tool"`) →
   `TOOL_CALL_RESULT`.

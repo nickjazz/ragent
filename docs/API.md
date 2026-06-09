@@ -412,7 +412,7 @@ Same upstream as v2 (`CHATAGENT_API_URL`, `CHATAGENT_AUTH`, rate limit, `CHATAGE
 **Conversion rules:**
 
 - **Request → upstream:** the last `role="user"` message content becomes `inputData.message`; `metadata` is server-injected (`apName`/`user`/`userToken`/`session`) with `session = threadId`; `stream` is always `true`. `model` is not forwarded (the upstream decides, as in v2). `tools`/`state`/`context`/`forwardedProps` are accepted and may be forwarded; client tool-call continuation is not yet handled.
-- **Upstream → response:** each SSE line is `data: {json}\n\n`; `returnData.messages[].content` → `TEXT_MESSAGE_CONTENT` (bracketed by `TEXT_MESSAGE_START`/`TEXT_MESSAGE_END`; `messageId` taken from upstream `messages[].messageId`). Each distinct upstream node (planner/commander/summarizer) gets its own TEXT_MESSAGE block. `finish_reason="tool_calls"` + `tool_calls` → `TOOL_CALL_START/ARGS/END`; `role="tool"` turns → `TOOL_CALL_RESULT`. `humanInTheLoopMeta.isInterrupt=true` → standalone TEXT_MESSAGE with `interruptMessage` as delta. `data: [Done]` sentinel → `RUN_FINISHED`.
+- **Upstream → response:** each SSE line is `data: {json}\n\n`; `returnData.messages[].content` → `TEXT_MESSAGE_CONTENT` (bracketed by `TEXT_MESSAGE_START`/`TEXT_MESSAGE_END`; `messageId` taken from upstream `messages[].messageId`). Each distinct upstream node gets its own block; the `planner` node (`messageMeta.langgraph_node`) is the plan/reasoning step and is bracketed by `REASONING_START`/`REASONING_MESSAGE_START`/`REASONING_MESSAGE_CONTENT`/`REASONING_MESSAGE_END`/`REASONING_END` instead, while other nodes (commander/summarizer) produce TEXT_MESSAGE blocks. `finish_reason="tool_calls"` + `tool_calls` → `TOOL_CALL_START/ARGS/END`; `role="tool"` turns → `TOOL_CALL_RESULT`. `humanInTheLoopMeta.isInterrupt=true` → standalone TEXT_MESSAGE with `interruptMessage` as delta. `data: [Done]` sentinel → `RUN_FINISHED`.
 - **Errors are events, not HTTP codes:** rate-limit, upstream non-`96200`, 5xx, and timeout all surface as a single `RUN_ERROR` event over a `200` stream (`code` = `CHATAGENT_RATE_LIMITED` / `CHATAGENT_UPSTREAM_ERROR` / `CHATAGENT_TIMEOUT`). This is a **breaking change** from v2's HTTP `429`/`502`/`504`.
 
 **Request body** (twp-ai `RunAgentInput`; required: `threadId`, `runId`, `messages`, `tools`, `state`, `context`, `forwardedProps`):
@@ -464,7 +464,7 @@ data: {"type":"RUN_FINISHED","runId":"run_1","threadId":"thread_1"}
 
 #### Example 2 — Multi-agent (planner → commander → summarizer)
 
-Each upstream `messageId` maps to an independent TEXT_MESSAGE block. The `messageMeta.langgraph_node` field identifies the agent type (carried in `UpstreamMessage.agent_type`) but does not affect the event type — all produce TEXT_MESSAGE blocks.
+Each upstream `messageId` maps to an independent block. `messageMeta.langgraph_node` (carried in `UpstreamMessage.agent_type`) selects the block type: the **`planner`** node is the agent's plan/reasoning step, surfaced as a `REASONING_*` block (`REASONING_START` → `REASONING_MESSAGE_START`/`CONTENT`*/`END` → `REASONING_END`); every other node (`commander`, `summarizer`, …) becomes a `TEXT_MESSAGE` block.
 
 ```
 # upstream
@@ -476,9 +476,11 @@ data: [Done]
 # ragent response
 data: {"type":"RUN_STARTED","runId":"run_1","threadId":"thread_1"}
 
-data: {"type":"TEXT_MESSAGE_START","messageId":"plan-1","role":"assistant"}
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"plan-1","delta":"Planning..."}
-data: {"type":"TEXT_MESSAGE_END","messageId":"plan-1"}
+data: {"type":"REASONING_START"}
+data: {"type":"REASONING_MESSAGE_START","messageId":"plan-1"}
+data: {"type":"REASONING_MESSAGE_CONTENT","messageId":"plan-1","delta":"Planning..."}
+data: {"type":"REASONING_MESSAGE_END","messageId":"plan-1"}
+data: {"type":"REASONING_END"}
 
 data: {"type":"TEXT_MESSAGE_START","messageId":"cmd-1","role":"assistant"}
 data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"cmd-1","delta":"Executing step 1."}
@@ -625,7 +627,7 @@ data: {"type":"RUN_FINISHED","runId":"r1","threadId":"t1"}
 
 The frontend executes the tool and sends the real result back as a `role="tool"` message in a **continuation run** (same `threadId`); that run preserves the tool-result history into the next LLM turn. Errors surface as `{"type":"RUN_ERROR","message":"...","code":"...","runId":"r1","threadId":"t1"}`.
 
-Event types: `RUN_STARTED` · `TEXT_MESSAGE_START`/`TEXT_MESSAGE_CONTENT`/`TEXT_MESSAGE_END` · `TOOL_CALL_START`/`TOOL_CALL_ARGS`/`TOOL_CALL_END` · `RUN_FINISHED` · `RUN_ERROR`.
+Event types: `RUN_STARTED` · `TEXT_MESSAGE_START`/`TEXT_MESSAGE_CONTENT`/`TEXT_MESSAGE_END` · `REASONING_START`/`REASONING_MESSAGE_START`/`REASONING_MESSAGE_CONTENT`/`REASONING_MESSAGE_END`/`REASONING_END` · `TOOL_CALL_START`/`TOOL_CALL_ARGS`/`TOOL_CALL_END` · `RUN_FINISHED` · `RUN_ERROR`.
 
 ---
 

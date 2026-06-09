@@ -75,6 +75,41 @@ def test_v3_streams_twp_ai_event_lifecycle() -> None:
     assert events[0]["threadId"] == "thread_1"
 
 
+def test_v3_planner_message_streams_reasoning_events() -> None:
+    app, http_mock = _make_app()
+    http_mock.send.return_value = _resp_mock(
+        [
+            _msg_line("Planning ", message_id="plan-1", agent_type="planner"),
+            _msg_line("steps", message_id="plan-1", agent_type="planner"),
+            _msg_line("The answer.", message_id="sum-1", agent_type="summarizer"),
+            _done_line(),
+        ]
+    )
+
+    with TestClient(app) as client:
+        r = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+
+    assert r.status_code == 200
+    events = _events(r.text)
+    assert [e["type"] for e in events] == [
+        "RUN_STARTED",
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_END",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]
+    assert [e["delta"] for e in events if e["type"] == "REASONING_MESSAGE_CONTENT"] == [
+        "Planning ",
+        "steps",
+    ]
+
+
 def test_v3_injects_server_metadata() -> None:
     app, http_mock = _make_app()
     http_mock.send.return_value = _resp_mock([_done_line()])

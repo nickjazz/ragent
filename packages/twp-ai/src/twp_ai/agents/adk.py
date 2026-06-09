@@ -6,15 +6,19 @@ this agent maps the upstream's SSE stream to the twp-ai AG-UI event lifecycle:
 
     RUN_STARTED
     [per message from upstream:]
-      TEXT_MESSAGE_START / TEXT_MESSAGE_CONTENT* / TEXT_MESSAGE_END  (role=assistant with text)
+      REASONING_START / REASONING_MESSAGE_START / REASONING_MESSAGE_CONTENT* /
+        REASONING_MESSAGE_END / REASONING_END                       (planner node text)
+      TEXT_MESSAGE_START / TEXT_MESSAGE_CONTENT* / TEXT_MESSAGE_END  (other assistant text)
       TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END               (upstream tool calls)
       TOOL_CALL_RESULT                                                (upstream tool results)
     RUN_FINISHED
 
 Upstream agent types (planner / commander / summarizer) each produce a separate
-TEXT_MESSAGE block identified by their upstream messageId. Human-in-the-loop
-interrupts are surfaced as a standalone TEXT_MESSAGE containing the interrupt
-prompt. Any caller exception surfaces as a single RUN_ERROR event.
+block identified by their upstream messageId. The `planner` node is the agent's
+plan/reasoning step, so it is surfaced as a REASONING_* block; every other node
+becomes a TEXT_MESSAGE block. Human-in-the-loop interrupts are surfaced as a
+standalone TEXT_MESSAGE containing the interrupt prompt. Any caller exception
+surfaces as a single RUN_ERROR event.
 """
 
 from __future__ import annotations
@@ -23,6 +27,11 @@ from collections.abc import Generator
 
 from ..callers.adk import ADKCaller, UpstreamMessage
 from ..events import (
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -36,6 +45,10 @@ from ..events import (
     to_sse,
 )
 from ..schemas import RunAgentInput
+
+# messageMeta.langgraph_node value whose output is the agent's plan/reasoning,
+# surfaced as REASONING_* events instead of a visible TEXT_MESSAGE block.
+_REASONING_NODE = "planner"
 
 
 class ADKAgent:
@@ -69,13 +82,25 @@ class ADKAgent:
 def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, None, None]:
     """Map upstream messages to AG-UI events with message-boundary tracking."""
     open_msg_id: str | None = None
+    open_kind: str | None = None  # "text" | "reasoning" — how the open block was started
     # Maps function_name → FIFO list of tc_ids so same-named calls resolve in order.
     pending_calls: dict[str, list[str]] = {}
 
+    def _close_block() -> Generator[str, None, None]:
+        nonlocal open_msg_id, open_kind
+        mid, kind = open_msg_id, open_kind
+        open_msg_id = open_kind = None
+        if mid is None:
+            return
+        if kind == "reasoning":
+            yield to_sse(ReasoningMessageEndEvent(message_id=mid))
+            yield to_sse(ReasoningEndEvent())
+        else:
+            yield to_sse(TextMessageEndEvent(message_id=mid))
+
     for msg in upstream:
         if open_msg_id is not None and msg.message_id != open_msg_id:
-            yield to_sse(TextMessageEndEvent(message_id=open_msg_id))
-            open_msg_id = None
+            yield from _close_block()
 
         if msg.is_interrupt:
             if msg.interrupt_message:
@@ -88,15 +113,25 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
 
         if msg.role == "assistant":
             if msg.content:
-                if open_msg_id is None:
-                    open_msg_id = msg.message_id
-                    yield to_sse(TextMessageStartEvent(message_id=open_msg_id))
-                yield to_sse(TextMessageContentEvent(message_id=msg.message_id, delta=msg.content))
+                if msg.agent_type == _REASONING_NODE:
+                    if open_msg_id is None:
+                        open_msg_id, open_kind = msg.message_id, "reasoning"
+                        yield to_sse(ReasoningStartEvent())
+                        yield to_sse(ReasoningMessageStartEvent(message_id=open_msg_id))
+                    yield to_sse(
+                        ReasoningMessageContentEvent(message_id=msg.message_id, delta=msg.content)
+                    )
+                else:
+                    if open_msg_id is None:
+                        open_msg_id, open_kind = msg.message_id, "text"
+                        yield to_sse(TextMessageStartEvent(message_id=open_msg_id))
+                    yield to_sse(
+                        TextMessageContentEvent(message_id=msg.message_id, delta=msg.content)
+                    )
 
             if msg.tool_calls and msg.finish_reason == "tool_calls":
                 if open_msg_id is not None:
-                    yield to_sse(TextMessageEndEvent(message_id=open_msg_id))
-                    open_msg_id = None
+                    yield from _close_block()
                 for i, tc in enumerate(msg.tool_calls):
                     fn = tc.get("function", {})
                     fn_name = fn.get("name", "unknown")
@@ -125,4 +160,4 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
             )
 
     if open_msg_id is not None:
-        yield to_sse(TextMessageEndEvent(message_id=open_msg_id))
+        yield from _close_block()
