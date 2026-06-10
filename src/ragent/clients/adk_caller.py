@@ -19,6 +19,7 @@ from collections.abc import Generator
 
 import httpx
 import structlog
+from twp_ai import build_system_prompt
 from twp_ai.callers.adk import UpstreamMessage
 from twp_ai.schemas import Message, RunAgentInput
 
@@ -66,7 +67,7 @@ class ADKCaller:
                 "userToken": self._user_token,
                 "session": request.thread_id,
             },
-            "inputData": {"message": _last_user_message(request.messages)},
+            "inputData": {"message": _compose_message(request)},
             "stream": True,
         }
 
@@ -163,6 +164,16 @@ def _parse_message(raw: dict) -> UpstreamMessage:
         interrupt_message=hitl.get("interruptMessage"),
         interrupt_content=hitl.get("interruptContent"),
     )
+
+
+def _compose_message(request: RunAgentInput) -> str:
+    """Fold the run input's tools/context/state ahead of the user's question.
+
+    The upstream proxy carries a single `inputData.message` field, so the
+    twp-ai system prompt (the same one /twp/v1/run builds) is prepended to the
+    last user message rather than sent as a separate `role="system"` turn.
+    """
+    return f"{build_system_prompt(request)}\n\n{_last_user_message(request.messages)}"
 
 
 def _last_user_message(messages: list[Message]) -> str:

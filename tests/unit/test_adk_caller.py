@@ -17,16 +17,22 @@ from tests.helpers import resp_mock as _resp_mock
 from tests.helpers import sse_line as _sse_line
 
 
-def _request(messages: list[dict] | None = None) -> RunAgentInput:
+def _request(
+    messages: list[dict] | None = None,
+    *,
+    tools: list[dict] | None = None,
+    state: object = None,
+    context: list[dict] | None = None,
+) -> RunAgentInput:
     return RunAgentInput.model_validate(
         {
             "threadId": "thread_1",
             "runId": "run_1",
             "messages": messages
             or [{"id": "m1", "role": "user", "content": "What are the features?"}],
-            "tools": [],
-            "state": None,
-            "context": [],
+            "tools": tools or [],
+            "state": state,
+            "context": context or [],
             "forwardedProps": None,
         }
     )
@@ -55,7 +61,7 @@ def test_stream_deltas_builds_upstream_payload() -> None:
     assert payload["metadata"]["user"] == "bob"
     assert payload["metadata"]["userToken"] == "tok-bob"
     assert payload["metadata"]["session"] == "thread_1"
-    assert payload["inputData"]["message"] == "What are the features?"
+    assert payload["inputData"]["message"].endswith("What are the features?")
     assert payload["stream"] is True
 
 
@@ -72,7 +78,27 @@ def test_stream_deltas_uses_last_user_message() -> None:
     list(caller.stream_deltas(_request(messages), "m"))
 
     payload = http_mock.build_request.call_args.kwargs["json"]
-    assert payload["inputData"]["message"] == "latest question"
+    assert payload["inputData"]["message"].endswith("latest question")
+
+
+def test_stream_deltas_prepends_system_prompt_with_context() -> None:
+    http_mock = MagicMock(spec=httpx.Client)
+    http_mock.send.return_value = _resp_mock([_done_line()])
+    caller = _make_caller(http_mock)
+    request = _request(
+        tools=[{"name": "save_form", "description": "Persist the form", "parameters": {}}],
+        state={"draft": "v1"},
+        context=[{"description": "current page", "value": "checkout"}],
+    )
+
+    list(caller.stream_deltas(request, "m"))
+
+    message = http_mock.build_request.call_args.kwargs["json"]["inputData"]["message"]
+    assert "save_form: Persist the form" in message
+    assert '"value": "checkout"' in message
+    assert '"draft": "v1"' in message
+    # The user's actual question stays at the end, after the folded context.
+    assert message.endswith("What are the features?")
 
 
 def test_stream_deltas_yields_upstream_messages_until_done() -> None:
