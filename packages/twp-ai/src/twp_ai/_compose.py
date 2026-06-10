@@ -9,12 +9,13 @@ Core primitive: Turn
     for tc in turn.tool_calls:   # now you know what was called
         ...
 
-Helpers: build_messages, build_tool_defs
+Helpers: build_system_prompt, build_messages, build_tool_defs
     Shared plumbing used by every handler.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Generator
 from typing import Any
@@ -60,6 +61,43 @@ class Turn:
 
         if has_text:
             yield to_sse(TextMessageEndEvent(message_id=msg_id))
+
+
+def build_system_prompt(request: RunAgentInput) -> str:
+    """Fold the run input's tools, context, and state into a system prompt.
+
+    Shared by every handler that needs the LLM to see the client-supplied
+    context/state — the native DirectLLMAgent loop and the ChatAgent upstream
+    proxy alike — so the two paths stay in lock-step.
+    """
+    lines = ["You are a helpful assistant that helps users complete tasks and fill forms.", ""]
+
+    if request.tools:
+        lines.append("Available tools:")
+        for tool in request.tools:
+            lines.append(f"  - {tool.name}: {tool.description}")
+        lines.append("")
+        lines.append(
+            "Only call a tool when the user explicitly asks to change, fill, update, "
+            "submit, clear, or otherwise modify the current application state. "
+            "If the user asks about the page or asks an unrelated question, answer in text."
+        )
+    else:
+        lines.append("Answer the user helpfully.")
+
+    if request.context:
+        lines.append("")
+        context_json = json.dumps(
+            [item.model_dump(by_alias=True) for item in request.context],
+            ensure_ascii=False,
+        )
+        lines.append(f"Context: {context_json}")
+
+    if request.state is not None:
+        lines.append("")
+        lines.append(f"State: {json.dumps(request.state, ensure_ascii=False)}")
+
+    return "\n".join(lines)
 
 
 def build_messages(request: RunAgentInput, system_prompt: str) -> list[dict]:
