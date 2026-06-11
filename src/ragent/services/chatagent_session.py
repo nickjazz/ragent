@@ -23,6 +23,8 @@ from ragent.utility.hidden import strip_hidden
 
 
 def map_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
     messages = payload.get("messages")
     if not isinstance(messages, list):
         return payload
@@ -34,8 +36,10 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
     meta = raw.get("messageMeta")
     langgraph_node = meta.get("langgraph_node") if isinstance(meta, dict) else None
     content = raw.get("content")
+    # `or "assistant"`: a present-but-null `role` must fall back too, not just a
+    # missing key — keeps a non-empty string for node_to_role.
     return {
         "id": raw.get("messageId") or "",
-        "role": node_to_role(raw.get("role", "assistant"), langgraph_node),
+        "role": node_to_role(raw.get("role") or "assistant", langgraph_node),
         "content": strip_hidden(content) if isinstance(content, str) else content,
     }

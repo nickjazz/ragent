@@ -48,14 +48,16 @@ async def proxy_get(
         )
         resp.raise_for_status()
         payload = resp.json()
+        if transform is not None:
+            payload = transform(payload)
     except httpx.TimeoutException:
         logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
         return timeout_error()
-    except (httpx.HTTPStatusError, httpx.RequestError, ValueError):
+    except (httpx.HTTPStatusError, httpx.RequestError, ValueError, AttributeError, TypeError):
+        # AttributeError/TypeError guard the transform against a malformed
+        # upstream payload — surface it as 502, not an uncaught 500.
         logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
         return upstream_error()
-    if transform is not None:
-        payload = transform(payload)
     return JSONResponse(payload)
 
 

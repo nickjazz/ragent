@@ -85,3 +85,14 @@ def test_payload_without_messages_list_is_returned_unchanged() -> None:
     payload = {"session": "s1", "sessionName": "chat"}
 
     assert map_session_payload(payload) == payload
+
+
+def test_non_dict_payload_is_returned_unchanged() -> None:
+    # A malformed upstream (array/scalar) must not raise AttributeError.
+    assert map_session_payload([1, 2]) == [1, 2]  # type: ignore[arg-type]
+
+
+def test_explicit_null_role_falls_back_to_assistant() -> None:
+    payload = _session([{"messageId": "m1", "role": None, "content": "x"}])
+
+    assert map_session_payload(payload)["messages"][0]["role"] == "assistant"

@@ -156,7 +156,7 @@ def _parse_message(raw: dict) -> UpstreamMessage:
     content = raw.get("content")
     return UpstreamMessage(
         message_id=raw.get("messageId") or "",
-        role=raw.get("role", "assistant"),
+        role=raw.get("role") or "assistant",
         content=strip_hidden(content) if isinstance(content, str) else content,
         agent_type=message_meta.get("langgraph_node"),
         tool_name=display_meta.get("toolName"),
