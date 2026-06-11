@@ -362,13 +362,11 @@ transport to an `ADKCaller` protocol; the concrete proxy lives ragent-side in
 - `humanInTheLoopMeta.isInterrupt=true` → standalone `TEXT_MESSAGE` carrying
   `interruptMessage` as the delta.
 - `[Done]` sentinel → `RUN_FINISHED`.
-- **Hidden stripping (outbound):** because the upstream keeps conversation memory
-  by `session` and persists every turn verbatim (including the `<hidden>` preamble
-  it was sent), any `<hidden>…</hidden>` block — whitespace/attribute variants
-  included — is stripped from surfaced message content before it reaches the
-  client, so the machine-supplied context never re-enters the rendered
-  conversation. When a message carries no such block its content (including any
-  leading/trailing whitespace of a streaming delta) is left untouched.
+- **No `<hidden>` stripping on the stream:** the SSE deltas are the upstream
+  agent's own generated output (assistant text / reasoning / tool); the
+  `<hidden>` context/state preamble exists only on the user turn sent upstream
+  and is never echoed back into the response stream, so there is nothing to strip
+  here. Hidden stripping applies only to the session-history read (§3.4.8).
 
 **Error contract (breaking change vs v2):** every failure — rate-limit, upstream
 `returnCode != 96200`, 5xx, and timeout — is emitted as a single `RUN_ERROR`
@@ -393,7 +391,11 @@ message shape changes, while the upstream wire contract is untouched.
     **same `node_to_role` rule as the v3 stream** (§3.4.7): `user`→`user`,
     `tool`→`tool`, assistant+`planner`→`reasoning`, every other assistant
     node→`assistant`.
-  - `content` has the `<hidden>…</hidden>` block stripped (outbound rule, §3.4.7).
+  - `content` has any `<hidden>…</hidden>` block stripped — the persisted user
+    turn carries the context/state preamble we sent upstream (whitespace /
+    attribute tag variants included), and it must not surface in rendered history.
+    This is the **only** place hidden stripping applies (the stream, §3.4.7, never
+    carries the block).
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
 

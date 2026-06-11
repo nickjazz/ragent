@@ -25,7 +25,6 @@ from twp_ai.schemas import ContextItem, Message, RunAgentInput
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.upstream import UpstreamServiceError, classify_upstream_error
-from ragent.utility.hidden import strip_hidden
 
 logger = structlog.get_logger(__name__)
 
@@ -153,11 +152,13 @@ def _parse_message(raw: dict) -> UpstreamMessage:
     hitl = raw.get("humanInTheLoopMeta")
     if not isinstance(hitl, dict):
         hitl = {}
-    content = raw.get("content")
     return UpstreamMessage(
         message_id=raw.get("messageId") or "",
         role=raw.get("role") or "assistant",
-        content=strip_hidden(content) if isinstance(content, str) else content,
+        # No <hidden> strip here: the stream carries the agent's own generated
+        # deltas (assistant/reasoning/tool), never the user turn that carries the
+        # preamble — stripping belongs only to the session-history read path.
+        content=raw.get("content"),
         agent_type=message_meta.get("langgraph_node"),
         tool_name=display_meta.get("toolName"),
         tool_calls=raw.get("tool_calls") or [],
