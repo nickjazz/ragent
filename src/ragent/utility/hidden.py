@@ -1,30 +1,36 @@
-"""Strip the `<hidden>…</hidden>` block from content surfaced to the client.
+"""Strip the machine-context wrapper blocks from session-history content.
 
-The upstream ChatAgent keeps conversation memory by `session` and persists
-every message verbatim — including the `<hidden>` context/state preamble that
-the v3 caller prepends to the user turn (`clients/adk_caller.py`). Because the
-upstream replays persisted turns, that machine-supplied block can flow back out
-through the v3 stream and the session history; both surfaces strip it here so it
-never reaches the rendered conversation.
+The v3 session read surfaces a clean conversation history, but the upstream
+persists every user turn verbatim, including the machine-supplied context the
+frontend prepended. Two wrapper forms exist:
 
-The matcher is intentionally lenient (whitespace / attribute variants, multi-line
-bodies) to mirror the neutralization done when the block is *built*, and it
-trims only the separator the preamble itself introduced — when no block is
-present the text is returned unchanged so streaming deltas keep their own
-leading/trailing whitespace.
+- the current v3 path wraps it in a `<hidden>…</hidden>` block (with the
+  `<context>`/`<state>` payload nested inside);
+- the legacy v1 path prepended a bare `<context>…</context>` block.
+
+Both must be removed so a session created before v3 still renders clean
+(backward compatibility). The v3 stream does NOT use this — its deltas are the
+agent's own generated output and never carry the block.
+
+The matcher is lenient (whitespace / attribute variants, multi-line bodies,
+tag-name case) and trims the trailing separator the wrapper introduced. When no
+wrapper is present the text is returned unchanged.
 """
 
 from __future__ import annotations
 
 import re
 
-# Match a whole `<hidden …>…</hidden …>` block plus any trailing whitespace
-# (the `\n\n` separator the preamble adds before the user message).
-_HIDDEN_BLOCK_RE = re.compile(
-    r"<\s*hidden(?:\s+[^>]*)?>.*?<\s*/\s*hidden\s*>\s*",
+# A `<hidden …>…</hidden …>` or legacy bare `<context …>…</context …>` block,
+# plus any trailing whitespace (the separator before the user message). The
+# named backreference pins the closing tag to the opening one, and `hidden` is
+# listed first so a v3 block (which nests `<context>`/`<state>`) is consumed
+# whole rather than from its inner `<context>`.
+_WRAPPER_BLOCK_RE = re.compile(
+    r"<\s*(?P<tag>hidden|context)(?:\s+[^>]*)?>.*?<\s*/\s*(?P=tag)\s*>\s*",
     re.IGNORECASE | re.DOTALL,
 )
 
 
-def strip_hidden(text: str) -> str:
-    return _HIDDEN_BLOCK_RE.sub("", text)
+def strip_machine_context(text: str) -> str:
+    return _WRAPPER_BLOCK_RE.sub("", text)

@@ -6,7 +6,8 @@ verbatim. Its stored history therefore carries raw upstream roles
 `<hidden>` context/state preamble the v3 caller prepends to the user turn. The
 v3 session endpoint surfaces a clean history: each message is relabelled to a
 twp-ai role (shared `node_to_role` rule — identical to the v3 stream) and the
-hidden block is stripped from its content.
+machine-context wrapper (`<hidden>`, or a legacy bare `<context>` for sessions
+created before v3) is stripped from its content.
 
 The transform preserves the upstream session envelope (`session`,
 `sessionName`, …) and only rewrites `messages[]`; payloads without a messages
@@ -19,7 +20,7 @@ from typing import Any
 
 from twp_ai.roles import node_to_role
 
-from ragent.utility.hidden import strip_hidden
+from ragent.utility.hidden import strip_machine_context
 
 
 def map_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -41,5 +42,5 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": raw.get("messageId") or "",
         "role": node_to_role(raw.get("role") or "assistant", langgraph_node),
-        "content": strip_hidden(content) if isinstance(content, str) else content,
+        "content": strip_machine_context(content) if isinstance(content, str) else content,
     }

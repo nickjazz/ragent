@@ -391,11 +391,13 @@ message shape changes, while the upstream wire contract is untouched.
     **same `node_to_role` rule as the v3 stream** (§3.4.7): `user`→`user`,
     `tool`→`tool`, assistant+`planner`→`reasoning`, every other assistant
     node→`assistant`.
-  - `content` has any `<hidden>…</hidden>` block stripped — the persisted user
-    turn carries the context/state preamble we sent upstream (whitespace /
-    attribute tag variants included), and it must not surface in rendered history.
-    This is the **only** place hidden stripping applies (the stream, §3.4.7, never
-    carries the block).
+  - `content` has the machine-context wrapper stripped — the persisted user turn
+    carries the preamble the frontend prepended, and it must not surface in
+    rendered history. Both forms are removed (whitespace / attribute tag variants
+    included): the current `<hidden>…</hidden>` block **and** the legacy bare
+    `<context>…</context>` block that sessions created before v3 carry (backward
+    compatibility). This is the **only** place the strip applies (the stream,
+    §3.4.7, never carries the block).
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
 

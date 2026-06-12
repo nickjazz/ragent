@@ -30,6 +30,23 @@ def test_user_message_keeps_user_role_and_strips_hidden() -> None:
     assert out["messages"] == [{"id": "m1", "role": "user", "content": "What is X?"}]
 
 
+def test_legacy_bare_context_block_is_stripped() -> None:
+    # Sessions created before v3 carry a bare <context> block (no <hidden>).
+    payload = _session(
+        [
+            {
+                "messageId": "m1",
+                "role": "user",
+                "content": "<context>\ncurrent page\n</context>\n\nWhat is X?",
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"] == [{"id": "m1", "role": "user", "content": "What is X?"}]
+
+
 def test_planner_node_maps_to_reasoning() -> None:
     payload = _session(
         [
