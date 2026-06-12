@@ -340,6 +340,13 @@ transport to an `ADKCaller` protocol; the concrete proxy lives ragent-side in
   ```
 - `metadata` is server-injected: `apName` (= `CHATAGENT_AP_NAME`), `user`
   (resolved caller), `userToken` (raw JWT header), and `session = threadId`.
+- **Session id ownership (Model B):** request `threadId` is **optional**. ragent
+  owns the session id — when the client omits it (a brand-new conversation),
+  ragent mints one (`new_id()`) and uses it as the upstream `session`, so the
+  upstream always receives ours and never mints its own. The resolved id is
+  echoed in `RUN_STARTED.threadId`; the client reuses it on every later turn.
+  Request `messages[].id` is the client's optimistic id — ignored by the proxy;
+  the upstream assigns the authoritative `messageId` returned in the stream.
 - `stream` is always `true`. `model` is **not** forwarded (the upstream decides,
   matching v2).
 - `tools`/`forwardedProps` are accepted but not forwarded; client tool-call
@@ -362,12 +369,49 @@ transport to an `ADKCaller` protocol; the concrete proxy lives ragent-side in
 - `humanInTheLoopMeta.isInterrupt=true` → standalone `TEXT_MESSAGE` carrying
   `interruptMessage` as the delta.
 - `[Done]` sentinel → `RUN_FINISHED`.
+- **No `<hidden>` stripping on the stream:** the SSE deltas are the upstream
+  agent's own generated output (assistant text / reasoning / tool); the
+  `<hidden>` context/state preamble exists only on the user turn sent upstream
+  and is never echoed back into the response stream, so there is nothing to strip
+  here. Hidden stripping applies only to the session-history read (§3.4.8).
 
 **Error contract (breaking change vs v2):** every failure — rate-limit, upstream
 `returnCode != 96200`, 5xx, and timeout — is emitted as a single `RUN_ERROR`
 event over a `200 text/event-stream` response, with `code` set to
 `CHATAGENT_RATE_LIMITED` / `CHATAGENT_UPSTREAM_ERROR` / `CHATAGENT_TIMEOUT`. v3
 never returns an HTTP `429`/`502`/`504` (v2 does).
+
+#### 3.4.8 `/chatagent/v3` session management — twp-ai-shaped history
+
+`/chatagent/v3` also exposes the session-management surface (each route registered
+only when its upstream URL env var is set), proxying the **same** upstream as
+`/chatagent/v1/session*` but returning the persisted history in the **twp-ai
+message shape**. This is the reason the session interface is versioned up: the
+message shape changes, while the upstream wire contract is untouched.
+
+- `GET /chatagent/v3/sessionList` — each entry's `sessionName` has the
+  machine-context wrapper stripped (the upstream derives the title from the first
+  user turn, which carries the block); other metadata is passed through.
+- `GET /chatagent/v3/session?session=<id>` — the upstream session envelope
+  (`session`, …) is preserved, `sessionName` is stripped (same reason as
+  sessionList), and every `messages[]` entry is reshaped to `{id, role, content}`:
+  - `role` is derived from the upstream role + `messageMeta.langgraph_node` by the
+    **same `node_to_role` rule as the v3 stream** (§3.4.7): `user`→`user`,
+    `tool`→`tool`, assistant+`planner`→`reasoning`, every other assistant
+    node→`assistant`.
+  - `content` has the machine-context wrapper stripped — the persisted user turn
+    carries the preamble the frontend prepended, and it must not surface in
+    rendered history. Both forms are removed (whitespace / attribute tag variants
+    included): the current `<hidden>…</hidden>` block **and** the legacy bare
+    `<context>…</context>` block that sessions created before v3 carry (backward
+    compatibility). This is the **only** place the strip applies (the stream,
+    §3.4.7, never carries the block).
+- `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
+  message bodies).
+
+These are JSON proxy routes (not the SSE stream), so timeout / upstream failures
+map to HTTP `504` / `502` as in v1 — the v3 `RUN_ERROR` framing applies only to
+`POST /chatagent/v3`.
 
 ---
 

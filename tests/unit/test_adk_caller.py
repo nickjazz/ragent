@@ -214,6 +214,19 @@ def test_stream_deltas_yields_upstream_messages_until_done() -> None:
     assert msgs[1].content == "features"
 
 
+def test_stream_deltas_null_role_defaults_to_assistant() -> None:
+    # A present-but-null upstream role must not leak `None` into UpstreamMessage.
+    http_mock = MagicMock(spec=httpx.Client)
+    http_mock.send.return_value = _resp_mock(
+        [_msg_line("hi", message_id="m1", role=None), _done_line()]
+    )
+    caller = _make_caller(http_mock)
+
+    msgs = list(caller.stream_deltas(_request(), "m"))
+
+    assert msgs[0].role == "assistant"
+
+
 def test_stream_deltas_parses_agent_type() -> None:
     http_mock = MagicMock(spec=httpx.Client)
     http_mock.send.return_value = _resp_mock(

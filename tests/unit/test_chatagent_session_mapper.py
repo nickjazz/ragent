@@ -1,0 +1,174 @@
+"""Session-history mapping for /chatagent/v3 — twp-ai roles + hidden stripped.
+
+The upstream persists every turn verbatim (memory by session), so the stored
+history carries both raw upstream roles (`assistant`/`tool`) keyed by
+`messageMeta.langgraph_node` and the `<hidden>` context/state preamble on the
+user turn. The v3 session endpoint maps each message to a twp-ai role and strips
+the hidden block before returning it to the client.
+"""
+
+import json
+
+from ragent.services.chatagent_session import map_session_list_payload, map_session_payload
+
+
+def _session(messages: list[dict]) -> dict:
+    return {"session": "s1", "sessionName": "chat", "messages": messages}
+
+
+def test_user_message_keeps_user_role_and_strips_hidden() -> None:
+    payload = _session(
+        [
+            {
+                "messageId": "m1",
+                "role": "user",
+                "content": "<hidden>\n<context>[]</context>\n</hidden>\n\nWhat is X?",
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"] == [{"id": "m1", "role": "user", "content": "What is X?"}]
+
+
+def test_legacy_bare_context_block_is_stripped() -> None:
+    # Sessions created before v3 carry a bare <context> block (no <hidden>).
+    payload = _session(
+        [
+            {
+                "messageId": "m1",
+                "role": "user",
+                "content": "<context>\ncurrent page\n</context>\n\nWhat is X?",
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"] == [{"id": "m1", "role": "user", "content": "What is X?"}]
+
+
+def test_double_encoded_content_is_unwrapped_then_stripped() -> None:
+    # Upstream stores content JSON-double-encoded: a quoted string with literal
+    # \n escapes. Decode that layer first, else `"\n\nWhat is X?"` survives.
+    real = "<hidden>\n<context>[]</context>\n</hidden>\n\nWhat is X?"
+    payload = _session([{"messageId": "m1", "role": "user", "content": json.dumps(real)}])
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "What is X?"
+
+
+def test_double_encoded_session_name_is_unwrapped_then_stripped() -> None:
+    real = "<context>page</context>\n\nFirst chat"
+    payload = {"session": "s1", "sessionName": json.dumps(real), "messages": []}
+
+    assert map_session_payload(payload)["sessionName"] == "First chat"
+
+
+def test_plain_content_is_not_json_unwrapped() -> None:
+    # A plain message that isn't a JSON string must pass through untouched.
+    payload = _session([{"messageId": "m1", "role": "user", "content": "What is X?"}])
+
+    assert map_session_payload(payload)["messages"][0]["content"] == "What is X?"
+
+
+def test_planner_node_maps_to_reasoning() -> None:
+    payload = _session(
+        [
+            {
+                "messageId": "m2",
+                "role": "assistant",
+                "content": "Planning...",
+                "messageMeta": {"langgraph_node": "planner"},
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["role"] == "reasoning"
+    assert out["messages"][0]["content"] == "Planning..."
+
+
+def test_other_assistant_nodes_map_to_assistant() -> None:
+    payload = _session(
+        [
+            {
+                "messageId": "m3",
+                "role": "assistant",
+                "content": "Done.",
+                "messageMeta": {"langgraph_node": "summarizer"},
+            }
+        ]
+    )
+
+    assert map_session_payload(payload)["messages"][0]["role"] == "assistant"
+
+
+def test_tool_role_maps_to_tool() -> None:
+    payload = _session([{"messageId": "m4", "role": "tool", "content": "result"}])
+
+    assert map_session_payload(payload)["messages"][0]["role"] == "tool"
+
+
+def test_envelope_fields_are_preserved() -> None:
+    payload = _session([])
+    payload["sessionStatus"] = "active"
+
+    out = map_session_payload(payload)
+
+    assert out["session"] == "s1"
+    assert out["sessionName"] == "chat"
+    assert out["sessionStatus"] == "active"
+    assert out["messages"] == []
+
+
+def test_payload_without_messages_list_is_returned_unchanged() -> None:
+    payload = {"session": "s1", "sessionName": "chat"}
+
+    assert map_session_payload(payload) == payload
+
+
+def test_non_dict_payload_is_returned_unchanged() -> None:
+    # A malformed upstream (array/scalar) must not raise AttributeError.
+    assert map_session_payload([1, 2]) == [1, 2]  # type: ignore[arg-type]
+
+
+def test_session_name_is_stripped_on_get() -> None:
+    # sessionName is derived from the first user turn, which carries the wrapper.
+    payload = {
+        "session": "s1",
+        "sessionName": "<hidden>\n<context>[]</context>\n</hidden>\n\nWhat is X?",
+        "messages": [],
+    }
+
+    out = map_session_payload(payload)
+
+    assert out["sessionName"] == "What is X?"
+
+
+def test_session_list_strips_each_session_name() -> None:
+    payload = {
+        "totalCount": 2,
+        "sessions": [
+            {"session": "s1", "sessionName": "<context>page</context>\n\nFirst"},
+            {"session": "s2", "sessionName": "Plain title"},
+        ],
+    }
+
+    out = map_session_list_payload(payload)
+
+    assert [s["sessionName"] for s in out["sessions"]] == ["First", "Plain title"]
+    assert out["totalCount"] == 2
+
+
+def test_session_list_without_sessions_is_returned_unchanged() -> None:
+    assert map_session_list_payload({"totalCount": 0}) == {"totalCount": 0}
+
+
+def test_explicit_null_role_falls_back_to_assistant() -> None:
+    payload = _session([{"messageId": "m1", "role": None, "content": "x"}])
+
+    assert map_session_payload(payload)["messages"][0]["role"] == "assistant"

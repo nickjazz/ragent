@@ -154,7 +154,10 @@ def _parse_message(raw: dict) -> UpstreamMessage:
         hitl = {}
     return UpstreamMessage(
         message_id=raw.get("messageId") or "",
-        role=raw.get("role", "assistant"),
+        role=raw.get("role") or "assistant",
+        # No <hidden> strip here: the stream carries the agent's own generated
+        # deltas (assistant/reasoning/tool), never the user turn that carries the
+        # preamble — stripping belongs only to the session-history read path.
         content=raw.get("content"),
         agent_type=message_meta.get("langgraph_node"),
         tool_name=display_meta.get("toolName"),
