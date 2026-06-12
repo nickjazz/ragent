@@ -24,6 +24,7 @@ from ragent.bootstrap.metrics import observe_pipeline_duration, record_pipeline_
 from ragent.errors.codes import TaskErrorCode
 from ragent.pipelines.observability import bind_ingest_context, log_ingest_step
 from ragent.schemas.ingest import BINARY_MIMES, MIME_EXTENSIONS, IngestMime
+from ragent.utility.state_machine import IllegalStateTransition
 
 logger = structlog.get_logger(__name__)
 
@@ -214,11 +215,41 @@ async def ingest_pipeline_task(document_id: str) -> None:
         )
 
     observe_pipeline_duration(source_app=doc.source_app, mime_type=doc.mime_type, seconds=elapsed)
-    promoted = await repo.promote_to_ready_and_demote_siblings(
-        document_id=document_id,
-        source_id=doc.source_id,
-        source_app=doc.source_app,
-    )
+    try:
+        promoted = await repo.promote_to_ready_and_demote_siblings(
+            document_id=document_id,
+            source_id=doc.source_id,
+            source_app=doc.source_app,
+        )
+    except Exception as exc:
+        # An escaped exception here strands the row in PENDING forever: the
+        # broker is at-most-once and only the reconciler could rescue it.
+        # Terminalize to FAILED so the row stays rerunnable; a concurrent
+        # sibling may have already demoted it, which is benign.
+        reason = f"promote failed: {type(exc).__name__}: {exc}"
+        log_ingest_step.failed(
+            document_id=document_id,
+            reason=reason,
+            error_code=TaskErrorCode.PIPELINE_UNEXPECTED_ERROR,
+        )
+        try:
+            await repo.update_status(
+                document_id,
+                from_status="PENDING",
+                to_status="FAILED",
+                error_code=TaskErrorCode.PIPELINE_UNEXPECTED_ERROR,
+                error_reason=reason,
+            )
+        except IllegalStateTransition:
+            logger.warning(
+                "ingest.promote_failed_row_already_terminal",
+                document_id=document_id,
+                error_type=type(exc).__name__,
+            )
+        record_pipeline_outcome(
+            source_app=doc.source_app, mime_type=doc.mime_type, outcome="failed"
+        )
+        return
     record_pipeline_outcome(source_app=doc.source_app, mime_type=doc.mime_type, outcome="success")
 
     # Post-READY enrichment only runs for the survivor; a self-demoted doc is

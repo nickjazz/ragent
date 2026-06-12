@@ -23,11 +23,13 @@ from ragent.utility.state_machine import IllegalStateTransition, assert_transiti
 
 logger = structlog.get_logger(__name__)
 
-_MARIADB_DEADLOCK = 1213
+# Deadlock (1213) and lock wait timeout (1205) — both expected when concurrent
+# tasks for the same source_id group race on the election row locks.
+_MARIADB_RETRYABLE_LOCK_ERRORS = (1213, 1205)
 
 
-def _is_deadlock(exc: OperationalError) -> bool:
-    return getattr(getattr(exc, "orig", None), "args", (None,))[0] == _MARIADB_DEADLOCK
+def _is_retryable_lock_error(exc: OperationalError) -> bool:
+    return getattr(getattr(exc, "orig", None), "args", (None,))[0] in _MARIADB_RETRYABLE_LOCK_ERRORS
 
 
 @dataclass
@@ -180,7 +182,7 @@ class DocumentRepository:
                 await self._execute(stmt, params)
                 break
             except OperationalError as exc:
-                if attempt < 2 and _is_deadlock(exc):
+                if attempt < 2 and _is_retryable_lock_error(exc):
                     await asyncio.sleep(0.05 * (attempt + 1))
                     continue
                 raise
@@ -378,16 +380,16 @@ class DocumentRepository:
         row is no longer PENDING). Callers should gate post-READY side effects
         on this return value.
 
-        Retries up to 3 times on MariaDB deadlock (error 1213) which can
-        occur when concurrent tasks for the same source_id group race on
-        the row-level locks in the election subquery.
+        Retries up to 5 attempts on MariaDB deadlock (1213) or lock wait
+        timeout (1205), which occur when concurrent tasks for the same
+        source_id group race on the row-level locks in the election subquery.
         """
         assert_transition("PENDING", "READY")
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 return await self._promote_or_demote(document_id, source_id, source_app)
             except OperationalError as exc:
-                if attempt < 2 and _is_deadlock(exc):
+                if attempt < 4 and _is_retryable_lock_error(exc):
                     await asyncio.sleep(0.05 * (attempt + 1))
                     continue
                 raise

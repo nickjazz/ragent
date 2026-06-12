@@ -1,8 +1,10 @@
-"""promote_to_ready_and_demote_siblings: deadlock retry (MariaDB error 1213).
+"""promote_to_ready_and_demote_siblings: lock-error retry (MariaDB 1213/1205).
 
-When the UPDATE inside promote_to_ready_and_demote_siblings hits a deadlock,
-the method must retry up to 3 times rather than propagating the exception,
-leaving the document stuck in PENDING.
+When the UPDATE inside promote_to_ready_and_demote_siblings hits a deadlock
+(1213) or lock wait timeout (1205) — both expected when concurrent tasks for
+the same source_id group race on the election row locks — the method must
+retry up to 5 attempts rather than propagating the exception and leaving the
+document stuck in PENDING (issue #170).
 """
 
 from __future__ import annotations
@@ -18,6 +20,12 @@ from ragent.repositories.document_repository import DocumentRepository
 def _deadlock_exc() -> OperationalError:
     cause = MagicMock()
     cause.args = (1213, "Deadlock found when trying to get lock; try restarting transaction")
+    return OperationalError("UPDATE documents ...", {}, cause)
+
+
+def _lock_wait_timeout_exc() -> OperationalError:
+    cause = MagicMock()
+    cause.args = (1205, "Lock wait timeout exceeded; try restarting transaction")
     return OperationalError("UPDATE documents ...", {}, cause)
 
 
@@ -109,19 +117,31 @@ async def test_non_deadlock_operational_error_propagates_immediately():
 
 
 @pytest.mark.asyncio
-async def test_deadlock_exhausting_all_retries_reraises():
-    """Three consecutive deadlocks → OperationalError propagates after max retries."""
+async def test_lock_wait_timeout_retries_then_succeeds():
+    """Lock wait timeout (1205) on first attempt → retry → promoted (True)."""
     engine = _make_engine(
         [
-            _deadlock_exc(),
-            _deadlock_exc(),
-            _deadlock_exc(),
+            _lock_wait_timeout_exc(),  # attempt 0: raise lock wait timeout
+            _rowcount(1),  # attempt 1: promote UPDATE succeeds
+            _rowcount(0),  # attempt 1: sibling-demote UPDATE (no siblings)
         ]
     )
+    repo = DocumentRepository(engine=engine)
+
+    result = await repo.promote_to_ready_and_demote_siblings("D1", "S1", "app")
+
+    assert result is True
+    assert engine.begin.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_deadlock_exhausting_all_retries_reraises():
+    """Five consecutive deadlocks → OperationalError propagates after max attempts."""
+    engine = _make_engine([_deadlock_exc() for _ in range(5)])
     repo = DocumentRepository(engine=engine)
 
     with pytest.raises(OperationalError) as exc_info:
         await repo.promote_to_ready_and_demote_siblings("D1", "S1", "app")
 
-    assert engine.begin.call_count == 3
+    assert engine.begin.call_count == 5
     assert exc_info.value.orig.args[0] == 1213
