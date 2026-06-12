@@ -5,7 +5,9 @@
       "Bash(RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh simplify:fast)",
       "Bash(RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh review:fast)",
       "Bash(where make *)",
-      "PowerShell(if \\(-not $?\\) { \"make not found via where.exe\" })"
+      "PowerShell(if \\(-not $?\\) { \"make not found via where.exe\" })",
+      "Bash(cp /home/user/ragent/.claude/hooks/pre_push_gate.sh /home/user/ragent/.agents/hooks/pre_push_gate.sh)",
+      "Bash(bash -n /home/user/ragent/.claude/hooks/pre_push_gate.sh)"
     ]
   }
 }
