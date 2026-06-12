@@ -7,6 +7,8 @@ user turn. The v3 session endpoint maps each message to a twp-ai role and strips
 the hidden block before returning it to the client.
 """
 
+import json
+
 from ragent.services.chatagent_session import map_session_list_payload, map_session_payload
 
 
@@ -45,6 +47,31 @@ def test_legacy_bare_context_block_is_stripped() -> None:
     out = map_session_payload(payload)
 
     assert out["messages"] == [{"id": "m1", "role": "user", "content": "What is X?"}]
+
+
+def test_double_encoded_content_is_unwrapped_then_stripped() -> None:
+    # Upstream stores content JSON-double-encoded: a quoted string with literal
+    # \n escapes. Decode that layer first, else `"\n\nWhat is X?"` survives.
+    real = "<hidden>\n<context>[]</context>\n</hidden>\n\nWhat is X?"
+    payload = _session([{"messageId": "m1", "role": "user", "content": json.dumps(real)}])
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "What is X?"
+
+
+def test_double_encoded_session_name_is_unwrapped_then_stripped() -> None:
+    real = "<context>page</context>\n\nFirst chat"
+    payload = {"session": "s1", "sessionName": json.dumps(real), "messages": []}
+
+    assert map_session_payload(payload)["sessionName"] == "First chat"
+
+
+def test_plain_content_is_not_json_unwrapped() -> None:
+    # A plain message that isn't a JSON string must pass through untouched.
+    payload = _session([{"messageId": "m1", "role": "user", "content": "What is X?"}])
+
+    assert map_session_payload(payload)["messages"][0]["content"] == "What is X?"
 
 
 def test_planner_node_maps_to_reasoning() -> None:
