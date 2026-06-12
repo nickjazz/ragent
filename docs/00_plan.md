@@ -265,6 +265,28 @@
 | T-MCP2.3 | Behavioral | • **Achieve:** Header metadata fields (source_app, document_id, source_title) have CR/LF stripped to prevent injection of fake `[資料來源 #N]` header lines.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_sanitizes_newlines_in_header_metadata`; `_header_field()` helper in `routers/mcp.py`; integration test contract updated to `[資料來源 #N]` text format. | [x] | Dev |
 
 
+## Track T-MCP13 — MCP structured tool output (protocol 2025-06-18, B63)
+
+> Source: 2026-06-10 user request.
+> The `[資料來源 #N]` text-only result leaked verbatim into calling agents' replies, and the
+> frontend had no machine-readable channel for a retrieved-sources panel. Adopt MCP 2025-06-18
+> structured tool output: declared `outputSchema` + `structuredContent.sources` (full entries
+> for the UI) alongside a `<context>`-wrapped markdown citation table + excerpt blocks in
+> `content[0].text` (user-presentable, no internal fields, no natural-language wording).
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-MCP13.1 | Behavioral | • **Achieve:** `tools/list` advertises `outputSchema` on `retrieve` declaring the `structuredContent.sources` contract.<br>• **Deliver:** `tests/unit/test_mcp_tools_list.py::test_retrieve_tool_advertises_output_schema`; `RETRIEVE_OUTPUT_SCHEMA` in `routers/mcp_tools/retrieve.py` passed as `outputSchema=` to the Tool descriptor. | [x] | Dev |
+| T-MCP13.2 | Behavioral | • **Achieve:** `tools/call retrieve` returns `structuredContent: {sources: [...]}` with the full 10-field entries (`doc_to_source_entry()` output); empty result ⇒ `sources: []`.<br>• **Deliver:** `tests/unit/test_mcp_tools_call_retrieve.py::test_tools_call_retrieve_structured_content_sources` + `::test_tools_call_retrieve_empty_result`; `_handle_tools_call` in `routers/mcp.py`. | [x] | Dev |
+| T-MCP13.3 | Behavioral | • **Achieve:** `content[0].text` is a `<context>`-wrapped markdown citation table (`#`/`資料來源`/`來源系統`, title linked to `source_url`, `(未命名)` fallback) + `### [N]` blockquoted excerpt blocks; no internal fields (id/score/mime/source_meta) and no natural-language wording; empty result ⇒ `<context>\n</context>`.<br>• **Deliver:** `::test_tools_call_retrieve_text_is_context_wrapped_citation_table`, `::test_tools_call_retrieve_text_hides_internal_fields`, `::test_tools_call_retrieve_text_format_null_metadata`; `_render_context_markdown()` replaces `_render_chunks()` in `routers/mcp.py`. | [x] | Dev |
+| T-MCP13.4 | Behavioral | • **Achieve:** `structuredContent` validates against the advertised `outputSchema`; markdown table/headings are injection-safe (CR/LF stripped, `\|` escaped) while raw values survive in `structuredContent`.<br>• **Deliver:** `::test_tools_call_retrieve_structured_content_matches_output_schema`, `::test_tools_call_retrieve_sanitizes_markdown_in_text`; `_md_cell()` helper in `routers/mcp.py`. | [x] | Dev |
+| T-MCP13.5 | Behavioral | • **Achieve:** `initialize` advertises `protocolVersion: "2025-06-18"` (first revision with structured tool output).<br>• **Deliver:** `tests/unit/test_mcp_initialize.py` pin updated; `_MCP_PROTOCOL_VERSION` in `routers/mcp.py`; `tests/integration/test_mcp_router.py` round-trip updated to the structured contract. | [x] | Dev |
+| T-MCP13.6 | Behavioral | • **Achieve:** a `\|` in `source_url` cannot split the citation-table row (PR #171 gemini review).<br>• **Deliver:** `::test_tools_call_retrieve_sanitizes_markdown_in_text` extended with a pipe-bearing URL (encoded `%7C` per T-MCP13.7's URL encoding); raw URL still reaches the frontend via `structuredContent`. | [x] | Dev |
+| T-MCP13.7 | Behavioral | • **Achieve:** only `http(s)` `source_url` values are linkified — `javascript:` URLs render as plain title; `(` `)` space `\|` percent-encoded so the link destination cannot end early (PR #171 codex review).<br>• **Deliver:** `::test_tools_call_retrieve_does_not_linkify_non_http_urls`, `::test_tools_call_retrieve_encodes_markdown_breaking_url_chars`; `_safe_link_url()` in `routers/mcp.py`. | [x] | Dev |
+| T-MCP13.8 | Behavioral | • **Achieve:** literal `<context>`/`</context>` tags inside titles/excerpts are neutralised to `&lt;…&gt;` so corpus text cannot prematurely close the wrapper (PR #171 codex review).<br>• **Deliver:** `::test_tools_call_retrieve_neutralizes_context_tags_in_text`; `_neutralize_context_tags()` in `routers/mcp.py`; raw values survive in `structuredContent`. | [x] | Dev |
+| T-MCP13.9 | Behavioral | • **Achieve:** `initialize` negotiates the protocol revision — echoes a supported requested version (`2025-06-18`/`2025-03-26`/`2024-11-05`), falls back to latest for unsupported ones, instead of force-upgrading older clients (PR #171 codex review).<br>• **Deliver:** `tests/unit/test_mcp_initialize.py::test_initialize_echoes_supported_older_protocol_version` + `::test_initialize_unsupported_protocol_version_falls_back_to_latest`; `_SUPPORTED_PROTOCOL_VERSIONS` in `routers/mcp.py`. | [x] | Dev |
+
+
 
 ---
 
@@ -407,3 +429,77 @@ X-User-Id: alice
 | T-MCP-REG.2 | Behavioral | • **Achieve:** Add agent-oriented `description=` to all six fields of `RetrieveRequest` so both the OpenAPI docs and the MCP `inputSchema` carry actionable guidance for AI callers.<br>• **Deliver:** `src/ragent/schemas/retrieve.py` — all six `Field(...)` calls gain `description=`; `docs/spec/mcp_server.md §3.8.3` updated to reflect new descriptions. | [x] | Dev |
 | T-MCP-REG.3 | Behavioral | • **Achieve:** Fix `_build_mcp_input_schema`: strip `"default": null` after collapsing `anyOf:[{type:T},{type:null}]` — advertised null defaults were contradictory with `type:T` and caused Draft7Validator to reject explicit `null` submissions with -32602.<br>• **Deliver:** `src/ragent/routers/mcp_tools/retrieve.py` (4-line fix); `tests/unit/test_mcp_tools_list.py::test_retrieve_optional_fields_have_no_null_default`; `docs/spec/mcp_server.md §3.8.3` (remove `"default": null` from optional fields). | [x] | Dev |
 | T-MCP-REG.4 | Behavioral | • **Achieve:** Improve `retrieve` tool description UX for AI agents: (1) replace impl-detail "hybrid vector + BM25 search" with behavior-oriented "hybrid semantic + keyword search"; (2) remove misleading `source_app` examples ('confluence', 'jira') and guide agent to derive valid values from previous result metadata.<br>• **Deliver:** `src/ragent/routers/mcp_tools/retrieve.py` (tool description); `src/ragent/schemas/retrieve.py` (source_app description); `docs/spec/mcp_server.md §3.8.3` (synced). | [x] | Dev |
+
+---
+
+## Track T-CAv3 — ChatAgent v3 (twp-ai protocol proxy)
+
+> Source: 2026-06-08 design session. Adds `POST /chatagent/v3` — same upstream proxy
+> mechanism as v2 (shares `CHATAGENT_API_URL` / `CHATAGENT_AUTH` / rate limit), but the
+> **wire contract is the twp-ai protocol**: request is a twp-ai `RunAgentInput`, response is
+> a twp-ai SSE event stream. ragent owns the bidirectional conversion.
+>
+> **Abstraction:** mirrors `DirectLLMAgent` + caller split.
+> - `ADKAgent` (new, `packages/twp-ai/src/twp_ai/agents/adk.py`) — owns the twp-ai event flow
+>   (`RUN_STARTED` → `TEXT_MESSAGE_START`/`CONTENT`/`END` → `RUN_FINISHED`; any caller exception
+>   → `RUN_ERROR`). Pure proxy: no system prompt, no tool loop.
+> - `ADKCaller` protocol (new, `packages/twp-ai/src/twp_ai/callers/adk.py`, pure abstract) —
+>   `stream_deltas(request, model) -> Generator[str]`. Concrete httpx impl lives ragent-side.
+>
+> **Conversion rules (locked):**
+> - Request: `RunAgentInput` → a `<hidden>`-wrapped `context`/`state` preamble (no persona, no
+>   tools — the upstream owns its persona/memory) is prepended to the last `role="user"` message
+>   content → upstream `inputData.message` (single-field wire); no context/state ⇒ bare user text.
+>   The `<hidden>` block (short-term fix) lets the frontend strip context/state from rendered
+>   history; wrapper tokens inside the payload are neutralized so it can't close early.
+>   metadata injection mirrors v2 (`apName`/`user`/`userToken`/`session`), with `session = threadId`.
+>   `model` not forwarded (upstream decides, same as v2). Always `stream: true`.
+> - Response: upstream `{"returnCode":96200,"returnData":{"delta":...}}` → `TEXT_MESSAGE_CONTENT`;
+>   `{"returnData":{"done":true}}` → `TEXT_MESSAGE_END` + `RUN_FINISHED`. `messageId` minted by ADKAgent.
+> - Errors: **all** failures (rate-limit, timeout, upstream non-96200/5xx) surface as a `RUN_ERROR`
+>   SSE event over a 200 stream — never an HTTP 4xx/5xx code.
+> - context/state: folded into a `<hidden>`-wrapped preamble prepended to the user message (T-CAv3.6).
+>   tools/forwardedProps: accepted but not forwarded; tool-call continuation deferred.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv3.1 | Red+Green | • **Achieve:** `ADKCaller` protocol — structural `stream_deltas(request, model) -> Generator[str]`.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/callers/adk.py`; covered via ADKAgent tests using a fake caller. | [x] | Dev |
+| T-CAv3.2 | Red+Green | • **Achieve:** `ADKAgent.run()` emits the twp-ai text lifecycle from caller deltas; caller exception → `RUN_ERROR` carrying `error_code` when present.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/agents/adk.py`; `packages/twp-ai/tests/test_adk_agent.py` — happy path event order, per-delta CONTENT, error→RUN_ERROR. | [x] | Dev |
+| T-CAv3.3 | Red+Green | • **Achieve:** ragent-side concrete `ADKCaller` — builds upstream payload (last-user-message → `inputData.message`, metadata `session=threadId`, `stream:true`), parses `returnData.delta`/`done`, raises `UpstreamTimeoutError`/`UpstreamServiceError`.<br>• **Deliver:** `src/ragent/clients/adk_caller.py`; `tests/unit/test_adk_caller.py` — payload shape, delta parsing, done stop, timeout→504-coded exc, non-96200→502-coded exc. | [x] | Dev |
+| T-CAv3.4 | Red+Green | • **Achieve:** `POST /chatagent/v3` — `get_user_id` dep, builds `RunAgentInput`, per-request `ADKCaller`, streams `ADKAgent` events as `text/event-stream`; rate-limit exceeded → 200 SSE with single `RUN_ERROR` (`CHATAGENT_RATE_LIMITED`).<br>• **Deliver:** `src/ragent/routers/chatagent_v3.py::create_chatagent_v3_router`; `tests/unit/test_chatagent_v3_router.py` — happy path event stream, server-field injection, rate-limit→RUN_ERROR, upstream error→RUN_ERROR. | [x] | Dev |
+| T-CAv3.W1 | Behavioral | • **Achieve:** Register `/chatagent/v3` in `bootstrap/app.py` under the existing `CHATAGENT_API_URL` guard (shares http_client/auth/rate_limiter/ap_name).<br>• **Deliver:** `app.py` wiring; `tests/integration/test_chatagent_v3_endpoint.py` — full TestClient flow with mocked httpx streaming, RUN_ERROR on upstream failure. | [x] | Dev |
+| T-CAv3.D1 | Structural | • **Achieve:** Document the v3 contract.<br>• **Deliver:** `docs/00_spec.md` (v3 System Interface + Scenario rows), `docs/API.md` (endpoint + samples). No new env var (shares v2 config). | [x] | Dev |
+| T-CAv3.5 | Red+Green | • **Achieve:** Map the upstream `planner` node (the agent's plan/reasoning step) to a reasoning block instead of a `TEXT_MESSAGE` block: `REASONING_START` → `REASONING_MESSAGE_START`/`REASONING_MESSAGE_CONTENT`*/`REASONING_MESSAGE_END` → `REASONING_END`. Streams per-delta; closes the reasoning block at the messageId boundary before any following `TEXT_MESSAGE`. Other nodes unchanged.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/events.py` (5 new events + union); `packages/twp-ai/src/twp_ai/agents/adk.py` (`_relay` block-kind tracking); `packages/twp-ai/tests/test_adk_agent.py` + `tests/unit/test_chatagent_v3_router.py` (reasoning lifecycle, streamed deltas, planner→summarizer transition); `docs/00_spec.md` §3.4.7 + `docs/API.md` Example 2 + event-type list. | [x] | Dev |
+| T-CAv3.6 | Red+Green | • **Achieve:** Surface the client-supplied `context`/`state` (previously dropped) to the upstream by prepending a labelled `Context:`/`State:` preamble to the last user message → `inputData.message`. No persona and no tool enumeration — the upstream is a general, tool-capable agent that owns its persona and keeps memory by `session`; no context/state ⇒ bare user text (plain pass-through).<br>• **Deliver:** `src/ragent/clients/adk_caller.py` (`_compose_message` + `_context_preamble`); `tests/unit/test_adk_caller.py` + `tests/unit/test_chatagent_v3_router.py` (preamble fold, tools excluded, pass-through when empty); `docs/00_spec.md` §3.4.7 + `docs/API.md`. | [x] | Dev |
+
+## Track T-CAv3S — ChatAgent v3 session history (twp-ai roles + hidden filtering)
+
+> Source: 2026-06-11 design session. Two linked changes driven by the upstream
+> keeping conversation memory by `session` and persisting every turn verbatim:
+> (1) the `<hidden>` context/state preamble we prepend leaks back out through the
+> read paths, and (2) the session history must be relabelled to twp-ai roles so the
+> mco-clean `@twp/ai` data layer renders it like the v3 stream.
+>
+> **Locked decisions:**
+> - Hidden filtering is **outbound only** (strip on surfaced content); no inbound
+>   sanitization of client-supplied messages this cycle.
+> - The upgraded session surface lives at **`/chatagent/v3/session*`** (the twp-ai
+>   protocol family) — `/chatagent/v2` is already the raw-proxy POST. `/chatagent/v1`
+>   session routes stay live for cutover.
+> - Role mapping reuses the **same `node_to_role` rule as the v3 stream**: `user`→`user`,
+>   `tool`→`tool`, assistant+`planner`→`reasoning`, other assistant nodes→`assistant`.
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv3S.1 | Structural | • **Achieve:** Extract the upstream-role classifier into a single source of truth shared by the v3 stream and the session mapper.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/roles.py::node_to_role` + `REASONING_NODE`; `agents/adk.py` rewired to it; `packages/twp-ai/tests/test_roles.py`. Existing ADKAgent tests stay green (no behavior change). | [x] | Dev |
+| T-CAv3S.2 | Red+Green | • **Achieve:** Strip `<hidden>…</hidden>` from surfaced content; no-op (no trimming) when no block is present. Applied **only** on the session-history read — the v3 stream carries the agent's own deltas, never the user turn's preamble, so it is not stripped there.<br>• **Deliver:** `src/ragent/utility/hidden.py::strip_hidden`; `tests/unit/test_hidden.py`; consumed by `services/chatagent_session.py`. | [x] | Dev |
+| T-CAv3S.3 | Red+Green | • **Achieve:** Map upstream session history to twp-ai message shape `{id, role, content}` — role via `node_to_role`, content via `strip_hidden`; envelope preserved; payload without a `messages` list passes through.<br>• **Deliver:** `src/ragent/services/chatagent_session.py::map_session_payload`; `tests/unit/test_chatagent_session_mapper.py`. | [x] | Dev |
+| T-CAv3S.4 | Structural | • **Achieve:** Extract the shared session-proxy plumbing (threadpool dispatch, status check, timeout→504/error→502 mapping, optional response `transform`) so v1 and v3 share one copy.<br>• **Deliver:** `src/ragent/routers/_chatagent_proxy.py`; `routers/chatagent.py` (v1) refactored to delegate. v1 unit + integration tests stay green. | [x] | Dev |
+| T-CAv3S.5 | Red+Green | • **Achieve:** Add `/chatagent/v3` session surface — `GET /sessionList` (proxied), `GET /session` (reshaped via `map_session_payload`), `PUT`/`DELETE /session` (proxied).<br>• **Deliver:** `routers/chatagent_v3.py` session routes; `tests/integration/test_chatagent_v3_endpoint.py` — role mapping + hidden strip on GET, sessionList passthrough. | [x] | Dev |
+| T-CAv3S.W1 | Behavioral | • **Achieve:** Wire the two session upstream URLs into the v3 router registration.<br>• **Deliver:** `bootstrap/app.py` v3 registration passes `chatagent_sessionlist_api_url`/`chatagent_session_api_url`. | [x] | Dev |
+| T-CAv3S.D1 | Structural | • **Achieve:** Document the outbound hidden-strip rule and the v3 session surface.<br>• **Deliver:** `docs/00_spec.md` §3.4.7 (outbound strip bullet) + new §3.4.8 (v3 session management). | [x] | Dev |
+| T-CAv3S.FE1 | Red+Green | • **Achieve:** mco-clean `@twp/ai` data layer consumes `/chatagent/v3/session`, preserving `reasoning`/`tool` roles (panel UI unchanged).<br>• **Deliver:** mco-clean `packages/ai` session client + mapper + types. | [ ] | Dev |
+| T-CAv3S.BC1 | Red+Green | • **Achieve:** Backward compat (PR #175 review) — the session read also strips the legacy bare `<context>…</context>` block that pre-v3 sessions carry, not just `<hidden>`. `strip_hidden` generalized + renamed `strip_machine_context`.<br>• **Deliver:** `src/ragent/utility/hidden.py::strip_machine_context`; `tests/unit/test_hidden.py` legacy-context cases; `tests/unit/test_chatagent_session_mapper.py` legacy case; `docs/00_spec.md` §3.4.8. | [x] | Dev |
+| T-CAv3S.B2 | Red+Green | • **Achieve:** Session-id ownership (Model B) — `RunAgentInput.thread_id` optional; v3 mints `new_id()` when absent (single owner = ragent; upstream never mints), echoes it in `RUN_STARTED`; native `/twp/v1/run` defaults a uuid so RUN_STARTED is never null. Document `messages[].id` as client-optimistic / ignored.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/schemas.py` (optional `thread_id` + `Message.id` comment); `app.py` native default; `routers/chatagent_v3.py` mint; `tests/unit/test_chatagent_v3_router.py` + `packages/twp-ai/tests/test_twp_protocol.py`; `docs/00_spec.md` §3.4.7. | [x] | Dev |
+| T-CAv3S.BC2 | Red+Green | • **Achieve:** Strip the machine-context wrapper from `sessionName` too — the upstream derives the title from the first user turn (which carries the block), so it leaked into the session list and session GET title.<br>• **Deliver:** `services/chatagent_session.py` (`_strip_session_name`, `map_session_list_payload`, `sessionName` stripped in `map_session_payload`); `routers/chatagent_v3.py` sessionList `transform`; `tests/unit/test_chatagent_session_mapper.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/00_spec.md` §3.4.8. | [x] | Dev |
+| T-CAv3S.BC3 | Red+Green | • **Achieve:** Decode JSON-double-encoded `content`/`sessionName` before the wrapper strip — the upstream stores some values as a quoted string with literal `\n` escapes, so a leading `"` and `\n\n` survived the strip (`"\n\n<message>"`).<br>• **Deliver:** `services/chatagent_session.py` (`_unwrap_json_string` + `_clean_text`, applied to content + sessionName); `tests/unit/test_chatagent_session_mapper.py` double-encoded cases. | [x] | Dev |
