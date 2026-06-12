@@ -98,27 +98,24 @@ def _poll_all_until_terminal(doc_ids: list[str]) -> dict[str, str]:
     Terminal states: READY, FAILED, DELETING, DELETED (404).
     Documents still UPLOADED or PENDING after the deadline are recorded as
     TIMEOUT.
+
+    The wait loop's per-doc snapshots go stale the moment they are recorded:
+    a loser revision is legitimately READY until the elected survivor's
+    promote demotes it (supersede is DB-arbitrated on each READY transition).
+    Once every doc is terminal all tasks have finished and no further
+    transitions occur, so a single fresh sweep yields the true end state.
     """
     deadline = time.monotonic() + DEADLINE_SECONDS
-    statuses: dict[str, str] = {d: "UNKNOWN" for d in doc_ids}
     pending = set(doc_ids)
 
     while pending and time.monotonic() < deadline:
-        still_pending: set[str] = set()
-        for doc_id in pending:
-            s = _get_status(doc_id)
-            if s in ("READY", "FAILED", "DELETING", "DELETED"):
-                statuses[doc_id] = s
-            else:
-                still_pending.add(doc_id)
-        pending = still_pending
+        pending = {
+            d for d in pending if _get_status(d) not in ("READY", "FAILED", "DELETING", "DELETED")
+        }
         if pending:
             time.sleep(1)
 
-    for doc_id in pending:
-        statuses[doc_id] = "TIMEOUT"
-
-    return statuses
+    return {d: "TIMEOUT" if d in pending else _get_status(d) for d in doc_ids}
 
 
 def _es_refresh(es_url: str) -> None:
