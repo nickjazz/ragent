@@ -20,10 +20,17 @@ def test_strips_legacy_bare_context_block() -> None:
     assert strip_machine_context(text) == "What is X?"
 
 
-def test_no_block_is_left_untouched_including_whitespace() -> None:
-    assert strip_machine_context("Hello ") == "Hello "
-    assert strip_machine_context(" world") == " world"
-    assert strip_machine_context("plain") == "plain"
+def test_leading_whitespace_around_block_is_removed() -> None:
+    # The wrapper may sit behind upstream-added blank lines; the rendered turn
+    # must not start with them.
+    assert strip_machine_context("\n\n<hidden>x</hidden>\n\nWhat is X?") == "What is X?"
+
+
+def test_surrounding_whitespace_is_trimmed_internal_preserved() -> None:
+    # Session content is whole messages — trim the edges, keep internal blanks.
+    assert strip_machine_context("Hello ") == "Hello"
+    assert strip_machine_context("\n\nplain") == "plain"
+    assert strip_machine_context("line 1\n\nline 2") == "line 1\n\nline 2"
 
 
 def test_bare_hidden_block_becomes_empty() -> None:

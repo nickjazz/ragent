@@ -13,8 +13,9 @@ Both must be removed so a session created before v3 still renders clean
 agent's own generated output and never carry the block.
 
 The matcher is lenient (whitespace / attribute variants, multi-line bodies,
-tag-name case) and trims the trailing separator the wrapper introduced. When no
-wrapper is present the text is returned unchanged.
+tag-name case). The result is stripped of surrounding whitespace: the session
+read deals in whole messages, so the wrapper's separator — and any leading blank
+lines the upstream stored around it — must not survive into the rendered turn.
 """
 
 from __future__ import annotations
@@ -33,4 +34,4 @@ _WRAPPER_BLOCK_RE = re.compile(
 
 
 def strip_machine_context(text: str) -> str:
-    return _WRAPPER_BLOCK_RE.sub("", text)
+    return _WRAPPER_BLOCK_RE.sub("", text).strip()
