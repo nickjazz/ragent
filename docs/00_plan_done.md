@@ -332,20 +332,6 @@
 
 ---
 
-### Track T-ICU — ICU Analyzer Convergence (T-ICU.1–T-ICU.3)
-
-> T-ICU.4 (remaining manual smoke test) is tracked in `docs/00_plan.md`.
-
-**Counter: 完成 3 / 未完成 0 / descope 0**
-
-| # | Category | Task | Status | Owner |
-|---|---|---|:---:|---|
-| T-ICU.1 | Structural | • **Achieve:** Reconcile spec §5.2 with B26. | [x] | Dev |
-| T-ICU.2 | Red | • **Achieve:** Pin ICU analyzer in prod mapping; pin standard analyzer in test mapping. | [x] | QA |
-| T-ICU.3 | Green | • **Achieve:** Implement env-driven mapping dir + commit two mapping files. | [x] | Dev |
-
----
-
 ### Track T-RR — Reconciler-as-safety-net Follow-up — 2026-05-08
 
 **Counter: 完成 18 / 未完成 0 / descope 0**

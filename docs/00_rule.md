@@ -47,7 +47,7 @@ Any further specifics (constraints, env vars, edge cases, references) follow as 
 **Counter: 完成 N / 未完成 N / descope N**
 ```
 
-Update this counter whenever an item status changes. The counts cover all items in the track — including those archived in `00_plan_done.md` (the archive entry carries the final counter; the active entry reflects the remaining work).
+Update this counter whenever an item status changes. The counts cover all items in the track.
 
 **Status legend:**
 - `[x]` delivered
