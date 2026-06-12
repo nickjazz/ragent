@@ -89,3 +89,15 @@ jobs:
         # `make test-e2e-golden` against real endpoints to enforce that
         # SLO (T7.3.x plan track).
         run: uv run pytest tests/e2e -v --tb=short
+
+      - name: Upload api/worker process logs
+        # The e2e stack pipes api/worker subprocess stdout to /tmp/e2e_*.log
+        # (tests/e2e/conftest.py). Without this upload, worker-side tracebacks
+        # are invisible in CI failures (issue #170).
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-process-logs
+          path: /tmp/e2e_*.log
+          retention-days: 7
+          if-no-files-found: ignore
