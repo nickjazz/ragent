@@ -4733,7 +4733,6 @@ source = { editable = "packages/twp-ai" }
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
-    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -4750,7 +4749,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-httpserver", marker = "extra == 'dev'", specifier = ">=1.1.0" },
-    { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 provides-extras = ["dev"]
 
