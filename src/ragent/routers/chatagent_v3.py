@@ -26,6 +26,8 @@ from ragent.errors.codes import HttpErrorCode
 from ragent.routers._chatagent_proxy import proxy_get, proxy_write
 from ragent.routers._quality_validation import (
     admin_quality_validation_stream as _qv_stream,
+)
+from ragent.routers._quality_validation import (
     is_admin_validation_command as _qv_is_command,
 )
 from ragent.schemas.chatagent import SessionDeleteRequest, SessionRenameRequest
@@ -84,10 +86,7 @@ def create_chatagent_v3_router(
                 body = body.model_copy(update={"thread_id": new_id()})
 
             # T-CVQ — admin quality validation slash command intercept
-            if (
-                quality_validation_questions is not None
-                and _qv_is_command(body.messages)
-            ):
+            if quality_validation_questions is not None and _qv_is_command(body.messages):
                 auth_header = request.headers.get("authorization", "")
                 return StreamingResponse(
                     _qv_stream(

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from ragent.utility.quality_validation_checker import (
     check_keywords_any,
     check_no_keywords,
@@ -12,7 +10,6 @@ from ragent.utility.quality_validation_checker import (
     collect_text,
     parse_sse_line,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_sse_line
@@ -144,7 +141,13 @@ def test_check_protocol_run_error_is_terminal() -> None:
 def test_check_protocol_run_error_reported() -> None:
     events = [
         {"type": "RUN_STARTED", "runId": "r1", "threadId": "t1"},
-        {"type": "RUN_ERROR", "runId": "r1", "threadId": "t1", "message": "timeout", "code": "CHATAGENT_TIMEOUT"},
+        {
+            "type": "RUN_ERROR",
+            "runId": "r1",
+            "threadId": "t1",
+            "message": "timeout",
+            "code": "CHATAGENT_TIMEOUT",
+        },
     ]
     reasons = check_protocol(events)
     assert any("RUN_ERROR" in r for r in reasons)
@@ -220,7 +223,9 @@ def test_check_session_messages_valid() -> None:
 
 
 def test_check_session_messages_too_few() -> None:
-    reasons = check_session_messages([{"id": "1", "role": "user", "content": "hi"}], keywords_any=[])
+    reasons = check_session_messages(
+        [{"id": "1", "role": "user", "content": "hi"}], keywords_any=[]
+    )
     assert any("2" in r for r in reasons)
 
 
