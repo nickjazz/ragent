@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from ragent.utility.hidden import strip_machine_context
+
 _TOOL_EVENT_TYPES = frozenset(
     {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END", "TOOL_CALL_RESULT"}
 )
@@ -100,15 +102,13 @@ def check_session_messages(messages: list[dict], *, keywords_any: list[str]) -> 
 
     for i, msg in enumerate(messages):
         content = msg.get("content", "")
-        if "<hidden>" in content or "<context>" in content or "<state>" in content:
-            violations.append(f"<hidden> tag leaked in session message {i + 1}")
+        if strip_machine_context(content) != content:
+            violations.append(f"machine-context tag leaked in session message {i + 1}")
 
     if keywords_any:
         session_text = " ".join(m.get("content", "") for m in assistant_msgs)
-        lower = session_text.lower()
-        if not any(kw.lower() in lower for kw in keywords_any):
-            quoted = ", ".join(repr(kw) for kw in keywords_any)
-            violations.append(f"expected keywords not found in session content: {quoted}")
+        for reason in check_keywords_any(session_text, keywords_any):
+            violations.append(f"[session] {reason}")
 
     return violations
 

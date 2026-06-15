@@ -10,7 +10,9 @@ from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
 from ragent.utility.env import bool_env as _bool_env
 from ragent.utility.env import float_env as _float_env
 from ragent.utility.env import int_env as _int_env
+from ragent.utility.env import list_env as _list_env
 from ragent.utility.env import require as _require
+from ragent.utility.env import str_env as _str_env
 
 _K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 
@@ -351,16 +353,15 @@ def build_container() -> Container:
     chatagent_auth = os.environ.get("CHATAGENT_AUTH") or None
 
     # T-CVQ — quality validation (only wired when QUALITY_VALIDATION_FIXTURE_PATH is set)
-    _qv_fixture_path = os.environ.get("QUALITY_VALIDATION_FIXTURE_PATH", "")
+    _qv_fixture_path = _str_env("QUALITY_VALIDATION_FIXTURE_PATH", "")
     _qv_questions: list[dict] | None = None
     if _qv_fixture_path:
         from ragent.routers._quality_validation import load_questions as _load_qv
 
         _qv_questions = _load_qv(_qv_fixture_path) or None
-    _qv_admin_ids_raw = os.environ.get("QUALITY_VALIDATION_ADMIN_USER_IDS", "")
-    _qv_admin_ids = [uid.strip() for uid in _qv_admin_ids_raw.split(",") if uid.strip()]
-    _qv_base_url = os.environ.get("QUALITY_VALIDATION_BASE_URL", "http://localhost:8000")
-    _qv_jwt_claim = os.environ.get("QUALITY_VALIDATION_JWT_CLAIM", "sub")
+    _qv_admin_ids = _list_env("QUALITY_VALIDATION_ADMIN_USER_IDS")
+    _qv_base_url = _str_env("QUALITY_VALIDATION_BASE_URL", "http://localhost:8000")
+    _qv_jwt_claim = _str_env("QUALITY_VALIDATION_JWT_CLAIM", "sub")
 
     return Container(
         token_managers=(llm_tm, embedding_tm, rerank_tm),

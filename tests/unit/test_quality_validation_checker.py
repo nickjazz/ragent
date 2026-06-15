@@ -244,7 +244,7 @@ def test_check_session_messages_hidden_leaked() -> None:
         {"id": "2", "role": "assistant", "content": "hi"},
     ]
     reasons = check_session_messages(msgs, keywords_any=[])
-    assert any("<hidden>" in r for r in reasons)
+    assert any("machine-context" in r or "leaked" in r for r in reasons)
 
 
 def test_check_session_messages_keyword_match() -> None:

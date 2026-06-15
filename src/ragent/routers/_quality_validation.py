@@ -54,10 +54,8 @@ _RELAY_SKIP = frozenset({"RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"})
 
 def is_admin_validation_command(messages: list[Message]) -> bool:
     """True when the last user message is the admin validation slash command."""
-    user_msgs = [m for m in messages if m.role == "user"]
-    if not user_msgs:
-        return False
-    return (user_msgs[-1].content or "").strip() == ADMIN_COMMAND
+    last = next((m for m in reversed(messages) if m.role == "user"), None)
+    return last is not None and (last.content or "").strip() == ADMIN_COMMAND
 
 
 def load_questions(fixture_path: str) -> list[dict]:
@@ -185,6 +183,13 @@ def _yield_text(message_id: str, content: str) -> Generator[str, None, None]:
     yield to_sse(TextMessageEndEvent(message_id=message_id))
 
 
+def _yield_run_error(
+    run_id: str, thread_id: str, message: str, code: str
+) -> Generator[str, None, None]:
+    yield to_sse(RunStartedEvent(run_id=run_id, thread_id=thread_id))
+    yield to_sse(RunErrorEvent(run_id=run_id, thread_id=thread_id, message=message, code=code))
+
+
 def _relay_events(events: list[dict]) -> Generator[str, None, None]:
     """Yield SSE strings for all non-lifecycle events (original JSON, not re-serialised)."""
     for event in events:
@@ -258,26 +263,20 @@ def admin_quality_validation_stream(
       [summary TEXT_MESSAGE] → RUN_FINISHED
     """
     if not is_admin_user(auth_header, admin_user_ids, jwt_claim):
-        yield to_sse(RunStartedEvent(run_id=run_id, thread_id=thread_id))
-        yield to_sse(
-            RunErrorEvent(
-                run_id=run_id,
-                thread_id=thread_id,
-                message="Forbidden: caller is not a configured admin user",
-                code=HttpErrorCode.QUALITY_VALIDATION_FORBIDDEN,
-            )
+        yield from _yield_run_error(
+            run_id,
+            thread_id,
+            "Forbidden: caller is not a configured admin user",
+            HttpErrorCode.QUALITY_VALIDATION_FORBIDDEN,
         )
         return
 
     if not questions:
-        yield to_sse(RunStartedEvent(run_id=run_id, thread_id=thread_id))
-        yield to_sse(
-            RunErrorEvent(
-                run_id=run_id,
-                thread_id=thread_id,
-                message="No questions configured in quality_validation.yaml",
-                code=HttpErrorCode.QUALITY_VALIDATION_NOT_CONFIGURED,
-            )
+        yield from _yield_run_error(
+            run_id,
+            thread_id,
+            "No questions configured in quality_validation.yaml",
+            HttpErrorCode.QUALITY_VALIDATION_NOT_CONFIGURED,
         )
         return
 
@@ -324,9 +323,7 @@ def admin_quality_validation_stream(
 
     session_results: list[tuple[bool, list[str]]] = []
 
-    for i, q in enumerate(questions):
-        q_thread_id = thread_ids[i] if i < len(thread_ids) else ""
-
+    for q, q_thread_id in zip(questions, thread_ids, strict=False):
         if not has_session_endpoint or not q_thread_id:
             reason = (
                 "session endpoint not configured" if not has_session_endpoint else "no thread_id"
