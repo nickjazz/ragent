@@ -85,7 +85,7 @@ def _decode_jwt_claim(auth_header: str, claim: str) -> str | None:
         _, payload_b64, _ = token.split(".", 2)
         padding = (4 - len(payload_b64) % 4) % 4
         payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
-        return payload.get(claim) or payload.get("user_id") or payload.get("sub")
+        return payload.get(claim)
     except Exception:
         return None
 
@@ -122,7 +122,7 @@ def _call_chatagent_v3(
     thread_id = new_id()
     req = http_client.build_request(
         "POST",
-        f"{base_url.rstrip('/')}/chatagent/v3",
+        f"{base_url}/chatagent/v3",
         json={
             "runId": run_id,
             "threadId": thread_id,
@@ -135,6 +135,7 @@ def _call_chatagent_v3(
         headers=_build_auth_headers(user_id, auth_header),
     )
     resp = http_client.send(req, stream=True)
+    resp.raise_for_status()
 
     events: list[dict] = []
     minted_thread_id = thread_id
@@ -161,7 +162,7 @@ def _call_session(
 ) -> list[dict]:
     """GET /chatagent/v3/session and return the messages list."""
     resp = http_client.get(
-        f"{base_url.rstrip('/')}/chatagent/v3/session",
+        f"{base_url}/chatagent/v3/session",
         params={"session": thread_id},
         headers=_build_auth_headers(user_id, auth_header),
         timeout=15.0,
@@ -280,6 +281,7 @@ def admin_quality_validation_stream(
         )
         return
 
+    base_url = base_url.rstrip("/")
     yield to_sse(RunStartedEvent(run_id=run_id, thread_id=thread_id))
 
     logger.info("quality_validation.run.started", user_id=user_id, total_questions=len(questions))
