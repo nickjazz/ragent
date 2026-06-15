@@ -31,6 +31,36 @@ def test_unwrap_defaults_missing_arguments_to_empty_object() -> None:
     assert json.loads(args_json) == {}
 
 
+def test_unwrap_accepts_pre_parsed_dict() -> None:
+    # Some providers emit structured (already-parsed) tool-call arguments.
+    name, args_json = unwrap_agentic_ui_call(
+        {"tool_name": "fill_form", "arguments": {"description": "x"}}
+    )
+
+    assert name == "fill_form"
+    assert json.loads(args_json) == {"description": "x"}
+
+
+def test_unwrap_null_inner_arguments_degrades_to_empty_object() -> None:
+    # An explicit "arguments": null must become {}, not the string "null"
+    # (which the frontend would parse to a null value).
+    name, args_json = unwrap_agentic_ui_call(json.dumps({"tool_name": "ping", "arguments": None}))
+
+    assert name == "ping"
+    assert args_json == "{}"
+
+
+@pytest.mark.parametrize("bad_inner", ['"a string"', "[1, 2]", "42"])
+def test_unwrap_non_object_inner_arguments_raises(bad_inner: str) -> None:
+    with pytest.raises(ValueError):
+        unwrap_agentic_ui_call(f'{{"tool_name": "ping", "arguments": {bad_inner}}}')
+
+
+def test_unwrap_non_str_non_dict_input_raises() -> None:
+    with pytest.raises(ValueError):
+        unwrap_agentic_ui_call(42)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "bad",
     [

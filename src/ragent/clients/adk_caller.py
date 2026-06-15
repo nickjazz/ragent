@@ -221,11 +221,12 @@ def _format_tool_results(results: list[Message]) -> str:
 
     NOTE: the exact upstream resume wire is pending confirmation (P0-0-3); the
     `<tool_results>` machine-context block is isolated here so only this function
-    changes once the upstream format is fixed. Each entry carries the
-    `tool_call_id` so the upstream correlates the result with its suspended call.
+    changes once the upstream format is fixed. Each entry carries the `toolCallId`
+    (camelCase, matching the twp-ai wire and spec §3.4.7) so the upstream
+    correlates the result with its suspended call.
     """
     payload = json.dumps(
-        [{"tool_call_id": r.tool_call_id, "content": r.content} for r in results],
+        [{"toolCallId": r.tool_call_id, "content": r.content} for r in results],
         ensure_ascii=False,
     )
     return f"<hidden>\n<tool_results>{_neutralize_wrapper_tags(payload)}</tool_results>\n</hidden>"

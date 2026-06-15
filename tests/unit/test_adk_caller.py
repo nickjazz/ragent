@@ -254,8 +254,9 @@ def test_stream_deltas_continuation_forwards_tool_result() -> None:
     list(caller.stream_deltas(_request(messages), "m"))
 
     message = http_mock.build_request.call_args.kwargs["json"]["inputData"]["message"]
-    # The result content and its tool_call_id are forwarded so the upstream resumes.
-    assert "call_1" in message
+    # The result content and its toolCallId (camelCase, per spec §3.4.7) are
+    # forwarded so the upstream resumes the suspended call.
+    assert '"toolCallId": "call_1"' in message
     assert '{\\"ok\\":true}' in message or '{"ok":true}' in message
     # The old user question is NOT re-sent.
     assert "幫我把表單描述填好" not in message
