@@ -55,7 +55,9 @@ _RELAY_SKIP = frozenset({"RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"})
 def is_admin_validation_command(messages: list[Message]) -> bool:
     """True when the last user message is the admin validation slash command."""
     last = next((m for m in reversed(messages) if m.role == "user"), None)
-    return last is not None and isinstance(last.content, str) and last.content.strip() == ADMIN_COMMAND
+    return (
+        last is not None and isinstance(last.content, str) and last.content.strip() == ADMIN_COMMAND
+    )
 
 
 def load_questions(fixture_path: str) -> list[dict]:
@@ -335,7 +337,9 @@ def admin_quality_validation_stream(
             continue
 
         try:
-            messages = _call_session(http_client, base_url, q_thread_id, user_id, auth_header, jwt_header)
+            messages = _call_session(
+                http_client, base_url, q_thread_id, user_id, auth_header, jwt_header
+            )
         except Exception as exc:
             session_results.append((False, [f"HTTP error calling /chatagent/v3/session: {exc}"]))
             continue
