@@ -77,11 +77,14 @@ def test_pyproject_pins_instrumentator_below_v8() -> None:
     attribute) to app.routes. _get_route_name in routing.py accesses
     route.path unconditionally, raising AttributeError on every first request.
     """
+    from packaging.requirements import Requirement
+
     pyproject = tomllib.loads(_PYPROJECT.read_text())
     deps: list[str] = pyproject["project"]["dependencies"]
     pfi = next((d for d in deps if d.startswith("prometheus-fastapi-instrumentator")), None)
     assert pfi is not None, "prometheus-fastapi-instrumentator missing from dependencies"
-    assert "<8.0.0" in pfi, (
+    req = Requirement(pfi)
+    assert not req.specifier.contains("8.0.0"), (
         f"Add an upper-bound <8.0.0 to prevent the starlette>=1.0.0 → "
         f"fastapi>=0.137.1 → _IncludedRouter AttributeError upgrade chain. "
         f"Current constraint: {pfi!r}"
