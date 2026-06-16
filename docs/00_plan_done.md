@@ -918,3 +918,20 @@
 | T-CAv3.D1 | Structural | • **Achieve:** Document the v3 contract.<br>• **Deliver:** `docs/00_spec.md` (v3 System Interface), `docs/API.md`. | [x] | Dev |
 | T-CAv3.5 | Red+Green | • **Achieve:** Map the upstream `planner` node to a reasoning block (`REASONING_START`/`CONTENT`/`END`).<br>• **Deliver:** 5 new events in `events.py`; `agents/adk.py` block-kind tracking; `docs/00_spec.md §3.4.7`. | [x] | Dev |
 | T-CAv3.6 | Red+Green | • **Achieve:** Surface client-supplied `context`/`state` by prepending a labelled preamble to the last user message.<br>• **Deliver:** `clients/adk_caller.py` (`_compose_message`, `_context_preamble`); `docs/00_spec.md §3.4.7`. | [x] | Dev |
+
+---
+
+## Track T-SR — Supersede Race: older-winner demote guard (issue #179) — 2026-06-13
+
+> MVCC asymmetry in `_promote_or_demote`: the election subquery uses an MVCC
+> snapshot while the sibling-demote UPDATE uses a current read. An older winner
+> can permanently demote a strictly newer sibling if that sibling's claim committed
+> between the two statements. Fix: constrain the demote to siblings that are
+> strictly older by `(created_at, document_id)` — the same tie-break as the election.
+
+**Counter: 完成 2 / 未完成 0 / descope 0**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-SR.1 | Red | • **Achieve:** Expose the bug — verify current demote SQL will demote a newer sibling when an older doc wins via MVCC anomaly.<br>• **Deliver:** `tests/integration/test_worker_atomic_promote.py::test_winner_never_demotes_strictly_newer_sibling` — seeds OLDEST/WINNER/NEWER, forces WINNER to READY (simulating MVCC win), runs sibling-demote directly, asserts OLDER is DELETING and NEWER is still PENDING. Must **fail** against current production code.<br>• **Success criteria:** Test collected by pytest; OLDEST assertion = DELETING, NEWER assertion = PENDING both pass with the fixed SQL. | [x] | QA |
+| T-SR.2 | Green | • **Achieve:** Patch `_promote_or_demote` so the sibling-demote UPDATE only touches rows with `(created_at, document_id) < (winner.created_at, winner.document_id)`.<br>• **Deliver:** Fixed SQL in `src/ragent/repositories/document_repository.py::_promote_or_demote`; updated B41 note in `docs/00_spec.md`; T-SR.1 test now passes.<br>• **Success criteria:** `make test-gate` green; B41 in `docs/00_spec.md` references the demote guard; the demote UPDATE WHERE clause contains the `(created_at, document_id)` ordering guard. | [x] | Dev |
