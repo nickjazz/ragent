@@ -204,7 +204,7 @@ def _make_sse_mock(delta: str, thread_id: str = "qt1") -> MagicMock:
         f'data: {{"type":"RUN_FINISHED","runId":"r1","threadId":"{thread_id}"}}',
         "data: [Done]",
     ]
-    resp = MagicMock()
+    resp = MagicMock(spec=httpx.Response)
     resp.raise_for_status = MagicMock()
     resp.iter_lines.return_value = iter(lines)
     resp.close = MagicMock()
@@ -212,7 +212,7 @@ def _make_sse_mock(delta: str, thread_id: str = "qt1") -> MagicMock:
 
 
 def _make_session_mock(messages: list[dict]) -> MagicMock:
-    resp = MagicMock()
+    resp = MagicMock(spec=httpx.Response)
     resp.status_code = 200
     resp.json.return_value = messages
     return resp
