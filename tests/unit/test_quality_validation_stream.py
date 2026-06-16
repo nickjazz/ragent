@@ -106,54 +106,73 @@ def test_relay_events_filters_run_error() -> None:
 
 def test_build_summary_all_pass() -> None:
     questions = [_q("q1"), _q("q2")]
-    stream_results = [(True, []), (True, [])]
+    stream_results = [(True, [], []), (True, [], [])]
     session_results = [(True, [], 4), (True, [], 3)]
     summary = _build_summary(questions, stream_results, session_results, 500)
     assert "通過：2" in summary
     assert "失敗：0" in summary
     assert "✅" in summary
     assert "500 ms" in summary
-    assert "Session 4 則訊息 通過" in summary
-    assert "Session 3 則訊息 通過" in summary
+    assert "✅ Protocol" in summary
+    assert "✅ Session 4 則訊息" in summary
+    assert "✅ Session 3 則訊息" in summary
 
 
 def test_build_summary_shows_question_text() -> None:
     questions = [_q("q1", question="What is RAGent?", expect_keywords_any=["ragent"])]
-    stream_results = [(True, [])]
+    stream_results = [(True, [], [])]
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 100)
     assert "What is RAGent?" in summary
     assert "期望含有：ragent" in summary
-    assert "Session 2 則訊息 通過" in summary
+    assert "✅ Session 2 則訊息" in summary
 
 
 def test_build_summary_shows_no_keywords() -> None:
     questions = [_q("q1", question="hi?", expect_no_keywords=["bad"])]
-    stream_results = [(True, [])]
+    stream_results = [(True, [], [])]
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 50)
     assert "期望不含：bad" in summary
+    assert "✅ Stream 關鍵字" in summary
 
 
 def test_build_summary_partial_fail_shows_reasons() -> None:
-    questions = [_q("q1"), _q("q2")]
-    stream_results = [(True, []), (False, ["keyword missing"])]
+    questions = [_q("q1"), _q("q2", expect_keywords_any=["foo"])]
+    stream_results = [(True, [], []), (False, [], ["none of the expected keywords found: 'foo'"])]
     session_results = [(True, [], 3), (True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 100)
     assert "通過：1" in summary
     assert "失敗：1" in summary
     assert "❌" in summary
-    assert "keyword missing" in summary
+    assert "none of the expected keywords found" in summary
 
 
 def test_build_summary_session_fail_shown() -> None:
     questions = [_q("q1")]
-    stream_results = [(True, [])]
+    stream_results = [(True, [], [])]
     session_results = [(False, ["leaked context"], 0)]
     summary = _build_summary(questions, stream_results, session_results, 200)
     assert "❌" in summary
     assert "leaked context" in summary
-    assert "Session 無訊息 失敗" in summary
+    assert "❌ Session 無訊息" in summary
+
+
+def test_build_summary_shows_protocol_row() -> None:
+    questions = [_q("q1")]
+    stream_results = [(True, [], [])]
+    session_results = [(True, [], 2)]
+    summary = _build_summary(questions, stream_results, session_results, 100)
+    assert "✅ Protocol" in summary
+
+
+def test_build_summary_shows_protocol_failure() -> None:
+    questions = [_q("q1")]
+    stream_results = [(False, ["missing RUN_STARTED at stream start"], [])]
+    session_results = [(True, [], 2)]
+    summary = _build_summary(questions, stream_results, session_results, 100)
+    assert "❌ Protocol" in summary
+    assert "missing RUN_STARTED at stream start" in summary
 
 
 # ---------------------------------------------------------------------------

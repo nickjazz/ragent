@@ -235,14 +235,14 @@ def _relay_events(events: list[dict]) -> Generator[str, None, None]:
 
 def _build_summary(
     questions: list[dict],
-    stream_results: list[tuple[bool, list[str]]],
+    stream_results: list[tuple[bool, list[str], list[str]]],
     session_results: list[tuple[bool, list[str], int]],
     elapsed_ms: int,
 ) -> str:
     total = len(questions)
     overall_passed = sum(
         1
-        for (s_ok, _), (p_ok, _, _) in zip(stream_results, session_results, strict=False)
+        for (s_ok, _, _), (p_ok, _, _) in zip(stream_results, session_results, strict=False)
         if s_ok and p_ok
     )
 
@@ -252,7 +252,7 @@ def _build_summary(
         f"耗時：{elapsed_ms} ms\n",
     ]
 
-    for q, (s_ok, s_reasons), (p_ok, p_reasons, msg_count) in zip(
+    for q, (s_ok, proto_violations, kw_violations), (p_ok, p_reasons, msg_count) in zip(
         questions, stream_results, session_results, strict=False
     ):
         icon = "✅" if (s_ok and p_ok) else "❌"
@@ -270,15 +270,22 @@ def _build_summary(
         if kw_no:
             lines.append(f"   期望不含：{', '.join(kw_no)}")
 
-        session_label = f"Session {msg_count} 則訊息" if msg_count else "Session 無訊息"
-        stream_label = "Stream 通過" if s_ok else "Stream 失敗"
-        session_ok_label = f"{session_label} 通過" if p_ok else f"{session_label} 失敗"
-        lines.append(f"   {stream_label}｜{session_ok_label}")
+        proto_icon = "✅" if not proto_violations else "❌"
+        lines.append(f"   {proto_icon} Protocol")
+        for v in proto_violations:
+            lines.append(f"      - {v}")
 
-        for r in s_reasons:
-            lines.append(f"   [Stream] {r}")
+        if kw_any or kw_no:
+            kw_icon = "✅" if not kw_violations else "❌"
+            lines.append(f"   {kw_icon} Stream 關鍵字")
+            for v in kw_violations:
+                lines.append(f"      - {v}")
+
+        session_label = f"Session {msg_count} 則訊息" if msg_count else "Session 無訊息"
+        session_icon = "✅" if p_ok else "❌"
+        lines.append(f"   {session_icon} {session_label}")
         for r in p_reasons:
-            lines.append(f"   [Session] {r}")
+            lines.append(f"      - {r}")
 
     return "\n".join(lines)
 
@@ -333,7 +340,7 @@ def admin_quality_validation_stream(
     logger.info("quality_validation.run.started", user_id=user_id, total_questions=len(questions))
     start_time = time.monotonic()
 
-    stream_results: list[tuple[bool, list[str]]] = []
+    stream_results: list[tuple[bool, list[str], list[str]]] = []
     thread_ids: list[str] = []
 
     for q in questions:
@@ -347,25 +354,26 @@ def admin_quality_validation_stream(
             )
         except Exception as exc:
             logger.error("quality_validation.chatagent_error", question_id=q["id"], error=str(exc))
-            stream_results.append((False, [f"HTTP error calling /chatagent/v3: {exc}"]))
+            stream_results.append((False, [f"HTTP error calling /chatagent/v3: {exc}"], []))
             thread_ids.append("")
             continue
 
         thread_ids.append(q_thread_id)
         yield from _relay_events(events)
 
-        violations = check_protocol(
+        proto_violations = check_protocol(
             events, expect_no_tool_calls=q.get("expect_no_tool_calls", False)
         )
         text = collect_text(events)
-        violations += check_keywords_any(text, q.get("expect_keywords_any", []))
-        violations += check_no_keywords(text, q.get("expect_no_keywords", []))
-        stream_results.append((not violations, violations))
+        kw_violations = check_keywords_any(text, q.get("expect_keywords_any", []))
+        kw_violations += check_no_keywords(text, q.get("expect_no_keywords", []))
+        all_violations = proto_violations + kw_violations
+        stream_results.append((not all_violations, proto_violations, kw_violations))
 
         logger.info(
             "quality_validation.run.question_result",
             question_id=q["id"],
-            stream_passed=not violations,
+            stream_passed=not all_violations,
         )
 
     session_results: list[tuple[bool, list[str], int]] = []
