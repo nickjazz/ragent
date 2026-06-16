@@ -162,6 +162,8 @@ Update this counter whenever an item status changes. The counts cover all items 
 
 ### Environment Variable Utilities
 
+- **Rule**: Every new env var introduced in a PR MUST also be added to `.env.example` in the same commit. The entry must include a comment explaining the purpose and the default value. Omitting the entry leaves operators with no discovery path and is treated as a blocking review finding.
+
 - **Rule**: Optional env vars that default to `None` (no-op / disabled) MUST use `if not raw:` (covers both `None` and `""`), never `if raw is None:`.
   - **Rationale**: `--env-file` loaders resolve a blank assignment (e.g. `VAR=` in `.env.example`) as `""`, not as a missing key; `if raw is None:` silently parses the blank as the typed value and crashes at boot with `ValueError`.
   - **Verification**: every `optional_*_env` utility must have a regression test asserting it returns `None` when the var is set to `""`.

@@ -77,6 +77,10 @@
 | `CHATAGENT_SESSION_API_URL`           | (optional)       | GET `/chatagent/v1/session` proxy endpoint. When unset that route is not registered. |
 | `CHATAGENT_AP_NAME`                   | `ragent`         | `apName` injected into all outbound chatagent requests. |
 | `CHATAGENT_AUTH`                      | (optional)       | Raw value for the `Authorization` header on all outbound chatagent calls (e.g. `Basic dXNlcjpwYXNz`). **Never logged, never echoed.** |
+| `QUALITY_VALIDATION_FIXTURE_PATH`     | (optional)       | Path to `quality_validation.yaml`; absence disables the `/admin-quality-validation` slash command. |
+| `QUALITY_VALIDATION_ADMIN_USER_IDS`   | (optional)       | Comma-separated JWT claim values permitted to trigger quality validation (e.g. `user-1,user-2`). |
+| `QUALITY_VALIDATION_BASE_URL`         | `http://localhost:8000` | Self-HTTP base URL used for `/chatagent/v3` calls during validation. |
+| `QUALITY_VALIDATION_JWT_CLAIM`        | `sub`            | JWT payload claim read to identify the caller during quality validation. |
 | `TWP_DEFAULT_MODEL`                   | (optional)       | Fallback model for `POST /twp/v1/run` when the request body omits `model`. |
 | `UNPROTECT_ENABLED`                   | `false`          | When `true`, worker calls the unprotect API before passing `file`/`upload` ingest bytes to the pipeline. `ingest_type=inline` rows are always skipped (content is caller-supplied UTF-8 text). On unprotect failure the worker logs a warning and continues with the original MinIO bytes. |
 | `UNPROTECT_API_URL`                   | (required when enabled) | Full URL of the unprotect endpoint (multipart POST). |
