@@ -199,7 +199,7 @@ def _relay_events(events: list[dict]) -> Generator[str, None, None]:
     for event in events:
         if event.get("type") in _RELAY_SKIP:
             continue
-        yield f"data: {json.dumps(event)}\n\n"
+        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 # ---------------------------------------------------------------------------
