@@ -233,10 +233,15 @@ def _relay_events(events: list[dict]) -> Generator[str, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def _check_row(lines: list[str], label: str, passed: bool, details: list[str]) -> None:
-    lines.append(f"   {'✅' if passed else '❌'} {label}")
-    for d in details:
-        lines.append(f"      - {d}")
+def _cell(passed: bool, details: list[str]) -> str:
+    """Render one markdown table cell as ✅ or ❌ + first violation (truncated)."""
+    if passed:
+        return "✅"
+    if not details:
+        return "❌"
+    short = details[0][:50]
+    suffix = f" (+{len(details) - 1})" if len(details) > 1 else ""
+    return f"❌ {short}{suffix}"
 
 
 def _build_summary(
@@ -256,33 +261,41 @@ def _build_summary(
         "\n━━━ 驗收摘要 ━━━",
         f"總題數：{total}　通過：{overall_passed}　失敗：{total - overall_passed}",
         f"耗時：{elapsed_ms} ms\n",
+        "| 題目 | 問題 | Protocol | Stream 關鍵字 | Session |",
+        "| :--- | :--- | :---: | :--- | :--- |",
     ]
 
     for q, (s_ok, proto_violations, kw_violations), (p_ok, p_reasons, msg_count) in zip(
         questions, stream_results, session_results, strict=False
     ):
         icon = "✅" if (s_ok and p_ok) else "❌"
-        lines.append(f"{icon} {q['id'].upper()} — {q['label']}")
+        qid_cell = f"{icon} **{q['id'].upper()}**"
 
         question_text = q.get("question", "")
-        if len(question_text) > 80:
-            question_text = question_text[:77] + "…"
-        lines.append(f"   問：{question_text}")
-
+        if len(question_text) > 40:
+            question_text = question_text[:37] + "…"
         kw_any = q.get("expect_keywords_any", [])
         kw_no = q.get("expect_no_keywords", [])
+        kw_hint = ""
         if kw_any:
-            lines.append(f"   期望含有：{', '.join(kw_any)}")
+            kw_hint += f" `含:{', '.join(kw_any)}`"
         if kw_no:
-            lines.append(f"   期望不含：{', '.join(kw_no)}")
+            kw_hint += f" `不含:{', '.join(kw_no)}`"
+        question_cell = question_text + kw_hint
 
-        _check_row(lines, "Protocol", not proto_violations, proto_violations)
+        proto_cell = _cell(not proto_violations, proto_violations)
 
-        if kw_any or kw_no:
-            _check_row(lines, "Stream 關鍵字", not kw_violations, kw_violations)
+        kw_cell = _cell(not kw_violations, kw_violations) if (kw_any or kw_no) else "—"
 
-        session_label = f"Session {msg_count} 則訊息" if msg_count else "Session 無訊息"
-        _check_row(lines, session_label, p_ok, p_reasons)
+        session_label = f"{msg_count} 則" if msg_count else "無訊息"
+        if p_ok:
+            session_cell = f"✅ {session_label}"
+        else:
+            reason = p_reasons[0][:40] if p_reasons else session_label
+            session_cell = f"❌ {reason}"
+
+        row = f"| {qid_cell} | {question_cell} | {proto_cell} | {kw_cell} | {session_cell} |"
+        lines.append(row)
 
     return "\n".join(lines)
 

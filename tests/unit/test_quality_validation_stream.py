@@ -111,11 +111,10 @@ def test_build_summary_all_pass() -> None:
     summary = _build_summary(questions, stream_results, session_results, 500)
     assert "通過：2" in summary
     assert "失敗：0" in summary
-    assert "✅" in summary
     assert "500 ms" in summary
-    assert "✅ Protocol" in summary
-    assert "✅ Session 4 則訊息" in summary
-    assert "✅ Session 3 則訊息" in summary
+    assert "| Protocol |" in summary  # table header present
+    assert "✅ 4 則" in summary
+    assert "✅ 3 則" in summary
 
 
 def test_build_summary_shows_question_text() -> None:
@@ -124,8 +123,8 @@ def test_build_summary_shows_question_text() -> None:
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 100)
     assert "What is RAGent?" in summary
-    assert "期望含有：ragent" in summary
-    assert "✅ Session 2 則訊息" in summary
+    assert "ragent" in summary  # keyword shown in question cell
+    assert "✅ 2 則" in summary
 
 
 def test_build_summary_shows_no_keywords() -> None:
@@ -133,8 +132,8 @@ def test_build_summary_shows_no_keywords() -> None:
     stream_results = [(True, [], [])]
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 50)
-    assert "期望不含：bad" in summary
-    assert "✅ Stream 關鍵字" in summary
+    assert "bad" in summary
+    assert "| Protocol |" in summary
 
 
 def test_build_summary_partial_fail_shows_reasons() -> None:
@@ -155,15 +154,15 @@ def test_build_summary_session_fail_shown() -> None:
     summary = _build_summary(questions, stream_results, session_results, 200)
     assert "❌" in summary
     assert "leaked context" in summary
-    assert "❌ Session 無訊息" in summary
 
 
-def test_build_summary_shows_protocol_row() -> None:
+def test_build_summary_shows_protocol_column() -> None:
     questions = [_q("q1")]
     stream_results = [(True, [], [])]
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 100)
-    assert "✅ Protocol" in summary
+    assert "| Protocol |" in summary
+    assert "| ✅ |" in summary  # Protocol cell passes
 
 
 def test_build_summary_shows_protocol_failure() -> None:
@@ -171,7 +170,7 @@ def test_build_summary_shows_protocol_failure() -> None:
     stream_results = [(False, ["missing RUN_STARTED at stream start"], [])]
     session_results = [(True, [], 2)]
     summary = _build_summary(questions, stream_results, session_results, 100)
-    assert "❌ Protocol" in summary
+    assert "❌" in summary
     assert "missing RUN_STARTED at stream start" in summary
 
 

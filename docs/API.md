@@ -581,10 +581,15 @@ On auth failure: the stream yields `RUN_STARTED` then `RUN_ERROR` with `code=QUA
 On empty suite: `RUN_ERROR` with `code=QUALITY_VALIDATION_NOT_CONFIGURED`.
 On success: `RUN_STARTED` → per-question `TEXT_MESSAGE` (question injection) + relayed agent SSE → summary `TEXT_MESSAGE` (驗收摘要) → `RUN_FINISHED`. Relayed events are serialised with `ensure_ascii=False` so non-ASCII characters (e.g. Chinese) are preserved as UTF-8 rather than `\uXXXX` escape sequences.
 
-The 驗收摘要 TEXT_MESSAGE shows a per-question checklist with three named rows:
-- `✅/❌ Protocol` — SSE structural compliance (RUN_STARTED, paired TEXT/REASONING/TOOL blocks, no RUN_ERROR). Sub-items list each violation when ❌.
-- `✅/❌ Stream 關鍵字` — keyword presence/absence check (only shown when `expect_keywords_any` or `expect_no_keywords` is configured).
-- `✅/❌ Session N 則訊息` — persisted session cross-check via GET `/chatagent/v3/session`. The session check retries up to 4 times with 1 s / 2 s / 4 s backoff to tolerate asynchronous upstream session persistence after tool-call-heavy streams.
+The 驗收摘要 TEXT_MESSAGE renders as a markdown table with one row per question and five columns:
+
+| 題目 | 問題 | Protocol | Stream 關鍵字 | Session |
+| :--- | :--- | :---: | :--- | :--- |
+| ✅/❌ **ID** | question text + keyword hints | ✅ or ❌ + first violation | ✅/❌ + first violation (only when keywords configured, else `—`) | ✅ N 則 or ❌ reason |
+
+- **Protocol** — SSE structural compliance: RUN_STARTED present, paired TEXT/REASONING/TOOL blocks, no RUN_ERROR.
+- **Stream 關鍵字** — keyword presence/absence (`expect_keywords_any` / `expect_no_keywords`). Shows `—` when neither is configured.
+- **Session** — persisted session cross-check via `GET /chatagent/v3/session`. Retries up to 4 times (1 s / 2 s / 4 s backoff) to tolerate asynchronous upstream persistence after tool-call-heavy streams.
 
 **Env vars:** `QUALITY_VALIDATION_FIXTURE_PATH` (path to YAML), `QUALITY_VALIDATION_ADMIN_USER_IDS` (comma-separated user IDs), `QUALITY_VALIDATION_BASE_URL` (default `http://localhost:8000`), `QUALITY_VALIDATION_JWT_CLAIM` (default `sub`).
 
