@@ -234,7 +234,6 @@ def _relay_events(events: list[dict]) -> Generator[str, None, None]:
 
 
 def _cell(passed: bool, details: list[str]) -> str:
-    """Render one markdown table cell as ✅ or ❌ + first violation (truncated)."""
     if passed:
         return "✅"
     if not details:
