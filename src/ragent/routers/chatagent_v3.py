@@ -8,7 +8,7 @@ over a 200 stream, never as an HTTP 4xx/5xx code.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import Annotated
 
 import httpx
@@ -22,14 +22,9 @@ from twp_ai.schemas import RunAgentInput
 from ragent.auth.deps import get_user_id
 from ragent.clients.adk_caller import ADKCaller
 from ragent.clients.rate_limiter import RateLimiter
+from ragent.commands._deps import _noop_dep
 from ragent.errors.codes import HttpErrorCode
 from ragent.routers._chatagent_proxy import proxy_get, proxy_write
-from ragent.routers._quality_validation import (
-    admin_quality_validation_stream as _qv_stream,
-)
-from ragent.routers._quality_validation import (
-    is_admin_validation_command as _qv_is_command,
-)
 from ragent.schemas.chatagent import SessionDeleteRequest, SessionRenameRequest
 from ragent.services.chatagent_session import map_session_list_payload, map_session_payload
 from ragent.utility.id_gen import new_id
@@ -49,11 +44,7 @@ def create_chatagent_v3_router(
     rate_limit_window: int = 60,
     jwt_header: str = "X-Auth-Token",
     timeout: float = 30.0,
-    # T-CVQ — quality validation
-    quality_validation_questions: list[dict] | None = None,
-    quality_validation_admin_user_ids: list[str] | None = None,
-    quality_validation_base_url: str = "http://localhost:8000",
-    quality_validation_jwt_claim: str = "sub",
+    command_dep: Callable = _noop_dep,
 ) -> APIRouter:
     router = APIRouter(prefix="/chatagent/v3")
 
@@ -74,7 +65,11 @@ def create_chatagent_v3_router(
             body: RunAgentInput,
             request: Request,
             x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+            command_result: Annotated[StreamingResponse | None, Depends(command_dep)] = None,
         ) -> StreamingResponse:
+            if command_result is not None:
+                return command_result
+
             user_id = x_user_id or "anonymous"
 
             # Model B — ragent owns the session id. When the client omits it (a
@@ -84,26 +79,6 @@ def create_chatagent_v3_router(
             # any streaming path so RUN_STARTED / RUN_ERROR never carry a null id.
             if body.thread_id is None:
                 body = body.model_copy(update={"thread_id": new_id()})
-
-            # T-CVQ — admin quality validation slash command intercept
-            if quality_validation_questions is not None and _qv_is_command(body.messages):
-                auth_header = request.headers.get(jwt_header.lower(), "")
-                return StreamingResponse(
-                    _qv_stream(
-                        questions=quality_validation_questions,
-                        user_id=user_id,
-                        auth_header=auth_header,
-                        http_client=http_client,
-                        base_url=quality_validation_base_url,
-                        run_id=body.run_id,
-                        thread_id=body.thread_id,
-                        admin_user_ids=quality_validation_admin_user_ids or [],
-                        jwt_claim=quality_validation_jwt_claim,
-                        jwt_header=jwt_header,
-                        has_session_endpoint=chatagent_session_api_url is not None,
-                    ),
-                    media_type="text/event-stream",
-                )
 
             if _rate_limited(x_user_id):
                 logger.warning(

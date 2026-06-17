@@ -79,7 +79,7 @@
 | **路徑** | `src/ragent/routers/` |
 | **責任** | HTTP 請求解析、Pydantic 校驗、呼叫 Services/Pipelines、回傳 HTTP 回應。**只做 I/O 轉換**。 |
 | **對外暴露** | `APIRouter` 實例，由 `bootstrap/app.py` 掛載。 |
-| **允許依賴** | `schemas/`、`services/`、`errors/`、`auth/deps.py`、`clients/rate_limiter.py`（rate limit）、`middleware/`（間接，透過 request.scope）。 |
+| **允許依賴** | `schemas/`、`services/`、`errors/`、`auth/deps.py`、`clients/rate_limiter.py`（rate limit）、`middleware/`（間接，透過 request.scope）、`commands/`（slash command dispatch，見 2.17）。 |
 | **禁止事項** | ❌ 不得直接呼叫 `repositories/`（繞過 service 層）。❌ 不得含業務邏輯（計算、狀態判斷）。❌ 不得讀取 `os.environ`。❌ 不得用 `Header(alias="X-User-Id")` — 必須用 `Depends(get_user_id)`。❌ 不得在 decorator 上寫完整路徑（版本必須在 `APIRouter(prefix=...)` 上宣告）。 |
 
 **模組清單：**
@@ -356,6 +356,18 @@
 
 ---
 
+### 2.17 Commands（Slash Command 註冊）
+
+| 項目 | 說明 |
+|---|---|
+| **路徑** | `src/ragent/commands/` |
+| **責任** | `/chatagent/v3` POST body 中的 slash command（如 `/admin-quality-validation`）偵測與派遣；每個指令是一個 `SlashCommand`（`matches()` + `handle()`），由 `CommandRegistry` 依註冊順序找第一個匹配者執行。`_deps.py::make_command_dep` 是給 router 用的 FastAPI 依賴，把 dispatch 結果包成 `StreamingResponse \| None`。 |
+| **對外暴露** | `CommandRegistry`（由 `composition.py` 建構並注入 `Container.commands`）；`make_command_dep` / `_noop_dep`（由 `app.py` 接線進 `chatagent_v3.py` 的 `command_dep` 參數）。 |
+| **允許依賴** | `utility/`（`id_gen`、env helper）、`errors/`、`auth/deps.py`（`get_user_id`，與 router 同源,避免重複實作 header/scope 解析）、`clients/`（httpx client，self-HTTP 呼叫）。 |
+| **禁止事項** | ❌ 不得直接讀取 `os.environ`（fixture path / admin user ids 等設定一律由 `composition.py` 注入建構參數）。❌ `_deps.py` 不得在 thread_id / user_id 解析上偏離 router 自身的 fallback 語義（缺 `threadId` 必須 mint 新 id；缺 user id 必須 fallback 為 `"anonymous"`)，否則同一行為會在 command 路徑與一般路徑分岔。 |
+
+---
+
 ## 三、依賴方向規則（AI 操作前必讀）
 
 ```
@@ -519,4 +531,5 @@ log.error("ingest.failed", document_id=doc_id, error_code="EMBEDDER_ERROR")
 | `errors/codes.py` | 所有 Domain + `docs/00_spec.md §4.1.2` |
 | `pipelines/retrieve/__init__.py` | Routers（chat、retrieve）、integration tests |
 | `bootstrap/metrics.py` | 所有有 metric emit 的 Domain |
+| `commands/_deps.py` | Routers（`chatagent_v3.py` 的 `command_dep` 參數）、Bootstrap（`app.py` 接線）|
 

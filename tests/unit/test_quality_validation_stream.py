@@ -1,4 +1,4 @@
-"""Unit tests for stream generator helpers in _quality_validation.py."""
+"""Unit tests for stream generator helpers in commands/quality_validation.py."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 
 import httpx
 
-from ragent.routers._quality_validation import (
+from ragent.commands.quality_validation import (
     _build_auth_headers,
     _build_summary,
     _call_session,
@@ -352,7 +352,7 @@ def _session_resp(status: int = 200, body: object = None) -> MagicMock:
     return resp
 
 
-@patch("ragent.routers._quality_validation.time.sleep")
+@patch("ragent.commands.quality_validation.time.sleep")
 def test_call_session_retries_on_non_200_then_succeeds(mock_sleep: MagicMock) -> None:
     messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
     http_client = MagicMock(spec=httpx.Client)
@@ -365,7 +365,7 @@ def test_call_session_retries_on_non_200_then_succeeds(mock_sleep: MagicMock) ->
     mock_sleep.assert_called_once_with(1.0)
 
 
-@patch("ragent.routers._quality_validation.time.sleep")
+@patch("ragent.commands.quality_validation.time.sleep")
 def test_call_session_retries_on_empty_messages_then_succeeds(mock_sleep: MagicMock) -> None:
     messages = [{"role": "assistant", "content": "answer"}]
     http_client = MagicMock(spec=httpx.Client)
@@ -380,7 +380,7 @@ def test_call_session_retries_on_empty_messages_then_succeeds(mock_sleep: MagicM
     mock_sleep.assert_called_once_with(1.0)
 
 
-@patch("ragent.routers._quality_validation.time.sleep")
+@patch("ragent.commands.quality_validation.time.sleep")
 def test_call_session_null_messages_treated_as_empty(mock_sleep: MagicMock) -> None:
     messages = [{"role": "assistant", "content": "answer"}]
     http_client = MagicMock(spec=httpx.Client)
@@ -395,7 +395,7 @@ def test_call_session_null_messages_treated_as_empty(mock_sleep: MagicMock) -> N
     mock_sleep.assert_called_once_with(1.0)
 
 
-@patch("ragent.routers._quality_validation.time.sleep")
+@patch("ragent.commands.quality_validation.time.sleep")
 def test_call_session_exhausts_retries_returns_empty(mock_sleep: MagicMock) -> None:
     http_client = MagicMock(spec=httpx.Client)
     http_client.get.return_value = _session_resp(status=502)
@@ -412,7 +412,7 @@ def test_call_session_first_attempt_succeeds_no_sleep() -> None:
     http_client = MagicMock(spec=httpx.Client)
     http_client.get.return_value = _make_session_mock(messages)
 
-    with patch("ragent.routers._quality_validation.time.sleep") as mock_sleep:
+    with patch("ragent.commands.quality_validation.time.sleep") as mock_sleep:
         result = _call_session(http_client, "http://localhost:8000", "t1", "u1", "", "X-Auth-Token")
 
     assert result == messages

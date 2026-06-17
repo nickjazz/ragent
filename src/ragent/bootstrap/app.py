@@ -24,6 +24,7 @@ from ragent.bootstrap.metrics import (
 )
 from ragent.bootstrap.openapi import install_openapi
 from ragent.bootstrap.telemetry import setup_tracing
+from ragent.commands._deps import _noop_dep, make_command_dep
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.middleware.logging import SCOPE_USER_ID_KEY, RequestLoggingMiddleware
@@ -460,6 +461,12 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
             )
         )
+        _jwt_header = str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER)
+        _command_dep = (
+            make_command_dep(container.commands, _jwt_header)
+            if container.commands is not None
+            else _noop_dep
+        )
         app.include_router(
             create_chatagent_v3_router(
                 http_client=container.http,
@@ -471,12 +478,9 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 rate_limiter=container.rate_limiter,
                 rate_limit=container.rate_limit,
                 rate_limit_window=container.rate_limit_window,
-                jwt_header=str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER),
+                jwt_header=_jwt_header,
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
-                quality_validation_questions=container.quality_validation_questions,
-                quality_validation_admin_user_ids=container.quality_validation_admin_user_ids,
-                quality_validation_base_url=container.quality_validation_base_url,
-                quality_validation_jwt_claim=container.quality_validation_jwt_claim,
+                command_dep=_command_dep,
             )
         )
     if container.feedback_hmac_secret is not None:

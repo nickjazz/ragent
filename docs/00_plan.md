@@ -92,8 +92,9 @@
 > - JWT admin claim check is soft (no signature verification); full JWKS check
 >   deferred to P2 auth phase.
 
-**Counter: 完成 1 / 未完成 0 / descope 0**
+**Counter: 完成 2 / 未完成 0 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
 | T-CVQ.1 | Behavioral | • **Achieve:** Intercept `/admin-quality-validation` in chatagent/v3, validate JWT admin claim, run 3-question suite via self-HTTP, relay SSE, validate protocol + keywords, validate session messages, emit summary.<br>• **Deliver:** `config/quality_validation.yaml` (Q1 打招呼 / Q2 SDK快速開始 / Q3 資訊不足); `src/ragent/utility/quality_validation_checker.py` (pure checkers); `src/ragent/routers/_quality_validation.py` (stream generator); `chatagent_v3.py` intercept; `composition.py` + `app.py` wiring; `tests/unit/test_quality_validation_checker.py` (28 tests).<br>• **Success criteria:** `make test-gate` green; `QUALITY_VALIDATION_FIXTURE_PATH=config/quality_validation.yaml QUALITY_VALIDATION_ADMIN_USER_IDS=<id> uv run python -m ragent.api` — type `/admin-quality-validation` in chat → see Q1/Q2/Q3 responses + 驗收摘要. | [x] | Dev |
+| T-CVQ.2 | Structural | • **Achieve:** Extract the `/admin-quality-validation` intercept out of `chatagent_v3.py` into a generic `SlashCommand` / `CommandRegistry` so future slash commands don't require new router-level parameters; no behavior change.<br>• **Deliver:** `src/ragent/commands/__init__.py` (`SlashCommand` protocol, `CommandRegistry`); `src/ragent/commands/_deps.py` (`make_command_dep` FastAPI dependency, `_noop_dep`); `src/ragent/commands/quality_validation.py` (moved from `routers/_quality_validation.py`, adds `QualityValidationCommand`); `composition.py` builds `Container.commands: CommandRegistry | None`; `app.py` wires `command_dep`; `chatagent_v3.py` drops the quality-validation-specific params for a single `command_dep` Depends; `tests/unit/test_commands_registry.py`, `tests/unit/test_command_dep.py`.<br>• **Success criteria:** `make test-gate` green; `routers/_quality_validation.py` deleted; no references to the old module path remain. | [x] | Dev |

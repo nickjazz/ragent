@@ -1,14 +1,4 @@
-"""T-CVQ — Admin quality validation stream helper.
-
-Intercepts the /admin-quality-validation slash command inside the
-chatagent/v3 POST handler.  Runs the configured question suite against
-the live /chatagent/v3 and /chatagent/v3/session endpoints (self-HTTP),
-relays the upstream SSE as-is (minus lifecycle wrappers), and appends a
-validation summary TEXT_MESSAGE at the end.
-
-All I/O uses the shared httpx.Client from the composition root — no extra
-HTTP client is needed.
-"""
+"""QualityValidationCommand — /admin-quality-validation slash command."""
 
 from __future__ import annotations
 
@@ -48,21 +38,13 @@ _RELAY_SKIP = frozenset({"RUN_STARTED", "RUN_FINISHED", "RUN_ERROR"})
 
 
 # ---------------------------------------------------------------------------
-# Public helpers consumed by chatagent_v3.py
+# Fixture loader
 # ---------------------------------------------------------------------------
-
-
-def is_admin_validation_command(messages: list[Message]) -> bool:
-    """True when the last user message is the admin validation slash command."""
-    last = next((m for m in reversed(messages) if m.role == "user"), None)
-    return (
-        last is not None and isinstance(last.content, str) and last.content.strip() == ADMIN_COMMAND
-    )
 
 
 def load_questions(fixture_path: str) -> list[dict]:
     """Load question suite from a YAML file.  Returns empty list on error."""
-    import yaml  # lazy import — only used at startup
+    import yaml
 
     try:
         with open(fixture_path, encoding="utf-8") as fh:
@@ -79,7 +61,6 @@ def load_questions(fixture_path: str) -> list[dict]:
 
 
 def _decode_jwt_claim(auth_header: str, claim: str) -> str | None:
-    """Extract a claim from a JWT without verifying the signature."""
     try:
         token = auth_header.removeprefix("Bearer ").strip()
         _, payload_b64, _ = token.split(".", 2)
@@ -91,11 +72,22 @@ def _decode_jwt_claim(auth_header: str, claim: str) -> str | None:
 
 
 def is_admin_user(auth_header: str, admin_user_ids: list[str], jwt_claim: str) -> bool:
-    """True if the JWT claim user_id is in the configured admin list."""
     if not admin_user_ids or not auth_header:
         return False
     user_id = _decode_jwt_claim(auth_header, jwt_claim)
     return user_id in admin_user_ids
+
+
+# ---------------------------------------------------------------------------
+# Command predicate
+# ---------------------------------------------------------------------------
+
+
+def is_admin_validation_command(messages: list[Message]) -> bool:
+    last = next((m for m in reversed(messages) if m.role == "user"), None)
+    return (
+        last is not None and isinstance(last.content, str) and last.content.strip() == ADMIN_COMMAND
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +110,6 @@ def _call_chatagent_v3(
     auth_header: str,
     jwt_header: str,
 ) -> tuple[list[dict], str]:
-    """POST to /chatagent/v3, collect all SSE events. Returns (events, thread_id)."""
     run_id = new_id()
     thread_id = new_id()
     req = http_client.build_request(
@@ -221,7 +212,6 @@ def _yield_run_error(
 
 
 def _relay_events(events: list[dict]) -> Generator[str, None, None]:
-    """Yield SSE strings for all non-lifecycle events (original JSON, not re-serialised)."""
     for event in events:
         if event.get("type") in _RELAY_SKIP:
             continue
@@ -300,7 +290,7 @@ def _build_summary(
 
 
 # ---------------------------------------------------------------------------
-# Main generator
+# Stream generator (module-level — also called by QualityValidationCommand)
 # ---------------------------------------------------------------------------
 
 
@@ -422,3 +412,55 @@ def admin_quality_validation_stream(
         elapsed_ms=elapsed_ms,
     )
     yield to_sse(RunFinishedEvent(run_id=run_id, thread_id=thread_id))
+
+
+# ---------------------------------------------------------------------------
+# SlashCommand implementation
+# ---------------------------------------------------------------------------
+
+
+class QualityValidationCommand:
+    name = ADMIN_COMMAND
+
+    def __init__(
+        self,
+        *,
+        questions: list[dict],
+        admin_user_ids: list[str],
+        base_url: str,
+        jwt_claim: str,
+        http_client: httpx.Client,
+        has_session_endpoint: bool,
+    ) -> None:
+        self._questions = questions
+        self._admin_user_ids = admin_user_ids
+        self._base_url = base_url
+        self._jwt_claim = jwt_claim
+        self._http_client = http_client
+        self._has_session_endpoint = has_session_endpoint
+
+    def matches(self, messages: list[Message]) -> bool:
+        return is_admin_validation_command(messages)
+
+    def handle(
+        self,
+        *,
+        user_id: str,
+        auth_header: str,
+        run_id: str,
+        thread_id: str,
+        jwt_header: str,
+    ) -> Generator[str, None, None]:
+        return admin_quality_validation_stream(
+            questions=self._questions,
+            user_id=user_id,
+            auth_header=auth_header,
+            http_client=self._http_client,
+            base_url=self._base_url,
+            run_id=run_id,
+            thread_id=thread_id,
+            admin_user_ids=self._admin_user_ids,
+            jwt_claim=self._jwt_claim,
+            jwt_header=jwt_header,
+            has_session_endpoint=self._has_session_endpoint,
+        )

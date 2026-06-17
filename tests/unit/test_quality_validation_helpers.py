@@ -1,4 +1,4 @@
-"""Unit tests for pure helper functions in _quality_validation.py."""
+"""Unit tests for pure helper functions in commands/quality_validation.py."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tempfile
 import yaml
 from twp_ai.schemas import Message
 
-from ragent.routers._quality_validation import (
+from ragent.commands.quality_validation import (
     _decode_jwt_claim,
     is_admin_user,
     is_admin_validation_command,
