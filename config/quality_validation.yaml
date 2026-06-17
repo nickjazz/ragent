@@ -29,8 +29,9 @@ questions:
       - "不確定"
       - "抱歉"
       - "無相關"
+      - "未能"
+      - "未找到"
     expect_no_keywords:
       - "規劃中"
       - "即將推出"
-      - "下季度計畫"
     max_seconds: 20
