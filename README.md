@@ -1,15 +1,15 @@
 # ragent
 
-RAG backend — ingest, hybrid retrieval, chat.
+RAG backend — ingest, hybrid retrieval, chat, chat with upstream agent.
 
 ---
 
 ## Quick Start
 
-Prerequisites: Python ≥ 3.12, `uv`, MariaDB 10.6, Redis (Sentinel), Elasticsearch 9.2.3, MinIO.
+Prerequisites: Python ≥ 3.10, `uv`, MariaDB 10.6, Redis, Elasticsearch 9.2.3, MinIO.
 
 ```bash
-uv sync                                                  # install dependencies
+uv sync                                                  # install dependencies, keep uv.lock package version while replacing uv index url
 cp .env.example .env                                     # then edit .env to fill in DSNs, MinIO sites, API URLs
 make doctor                                              # pre-flight check (env + datastores + AI endpoints)
 uv run --env-file .env alembic upgrade head              # run database migrations
@@ -48,6 +48,7 @@ make test-gate    # unit + integration only (pre-commit gate)
 src/ragent/
   api.py / worker.py / reconciler.py  — three process entrypoints
   bootstrap/        — composition root, app factory, schema init, logging
+  commands/         — slash commands Depends for chat agent route
   routers/          — FastAPI routers: ingest, chat, retrieve, feedback, mcp, health
   services/         — business logic: IngestService
   repositories/     — DB access: DocumentRepository
