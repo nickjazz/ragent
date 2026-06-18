@@ -147,7 +147,7 @@ def _relay(
                 for i, tc in enumerate(msg.tool_calls):
                     fn = tc.get("function", {})
                     fn_name = fn.get("name", "unknown")
-                    tc_id = tc.get("id") or f"{msg.message_id}-{i}"
+                    tc_id = _tool_call_id(msg.message_id, i, tc)
                     pending_calls.setdefault(fn_name, []).append(tc_id)
                     yield to_sse(
                         ToolCallStartEvent(
@@ -175,9 +175,20 @@ def _relay(
         yield from _close_block()
 
 
+def _tool_call_id(message_id: str, index: int, tool_call: dict) -> str:
+    """Resolve a tool call's id, falling back to ``{message_id}-{index}``.
+
+    Shared by the stream (TOOL_CALL_START) and the interrupt outcome so a tool
+    call whose upstream ``id`` is absent gets the SAME synthetic id on both
+    surfaces — otherwise the FE cannot correlate ``Interrupt.toolCallId`` with
+    the streamed tool call.
+    """
+    return tool_call.get("id") or f"{message_id}-{index}"
+
+
 def _to_interrupt(msg: UpstreamMessage) -> Interrupt:
     """Build a RUN_FINISHED interrupt from an upstream HITL message."""
-    tool_call_id = msg.tool_calls[0].get("id") if msg.tool_calls else None
+    tool_call_id = _tool_call_id(msg.message_id, 0, msg.tool_calls[0]) if msg.tool_calls else None
     return Interrupt(
         id=msg.message_id,
         reason=msg.finish_reason or "interrupt",

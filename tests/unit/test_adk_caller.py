@@ -8,7 +8,7 @@ import httpx
 import pytest
 from twp_ai.schemas import RunAgentInput
 
-from ragent.clients.adk_caller import ADKCaller
+from ragent.clients.adk_caller import ADKCaller, ResumeValidationError
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.upstream import UpstreamServiceError, UpstreamTimeoutError
 from tests.helpers import done_line as _done_line
@@ -439,7 +439,7 @@ def test_stream_deltas_resume_multiple_resolved_raises() -> None:
         ]
     )
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ResumeValidationError) as exc:
         list(caller.stream_deltas(request, "m"))
     assert exc.value.error_code == HttpErrorCode.CHATAGENT_INVALID_RESUME
     http_mock.send.assert_not_called()

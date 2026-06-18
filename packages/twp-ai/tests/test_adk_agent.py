@@ -326,6 +326,32 @@ def test_adk_agent_hitl_interrupt_surfaces_in_run_finished_outcome() -> None:
     }
 
 
+def test_adk_agent_interrupt_tool_call_id_matches_streamed_fallback() -> None:
+    """A tool call with no upstream id must carry the SAME synthetic id on the
+    TOOL_CALL_START event and in the interrupt outcome, so the FE can correlate."""
+    caller = FakeADKCaller(
+        messages=[
+            UpstreamMessage(
+                message_id="hitl-x",
+                role="assistant",
+                finish_reason="tool_calls",
+                tool_calls=[{"function": {"name": "book", "arguments": "{}"}}],  # no "id"
+                is_interrupt=True,
+                interrupt_message="Confirm?",
+            ),
+        ]
+    )
+    request = RunAgentInput.model_validate(_run_input())
+
+    events = _events(list(ADKAgent(caller).run(request, "m")))
+
+    tc_start = next(e for e in events if e["type"] == "TOOL_CALL_START")
+    finished = next(e for e in events if e["type"] == "RUN_FINISHED")
+    interrupt = finished["outcome"]["interrupts"][0]
+    assert tc_start["toolCallId"] == "hitl-x-0"
+    assert interrupt["toolCallId"] == tc_start["toolCallId"]
+
+
 def test_adk_agent_interrupt_with_content_streams_text_and_records_interrupt() -> None:
     caller = FakeADKCaller(
         messages=[
