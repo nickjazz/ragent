@@ -11,13 +11,16 @@ this agent maps the upstream's SSE stream to the twp-ai AG-UI event lifecycle:
       TEXT_MESSAGE_START / TEXT_MESSAGE_CONTENT* / TEXT_MESSAGE_END  (other assistant text)
       TOOL_CALL_START / TOOL_CALL_ARGS / TOOL_CALL_END               (upstream tool calls)
       TOOL_CALL_RESULT                                                (upstream tool results)
-    RUN_FINISHED
+    RUN_FINISHED (outcome: success | interrupt)
 
 Upstream agent types (planner / commander / summarizer) each produce a separate
 block identified by their upstream messageId. The `planner` node is the agent's
 plan/reasoning step, so it is surfaced as a REASONING_* block; every other node
-becomes a TEXT_MESSAGE block. Human-in-the-loop interrupts are surfaced as a
-standalone TEXT_MESSAGE containing the interrupt prompt. Any caller exception
+becomes a TEXT_MESSAGE block. A human-in-the-loop interrupt
+(`humanInTheLoopMeta.isInterrupt`) does not get its own block — the run ends with
+RUN_FINISHED carrying an `interrupt` outcome that lists each pending Interrupt
+(while the interrupt message's own content / tool-call deltas still stream). A
+run with no interrupt ends with a `success` outcome. Any caller exception
 surfaces as a single RUN_ERROR event.
 """
 
@@ -27,6 +30,7 @@ from collections.abc import Generator
 
 from ..callers.adk import ADKCaller, UpstreamMessage
 from ..events import (
+    Interrupt,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
     ReasoningMessageEndEvent,
@@ -34,6 +38,8 @@ from ..events import (
     ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
+    RunFinishedInterrupt,
+    RunFinishedSuccess,
     RunStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -62,9 +68,17 @@ class ADKAgent:
                 parent_run_id=request.parent_run_id,
             )
         )
+        interrupts: list[Interrupt] = []
         try:
-            yield from _relay(self._caller.stream_deltas(request, model))
-            yield to_sse(RunFinishedEvent(run_id=request.run_id, thread_id=request.thread_id))
+            yield from _relay(self._caller.stream_deltas(request, model), interrupts)
+            outcome = (
+                RunFinishedInterrupt(interrupts=interrupts) if interrupts else RunFinishedSuccess()
+            )
+            yield to_sse(
+                RunFinishedEvent(
+                    run_id=request.run_id, thread_id=request.thread_id, outcome=outcome
+                )
+            )
         except Exception as exc:
             yield to_sse(
                 RunErrorEvent(
@@ -76,8 +90,15 @@ class ADKAgent:
             )
 
 
-def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, None, None]:
-    """Map upstream messages to AG-UI events with message-boundary tracking."""
+def _relay(
+    upstream: Generator[UpstreamMessage, None, None], interrupts: list[Interrupt]
+) -> Generator[str, None, None]:
+    """Map upstream messages to AG-UI events with message-boundary tracking.
+
+    Human-in-the-loop interrupts are appended to `interrupts` (surfaced in
+    RUN_FINISHED.outcome by the caller); the interrupt message's own content /
+    tool-call deltas still stream normally.
+    """
     open_msg_id: str | None = None
     open_kind: str | None = None  # "text" | "reasoning" — how the open block was started
     # Maps function_name → FIFO list of tc_ids so same-named calls resolve in order.
@@ -100,13 +121,7 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
             yield from _close_block()
 
         if msg.is_interrupt:
-            if msg.interrupt_message:
-                yield to_sse(TextMessageStartEvent(message_id=msg.message_id))
-                yield to_sse(
-                    TextMessageContentEvent(message_id=msg.message_id, delta=msg.interrupt_message)
-                )
-                yield to_sse(TextMessageEndEvent(message_id=msg.message_id))
-            continue
+            interrupts.append(_to_interrupt(msg))
 
         if msg.role == "assistant":
             if msg.content:
@@ -158,3 +173,15 @@ def _relay(upstream: Generator[UpstreamMessage, None, None]) -> Generator[str, N
 
     if open_msg_id is not None:
         yield from _close_block()
+
+
+def _to_interrupt(msg: UpstreamMessage) -> Interrupt:
+    """Build a RUN_FINISHED interrupt from an upstream HITL message."""
+    tool_call_id = msg.tool_calls[0].get("id") if msg.tool_calls else None
+    return Interrupt(
+        id=msg.message_id,
+        reason=msg.finish_reason or "interrupt",
+        message=msg.interrupt_message,
+        tool_call_id=tool_call_id,
+        metadata=msg.display_meta or None,
+    )
