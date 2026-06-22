@@ -132,7 +132,15 @@ def create_chatagent_v3_router(
             # if the client refreshes); the response consumes that buffer. A
             # later GET /reconnect consumes the same buffer.
             key = chat_stream_store.key(user_id, body.thread_id or "", body.run_id)
-            if chat_stream_store.try_start(key):
+            started = chat_stream_store.try_start(key)
+            if started is None:
+                # Stream Redis unreachable — degrade to the legacy connection-bound
+                # stream so v3 chat keeps working (just not resumable this run).
+                logger.warning("chatagent_v3.stream_store_unavailable", user_id=user_id)
+                return StreamingResponse(
+                    agent.run(body, body.model or ""), media_type="text/event-stream"
+                )
+            if started:
                 _spawn_producer(
                     producer_pool, chat_stream_store, key, agent, body, body.model or ""
                 )
@@ -151,7 +159,10 @@ def create_chatagent_v3_router(
             last_event_id: Annotated[str | None, Header()] = None,
         ) -> StreamingResponse:
             user_id = x_user_id or "anonymous"
-            if chat_stream_store is None:
+            # Reject a malformed Last-Event-ID up front: an arbitrary string would
+            # make the XRANGE cursor raise inside the stream and 500. No store
+            # wired falls through here too.
+            if chat_stream_store is None or not chat_stream_store.is_valid_cursor(last_event_id):
                 return StreamingResponse(
                     _error_stream(
                         "stream no longer resumable",
@@ -162,9 +173,10 @@ def create_chatagent_v3_router(
                     media_type="text/event-stream",
                 )
             # Owner is baked into the key, so a missing key also covers another
-            # user reconnecting to a run that is not theirs.
+            # user reconnecting to a run that is not theirs. is_resumable also
+            # accepts a run whose producer holds the lock but hasn't written yet.
             key = chat_stream_store.key(user_id, thread_id, run_id)
-            if not chat_stream_store.exists(key):
+            if not chat_stream_store.is_resumable(key):
                 logger.info("chatagent_v3.reconnect_expired", user_id=user_id, run_id=run_id)
                 return StreamingResponse(
                     _error_stream(

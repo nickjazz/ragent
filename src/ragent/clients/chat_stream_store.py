@@ -18,14 +18,19 @@ semantics that the in-memory test double does not honour.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import redis as redis_lib
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 _KEY_PREFIX = "chatstream:"
 _FROM_START = ("0", "-", "", None)
 _FIELD_FRAME = "frame"  # XADD field holding one SSE frame string
 _FIELD_EOS = "eos"  # XADD field marking the terminal sentinel (no frame)
+_STREAM_ID_RE = re.compile(r"^\d+-\d+$")  # Redis entry id: <ms>-<seq>
 
 
 class ChatStreamStore:
@@ -38,9 +43,32 @@ class ChatStreamStore:
     def key(user_id: str, thread_id: str, run_id: str) -> str:
         return f"{_KEY_PREFIX}{user_id}:{thread_id}:{run_id}"
 
-    def try_start(self, key: str) -> bool:
-        """Acquire the single-producer lock for a run; True only for the first caller."""
-        return bool(self._redis.set(f"{key}:lock", "1", nx=True, ex=self._ttl))
+    @staticmethod
+    def _lock_key(key: str) -> str:
+        return f"{key}:lock"
+
+    @staticmethod
+    def is_valid_cursor(last_id: str | None) -> bool:
+        """A start sentinel or a well-formed Redis entry id.
+
+        ``last_id`` is client-supplied (the ``Last-Event-ID`` header); a malformed
+        value would make XRANGE raise ``ResponseError``, so the caller rejects it
+        up front rather than 500.
+        """
+        return last_id in _FROM_START or bool(_STREAM_ID_RE.match(last_id or ""))
+
+    def try_start(self, key: str) -> bool | None:
+        """Elect the single producer for a run.
+
+        ``True`` → this caller is the producer; ``False`` → another already is;
+        ``None`` → the stream Redis is unreachable, so the caller should take the
+        legacy connection-bound path instead of breaking the request.
+        """
+        try:
+            return bool(self._redis.set(self._lock_key(key), "1", nx=True, ex=self._ttl))
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="try_start", error=str(exc))
+            return None
 
     def append(self, key: str, frame: str) -> str:
         """Buffer one SSE frame; returns the entry id used as the SSE ``id:``."""
@@ -53,8 +81,20 @@ class ChatStreamStore:
         pipe.expire(key, self._ttl)
         pipe.execute()
 
-    def exists(self, key: str) -> bool:
-        return bool(self._redis.exists(key))
+    def is_resumable(self, key: str) -> bool:
+        """True if the run has buffered frames OR a producer holds its start lock.
+
+        The lock check closes the startup race: a reconnect can land after the
+        POST took the lock but before the producer wrote its first frame, when the
+        stream key does not exist yet — the run is still alive and reconnectable.
+        Fail-soft on a Redis outage so reconnect degrades to STREAM_EXPIRED (the
+        client falls back to session history) rather than 500.
+        """
+        try:
+            return bool(self._redis.exists(key, self._lock_key(key)))
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="is_resumable", error=str(exc))
+            return False
 
     def read_after(self, key: str, last_id: str | None) -> list[tuple[str, str | None]]:
         """Entries strictly after ``last_id`` as ``(entry_id, frame)`` pairs.
@@ -62,11 +102,19 @@ class ChatStreamStore:
         ``frame`` is ``None`` for the terminal ``eos`` sentinel — so consumers
         never touch the Redis field names. ``last_id`` is exclusive (Last-Event-ID
         semantics): xrange min is inclusive, so the cursor entry itself is dropped.
+        Fail-soft on a transient Redis outage (returns no entries) so a blip ends
+        the stream via the consumer's idle timeout instead of crashing it.
         """
-        if last_id in _FROM_START:
-            entries = self._redis.xrange(key, min="-", max="+")
-        else:
-            entries = [e for e in self._redis.xrange(key, min=last_id, max="+") if e[0] != last_id]
+        try:
+            if last_id in _FROM_START:
+                entries = self._redis.xrange(key, min="-", max="+")
+            else:
+                entries = [
+                    e for e in self._redis.xrange(key, min=last_id, max="+") if e[0] != last_id
+                ]
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="read_after", error=str(exc))
+            return []
         return [
             (eid, fields.get(_FIELD_FRAME) if _FIELD_EOS not in fields else None)
             for eid, fields in entries

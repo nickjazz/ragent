@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import fakeredis
+import redis as redis_lib
 
 from ragent.clients.chat_stream_store import ChatStreamStore
 
@@ -52,12 +55,21 @@ def test_mark_done_appends_eos_sentinel_and_sets_ttl() -> None:
     assert store._redis.ttl(key) > 0  # noqa: SLF001 — asserting the TTL was set
 
 
-def test_exists_false_before_first_append_true_after() -> None:
+def test_is_resumable_false_before_anything_true_after_append() -> None:
     store = _store()
     key = ChatStreamStore.key("alice", "t", "r")
-    assert store.exists(key) is False
+    assert store.is_resumable(key) is False
     store.append(key, "data: a\n\n")
-    assert store.exists(key) is True
+    assert store.is_resumable(key) is True
+
+
+def test_is_resumable_true_when_only_the_producer_lock_is_held() -> None:
+    # Startup race: the POST took the lock but the producer has not written its
+    # first frame yet — the run is still reconnectable.
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    store.try_start(key)
+    assert store.is_resumable(key) is True
 
 
 def test_try_start_is_idempotent_first_caller_wins() -> None:
@@ -66,3 +78,27 @@ def test_try_start_is_idempotent_first_caller_wins() -> None:
     key = ChatStreamStore.key("alice", "t", "r")
     assert store.try_start(key) is True
     assert store.try_start(key) is False
+
+
+def test_try_start_returns_none_when_redis_unavailable() -> None:
+    # Signals the router to take the legacy connection-bound fallback.
+    redis = MagicMock()
+    redis.set.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.try_start(ChatStreamStore.key("a", "t", "r")) is None
+
+
+def test_read_after_fail_soft_returns_empty_on_redis_error() -> None:
+    redis = MagicMock()
+    redis.xrange.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.read_after(ChatStreamStore.key("a", "t", "r"), "0") == []
+
+
+def test_is_valid_cursor_accepts_sentinels_and_entry_ids_rejects_garbage() -> None:
+    assert ChatStreamStore.is_valid_cursor(None) is True
+    assert ChatStreamStore.is_valid_cursor("0") is True
+    assert ChatStreamStore.is_valid_cursor("1718000000000-3") is True
+    assert ChatStreamStore.is_valid_cursor("invalid-id") is False
+    assert ChatStreamStore.is_valid_cursor("1718000000000") is False
+    assert ChatStreamStore.is_valid_cursor("'; FLUSHALL") is False

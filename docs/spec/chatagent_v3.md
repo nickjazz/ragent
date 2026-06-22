@@ -139,13 +139,20 @@ the client connection** so a refresh/disconnect does not abort generation:
   progress (a producer that died without closing).
 - `GET /chatagent/v3/reconnect?thread_id&run_id` — header `Last-Event-ID` is the
   **exclusive** resume cursor (the last entry the client saw); omit it to replay
-  from the start. The owner is baked into the key, so a run belonging to another
-  user — or one whose buffer has aged out past the TTL — yields a single
-  `RUN_ERROR` with `code = CHATAGENT_STREAM_EXPIRED`, the client's cue to fall
-  back to `GET /chatagent/v3/session` for the completed history (§3.4.8).
+  from the start. A malformed `Last-Event-ID` (not a `<ms>-<seq>` entry id) is
+  rejected up front — it would otherwise make the XRANGE cursor raise — as a
+  `RUN_ERROR(CHATAGENT_STREAM_EXPIRED)`, never a 500. The owner is baked into the
+  key, so a run belonging to another user — or one whose buffer has aged out past
+  the TTL — yields the same `RUN_ERROR(CHATAGENT_STREAM_EXPIRED)`, the client's cue
+  to fall back to `GET /chatagent/v3/session` for the completed history (§3.4.8).
+  A run whose producer holds the start lock but has not written its first frame
+  yet (startup race) is still treated as reconnectable.
 - Buffer retention is bounded by `REDIS_STREAM_TTL_SECONDS` (default 300s) and
-  `REDIS_STREAM_MAXLEN` (default 10000, approximate trim). With no store wired,
-  v3 falls back to the legacy connection-bound stream (correct, not resumable).
+  `REDIS_STREAM_MAXLEN` (default 10000, approximate trim). With no store wired —
+  **or when the stream Redis is unreachable** (`try_start` cannot acquire the
+  lock) — v3 falls back to the legacy connection-bound stream (correct, not
+  resumable) so chat keeps working; a transient Redis blip mid-stream ends the
+  consumer via its idle timeout rather than crashing it.
 
 ---
 

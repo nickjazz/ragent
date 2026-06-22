@@ -21,7 +21,10 @@ from tests.helpers import resp_mock as _resp_mock
 
 
 def _make_app(
-    *, rate_limiter: RateLimiter | None = None, chat_stream_store: ChatStreamStore | None = None
+    *,
+    rate_limiter: RateLimiter | None = None,
+    chat_stream_store: ChatStreamStore | None = None,
+    stream_idle_timeout: float = 3.0,
 ):
     http_mock = MagicMock(spec=httpx.Client)
     app = FastAPI()
@@ -32,7 +35,7 @@ def _make_app(
         chatagent_api_url="http://upstream",
         rate_limiter=rate_limiter,
         chat_stream_store=chat_stream_store,
-        stream_idle_timeout=3.0,
+        stream_idle_timeout=stream_idle_timeout,
     )
     app.include_router(router)
     return app, http_mock
@@ -300,6 +303,63 @@ def test_v3_duplicate_run_id_spawns_single_producer() -> None:
     assert http_mock.send.call_count == 1
     # Both responses replay the same buffered run.
     assert [e["type"] for e in _events(first.text)] == [e["type"] for e in _events(second.text)]
+
+
+def test_v3_reconnect_rejects_malformed_last_event_id() -> None:
+    # A garbage Last-Event-ID would make the XRANGE cursor raise; the route must
+    # reject it cleanly (RUN_ERROR over 200), never 500.
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store)
+    store.try_start(ChatStreamStore.key("alice", "thread_1", "run_1"))  # run is live
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1", "run_id": "run_1"},
+            headers={"X-User-Id": "alice", "Last-Event-ID": "not-a-redis-id"},
+        )
+
+    assert r.status_code == 200
+    events = _events(r.text)
+    assert events[-1]["code"] == HttpErrorCode.CHATAGENT_STREAM_EXPIRED
+
+
+def test_v3_reconnect_resumable_while_producer_lock_held_before_first_frame() -> None:
+    # Startup race: lock taken, no frames yet — reconnect must NOT say expired.
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    store.try_start(ChatStreamStore.key("alice", "thread_1", "run_1"))
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1", "run_id": "run_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    # No frames arrive, so the stream idle-times-out empty — but crucially it did
+    # not short-circuit to STREAM_EXPIRED.
+    assert r.status_code == 200
+    assert HttpErrorCode.CHATAGENT_STREAM_EXPIRED not in r.text
+
+
+def test_v3_post_falls_back_to_legacy_stream_when_store_unavailable() -> None:
+    # try_start returning None (Redis down) must not break v3 chat — serve the
+    # legacy connection-bound stream instead.
+    store = MagicMock(spec=ChatStreamStore)
+    store.key.return_value = "chatstream:alice:thread_1:run_1"
+    store.try_start.return_value = None
+    app, http_mock = _make_app(chat_stream_store=store)
+    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
+
+    with TestClient(app) as client:
+        r = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+
+    assert r.status_code == 200
+    types = [e["type"] for e in _events(r.text)]
+    assert types[0] == "RUN_STARTED"
+    assert types[-1] == "RUN_FINISHED"
+    store.read_after.assert_not_called()  # never entered the buffered consumer
 
 
 def test_v3_reconnect_is_owner_scoped() -> None:
