@@ -473,6 +473,8 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 rate_limit_window=container.rate_limit_window,
                 jwt_header=str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER),
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
+                chat_stream_store=container.chat_stream_store,
+                stream_idle_timeout=_float_env("CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS", 30.0),
             )
         )
     if container.feedback_hmac_secret is not None:

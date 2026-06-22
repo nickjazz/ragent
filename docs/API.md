@@ -441,6 +441,19 @@ curl -X POST http://localhost:8000/chatagent/v3 \
 
 **Response:** `text/event-stream`. Every upstream `data: {json}` SSE line passes through the conversion pipeline and becomes one or more AG-UI events on the response stream. The stream always opens with `RUN_STARTED` and closes with `RUN_FINISHED` (carrying `outcome` = `success` or `interrupt`) or `RUN_ERROR` (any failure).
 
+When the resumable-stream buffer is enabled (Redis reachable), each frame also carries an SSE `id:` line — the resume cursor for `GET /chatagent/v3/reconnect`. Generation is decoupled from the connection: a refresh/disconnect does not abort the run.
+
+### `GET /chatagent/v3/reconnect` — Resume an in-flight run (SSE)
+
+Rejoin a run started by `POST /chatagent/v3` after a disconnect/refresh and receive the remaining frames. The `Last-Event-ID` header is the **exclusive** resume cursor (the last `id:` the client saw); omit it to replay from the start.
+
+```
+curl "http://localhost:8000/chatagent/v3/reconnect?thread_id=thread_1&run_id=run_1" \
+  -H "X-Auth-Token: <jwt>" -H "Last-Event-ID: 1718000000000-3" --no-buffer
+```
+
+**Response:** `text/event-stream`, same frames as the original run (each with its `id:`), closing at the buffered terminal frame. If the buffer is gone — TTL expired, never existed, or owned by another user — the response is a single `RUN_ERROR` with `code = CHATAGENT_STREAM_EXPIRED`; the client should then load completed history via `GET /chatagent/v3/session`. Full contract: `docs/spec/chatagent_v3.md §3.4.7`.
+
 #### Example 1 — Simple text reply
 
 Upstream emits a single assistant message in chunks; ragent wraps it in a TEXT_MESSAGE block.

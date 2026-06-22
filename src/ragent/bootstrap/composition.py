@@ -62,6 +62,9 @@ class Container:
     chatagent_session_api_url: str | None = None
     chatagent_ap_name: str = "ragent"
     chatagent_auth: str | None = None
+    # T-CAv3R — resumable v3 stream buffer (Redis Stream). None disables
+    # resumability (the v3 POST falls back to a connection-bound stream).
+    chat_stream_store: Any = None
 
 
 def build_container() -> Container:
@@ -344,6 +347,12 @@ def build_container() -> Container:
     chatagent_session_api_url = os.environ.get("CHATAGENT_SESSION_API_URL") or None
     chatagent_ap_name = os.environ.get("CHATAGENT_AP_NAME", "ragent")
     chatagent_auth = os.environ.get("CHATAGENT_AUTH") or None
+    # Only stand up the resumable-stream buffer when v3 is configured.
+    chat_stream_store = None
+    if chatagent_api_url is not None:
+        from ragent.clients.chat_stream_store import ChatStreamStore
+
+        chat_stream_store = ChatStreamStore.from_env()
 
     return Container(
         token_managers=(llm_tm, embedding_tm, rerank_tm),
@@ -381,6 +390,7 @@ def build_container() -> Container:
         chatagent_session_api_url=chatagent_session_api_url,
         chatagent_ap_name=chatagent_ap_name,
         chatagent_auth=chatagent_auth,
+        chat_stream_store=chat_stream_store,
     )
 
 

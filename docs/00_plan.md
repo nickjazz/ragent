@@ -24,6 +24,40 @@
 
 ---
 
+## Track T-CAv3R — ChatAgent v3 Resumable Stream (Redis Stream buffer)
+
+> Source: 2026-06-22 design session. Goal: a client that refreshes / disconnects
+> mid-generation can rejoin the **same** in-flight run and receive the rest of the
+> answer — not just the already-rendered prefix.
+>
+> **Locked decisions:**
+> - **Full decoupling**: a background producer tees the run into a Redis Stream
+>   independent of the client connection, so generation completes even if the
+>   client leaves (within the TTL). Producer is an in-process daemon thread (option
+>   A), not a TaskIQ worker — minimal change, sufficient for the refresh case.
+> - Scope is **`/chatagent/v3` only** (the path the mco-clean `@twp/ai` data layer
+>   already drives via `/twp/v1/run`). Core `/chat/v1/stream` is untouched.
+> - Stream key is **owner-scoped** (`chatstream:{user}:{thread}:{run}`) so a run
+>   cannot be reconnected by guessing its `runId`.
+> - Resume uses **SSE `Last-Event-ID`** (exclusive cursor) over `fetch`+ReadableStream
+>   (header auth precludes `EventSource`). Backend just emits `id:` lines + reads the
+>   header. TTL 5 min; expired/unknown buffer → `RUN_ERROR(CHATAGENT_STREAM_EXPIRED)`,
+>   client falls back to `GET /chatagent/v3/session`.
+
+**Counter: 完成 5 / 未完成 1 / descope 0**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv3R.1 | Red+Green | • **Achieve:** `ChatStreamStore` — owner-scoped key; `XADD` append; `XRANGE` `read_after` (Last-Event-ID exclusive); `eos` sentinel + TTL on `mark_done`; `SET NX` single-producer `try_start`; `exists`; Sentinel-aware `from_env`.<br>• **Deliver:** `src/ragent/clients/chat_stream_store.py`; `tests/unit/test_chat_stream_store.py` (fakeredis). | [x] | Dev |
+| T-CAv3R.2 | Red+Green | • **Achieve:** New error code `CHATAGENT_STREAM_EXPIRED` (SSE-error only).<br>• **Deliver:** `src/ragent/errors/codes.py`; `docs/spec/error_codes.md`. | [x] | Dev |
+| T-CAv3R.3 | Red+Green | • **Achieve:** v3 POST decoupled producer/consumer — background daemon-thread producer tees `ADKAgent.run` into the buffer (single-producer lock); response consumes the buffer, attaching each entry id as the SSE `id:`. No store wired → legacy connection-bound stream. Event sequence unchanged.<br>• **Deliver:** `routers/chatagent_v3.py` (`_spawn_producer`, `_consume_stream`); `tests/unit/test_chatagent_v3_router.py`; `tests/helpers.py` (`parse_sse_events` tolerates `id:`, `parse_sse_ids`). | [x] | Dev |
+| T-CAv3R.4 | Red+Green | • **Achieve:** `GET /chatagent/v3/reconnect?thread_id&run_id` — `Last-Event-ID` (exclusive) resume; missing/other-owner buffer → `RUN_ERROR(CHATAGENT_STREAM_EXPIRED)`.<br>• **Deliver:** `routers/chatagent_v3.py` reconnect route + `_stream_expired`; `tests/unit/test_chatagent_v3_router.py` (resume / expired / owner-scoped). | [x] | Dev |
+| T-CAv3R.W1 | Behavioral | • **Achieve:** Wire the store into the composition root + v3 registration (built only when `CHATAGENT_API_URL` is set); add stream env vars.<br>• **Deliver:** `bootstrap/composition.py` (`chat_stream_store` field + `from_env`); `bootstrap/app.py` v3 registration; `docs/spec/env_vars.md`. | [x] | Dev |
+| T-CAv3R.D1 | Structural | • **Achieve:** Document the resumable-stream contract + reconnect endpoint.<br>• **Deliver:** `docs/spec/chatagent_v3.md` §3.4.7 resumable-stream block; `docs/00_spec.md` pointer if needed. | [x] | Dev |
+| T-CAv3R.FE1 | Red+Green | • **Achieve:** mco-clean `@twp/ai` persists `{threadId, runId, lastEventId}` for an in-flight run, reconnects via `GET /chatagent/v3/reconnect` (sends `Last-Event-ID` header) on remount, clears the marker on terminal frame, and falls back to `GET /chatagent/v3/session` on `CHATAGENT_STREAM_EXPIRED`. **(frontend — out of this backend cycle)** | [ ] | Dev |
+
+---
+
 ## Track T-CAv3S — ChatAgent v3 Session History (twp-ai roles + hidden filtering)
 
 > Source: 2026-06-11 design session. Two linked changes driven by the upstream

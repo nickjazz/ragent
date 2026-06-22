@@ -53,8 +53,20 @@ def resp_mock(lines: list[str]) -> MagicMock:
 
 
 def parse_sse_events(text: str) -> list[dict]:
+    # A frame may carry an `id:` line (resumable stream) ahead of its `data:`
+    # line; pull the data line out of each block regardless.
+    events: list[dict] = []
+    for block in text.strip().split("\n\n"):
+        for line in block.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[len("data: ") :].strip()))
+    return events
+
+
+def parse_sse_ids(text: str) -> list[str]:
     return [
-        json.loads(block.removeprefix("data: ").strip())
+        line[len("id: ") :].strip()
         for block in text.strip().split("\n\n")
-        if block.strip()
+        for line in block.splitlines()
+        if line.startswith("id: ")
     ]

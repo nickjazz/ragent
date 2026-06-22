@@ -1,0 +1,104 @@
+"""T-CAv3R.1 — ChatStreamStore: Redis Stream buffer for resumable v3 runs."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import fakeredis
+import redis as redis_lib
+
+from ragent.clients.chat_stream_store import ChatStreamStore
+
+
+def _store(**kwargs) -> ChatStreamStore:
+    return ChatStreamStore(fakeredis.FakeStrictRedis(decode_responses=True), **kwargs)
+
+
+def test_key_is_owner_scoped() -> None:
+    # The owner (user_id) is part of the key so another user cannot reconnect to
+    # a run by guessing its run_id.
+    key = ChatStreamStore.key("alice", "thread_1", "run_1")
+    assert key == "chatstream:alice:thread_1:run_1"
+    assert ChatStreamStore.key("bob", "thread_1", "run_1") != key
+
+
+def test_append_then_read_after_from_start_returns_frames_in_order() -> None:
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    id1 = store.append(key, "data: a\n\n")
+    id2 = store.append(key, "data: b\n\n")
+
+    entries = store.read_after(key, "0")
+    assert entries == [(id1, "data: a\n\n"), (id2, "data: b\n\n")]
+
+
+def test_read_after_is_exclusive_of_last_id() -> None:
+    # Resume semantics: a client that already saw `id1` must only get frames
+    # strictly after it (Last-Event-ID is exclusive).
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    id1 = store.append(key, "data: a\n\n")
+    id2 = store.append(key, "data: b\n\n")
+
+    entries = store.read_after(key, id1)
+    assert [eid for eid, _ in entries] == [id2]
+
+
+def test_mark_done_appends_eos_sentinel_and_sets_ttl() -> None:
+    store = _store(ttl_seconds=300)
+    key = ChatStreamStore.key("alice", "t", "r")
+    store.append(key, "data: a\n\n")
+    store.mark_done(key)
+
+    entries = store.read_after(key, "0")
+    assert entries[-1][1] is None  # terminal sentinel surfaces as a None frame
+    assert store._redis.ttl(key) > 0  # noqa: SLF001 — asserting the TTL was set
+
+
+def test_is_resumable_false_before_anything_true_after_append() -> None:
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    assert store.is_resumable(key) is False
+    store.append(key, "data: a\n\n")
+    assert store.is_resumable(key) is True
+
+
+def test_is_resumable_true_when_only_the_producer_lock_is_held() -> None:
+    # Startup race: the POST took the lock but the producer has not written its
+    # first frame yet — the run is still reconnectable.
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    store.try_start(key)
+    assert store.is_resumable(key) is True
+
+
+def test_try_start_is_idempotent_first_caller_wins() -> None:
+    # Two POSTs with the same run_id must only spawn one producer.
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    assert store.try_start(key) is True
+    assert store.try_start(key) is False
+
+
+def test_try_start_returns_none_when_redis_unavailable() -> None:
+    # Signals the router to take the legacy connection-bound fallback.
+    redis = MagicMock()
+    redis.set.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.try_start(ChatStreamStore.key("a", "t", "r")) is None
+
+
+def test_read_after_fail_soft_returns_empty_on_redis_error() -> None:
+    redis = MagicMock()
+    redis.xrange.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.read_after(ChatStreamStore.key("a", "t", "r"), "0") == []
+
+
+def test_is_valid_cursor_accepts_sentinels_and_entry_ids_rejects_garbage() -> None:
+    assert ChatStreamStore.is_valid_cursor(None) is True
+    assert ChatStreamStore.is_valid_cursor("0") is True
+    assert ChatStreamStore.is_valid_cursor("1718000000000-3") is True
+    assert ChatStreamStore.is_valid_cursor("invalid-id") is False
+    assert ChatStreamStore.is_valid_cursor("1718000000000") is False
+    assert ChatStreamStore.is_valid_cursor("'; FLUSHALL") is False

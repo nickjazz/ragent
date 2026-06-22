@@ -49,12 +49,17 @@
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_MODE`                          | `standalone`     | `standalone` \| `sentinel`. Applies to broker and rate-limiter. |
+| `REDIS_MODE`                          | `standalone`     | `standalone` \| `sentinel`. Applies to broker, rate-limiter, and v3 stream buffer. |
 | `REDIS_BROKER_URL`                    | `redis://localhost:6379/0` | TaskIQ broker URL (mode=standalone). |
 | `REDIS_RATELIMIT_URL`                 | `redis://localhost:6379/1` | Rate-limiter URL (mode=standalone). |
+| `REDIS_STREAM_URL`                    | `redis://localhost:6379/2` | Resumable v3 stream buffer URL (mode=standalone). |
 | `REDIS_SENTINEL_HOSTS`                | (required if mode=sentinel) | Comma-separated `host:port` list (≥ 3 nodes recommended). |
 | `REDIS_BROKER_SENTINEL_MASTER`        | `ragent-broker`  | Master name for broker instance (mode=sentinel). |
 | `REDIS_RATELIMIT_SENTINEL_MASTER`     | `ragent-ratelimit` | Master name for rate-limiter instance (mode=sentinel). |
+| `REDIS_STREAM_SENTINEL_MASTER`        | `stream-master`  | Master name for v3 stream-buffer instance (mode=sentinel). |
+| `REDIS_STREAM_TTL_SECONDS`            | `300`            | How long a finished v3 run stays resumable (Redis Stream TTL). |
+| `REDIS_STREAM_MAXLEN`                 | `10000`          | Approximate per-run frame cap (`XADD MAXLEN ~`) for the v3 stream buffer. |
+| `CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS` | `30`           | Consumer gives up if the v3 stream buffer sees no new frame for this long. |
 
 #### 4.6.4 Third-party API endpoints & credentials
 

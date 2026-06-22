@@ -74,6 +74,10 @@ class HttpErrorCode(StrEnum):
     # v3 resume payload the upstream cannot honour (>1 resolved interrupt — the
     # upstream takes a single lastMessageId). Surfaces as a RUN_ERROR over 200.
     CHATAGENT_INVALID_RESUME = "CHATAGENT_INVALID_RESUME"
+    # v3 reconnect target whose buffered stream is gone (TTL expired, never
+    # existed, or wrong owner/run). Surfaces as a RUN_ERROR over 200 so the
+    # client falls back to GET /chatagent/v3/session for completed history.
+    CHATAGENT_STREAM_EXPIRED = "CHATAGENT_STREAM_EXPIRED"
 
     # LLM stream interrupt (502) — stream closed before [DONE] sentinel.
     LLM_STREAM_INTERRUPTED = "LLM_STREAM_INTERRUPTED"
