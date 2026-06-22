@@ -32,6 +32,7 @@
 | `MISSING_USER_ID`                    | 422         | User-id header absent or empty after JWT verification | Identity middleware |
 | `CHAT_RATE_LIMITED`                  | 429 + `Retry-After` | Per-user fixed-window quota exceeded on `/chat/v1[/stream]` (B31, S37) | Router-level Depends T3.16 |
 | `CHATAGENT_INVALID_RESUME`           | SSE-error only | `/chatagent/v3` resume carries >1 `resolved` interrupt — upstream takes a single `lastMessageId` (emitted as `RUN_ERROR` over a 200 stream) | `ADKCaller` resume validation |
+| `CHATAGENT_STREAM_EXPIRED`           | SSE-error only | `GET /chatagent/v3/reconnect` target buffer is gone (TTL expired, never existed, or owned by another user); client falls back to `GET /chatagent/v3/session` (emitted as `RUN_ERROR` over a 200 stream) | v3 reconnect route |
 | `EMBEDDING_LIFECYCLE_INVALID_STATE`  | 409         | Embedding model state-machine transition rejected (B50) | Embedding lifecycle router |
 | `EMBEDDING_CUTOVER_PREFLIGHT_FAILED` | 409         | Cutover preflight (warmup / similarity gate) failed (B50) | Embedding lifecycle router |
 | `EMBEDDING_INVALID_CONFIG`           | 422         | Invalid promote payload (B50) | Embedding lifecycle router |

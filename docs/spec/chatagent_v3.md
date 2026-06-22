@@ -121,6 +121,32 @@ with `code` set to `CHATAGENT_RATE_LIMITED` / `CHATAGENT_UPSTREAM_ERROR` /
 `CHATAGENT_TIMEOUT` / `CHATAGENT_INVALID_RESUME`. v3 never returns an HTTP
 `429`/`502`/`504` (v2 does).
 
+**Resumable stream (Redis Stream buffer).** When a `ChatStreamStore` is wired
+(`CHATAGENT_API_URL` set + Redis reachable), the POST stream is **decoupled from
+the client connection** so a refresh/disconnect does not abort generation:
+
+- On POST, a single background **producer** (a daemon thread elected via a
+  `SET NX` lock on `chatstream:{user}:{thread}:{run}:lock`, so a retried POST with
+  the same `runId` never double-runs) tees every twp-ai SSE frame into the Redis
+  Stream `chatstream:{user_id}:{thread_id}:{run_id}` via `XADD`, then writes an
+  `eos` sentinel and sets the TTL. `ADKAgent.run` never raises, so the buffer
+  always closes with a terminal `RUN_FINISHED`/`RUN_ERROR` frame.
+- The POST response and `GET /reconnect` are **consumers**: they replay the
+  buffer with `XRANGE` (polling, not blocking — one cursor loop serves both the
+  live stream and a cross-replica reconnect, since the producer may run on a
+  different pod) and attach each Redis entry id as the SSE `id:` line. They stop
+  at the `eos` sentinel, or after `CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS` of no
+  progress (a producer that died without closing).
+- `GET /chatagent/v3/reconnect?thread_id&run_id` — header `Last-Event-ID` is the
+  **exclusive** resume cursor (the last entry the client saw); omit it to replay
+  from the start. The owner is baked into the key, so a run belonging to another
+  user — or one whose buffer has aged out past the TTL — yields a single
+  `RUN_ERROR` with `code = CHATAGENT_STREAM_EXPIRED`, the client's cue to fall
+  back to `GET /chatagent/v3/session` for the completed history (§3.4.8).
+- Buffer retention is bounded by `REDIS_STREAM_TTL_SECONDS` (default 300s) and
+  `REDIS_STREAM_MAXLEN` (default 10000, approximate trim). With no store wired,
+  v3 falls back to the legacy connection-bound stream (correct, not resumable).
+
 ---
 
 ## §3.4.8 `/chatagent/v3` session management — twp-ai-shaped history
