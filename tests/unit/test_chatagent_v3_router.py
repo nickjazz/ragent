@@ -428,3 +428,24 @@ def test_v3_post_uses_injected_agent_factory_not_a_hardcoded_backend() -> None:
     assert r.status_code == 200
     assert calls  # the injected stub agent's run() was actually invoked
     http_mock.send.assert_not_called()  # the router itself never talks to ADK
+
+
+def test_v3_router_builds_without_agent_factory_when_post_route_disabled() -> None:
+    # Session-only deployment: CHATAGENT_API_URL unset (no POST route) but
+    # CHATAGENT_SESSION_API_URL set. agent_factory is never built in that case
+    # (composition.py only builds it when chatagent_api_url is set), so the
+    # router must not require it.
+    http_mock = MagicMock(spec=httpx.Client)
+    app = FastAPI()
+    app.include_router(
+        create_chatagent_v3_router(
+            http_client=http_mock,
+            chatagent_ap_name="TestAP",
+            chatagent_session_api_url="http://upstream/session",
+        )
+    )
+
+    with TestClient(app) as client:
+        r = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+
+    assert r.status_code == 404  # POST route not registered, no crash building the app

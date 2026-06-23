@@ -47,7 +47,7 @@ def create_chatagent_v3_router(
     chatagent_sessionlist_api_url: str | None = None,
     chatagent_session_api_url: str | None = None,
     *,
-    agent_factory: AgentFactory,
+    agent_factory: AgentFactory | None = None,
     rate_limiter: RateLimiter | None = None,
     rate_limit: int = 60,
     rate_limit_window: int = 60,
@@ -115,6 +115,7 @@ def create_chatagent_v3_router(
                 )
 
             raw_token = request.headers.get(jwt_header.lower()) or ""
+            assert agent_factory is not None  # this route only registers when it is
             agent = agent_factory(user_id, raw_token)
             logger.info("chatagent_v3.request", user_id=user_id)
 

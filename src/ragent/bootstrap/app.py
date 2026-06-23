@@ -460,7 +460,6 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
             )
         )
-        assert container.chatagent_agent_factory is not None
         app.include_router(
             create_chatagent_v3_router(
                 http_client=container.http,
