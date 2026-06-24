@@ -83,3 +83,23 @@ CREATE TABLE IF NOT EXISTS feedback (
   UNIQUE KEY uq_user_req_app_src (user_id, request_id, source_app, source_id),
   CONSTRAINT ck_vote_unit CHECK (vote IN (-1, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 013_skills.sql: per-user reusable instruction/prompt presets ("skills").
+-- Every skill is private to its owner; every query filters by user_id.
+-- Surrogate id PK; skill_id is the CHAR(26) business key (UNIQUE);
+-- (user_id, name) UNIQUE so the DB refuses duplicate names per owner.
+CREATE TABLE IF NOT EXISTS skills (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  skill_id     CHAR(26)      NOT NULL,
+  user_id      VARCHAR(64)   NOT NULL,
+  name         VARCHAR(128)  NOT NULL,
+  description  VARCHAR(512)  NOT NULL DEFAULT '',
+  instructions TEXT          NOT NULL,
+  enabled      BOOLEAN       NOT NULL DEFAULT TRUE,
+  created_at   DATETIME(6)   NOT NULL,
+  updated_at   DATETIME(6)   NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_skill_id (skill_id),
+  UNIQUE KEY uq_user_name (user_id, name),
+  KEY idx_user_skill (user_id, skill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

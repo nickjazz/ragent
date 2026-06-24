@@ -122,3 +122,29 @@
 | T-CAv3S.HITL2 | Red+Green | • **Achieve:** Resume a paused run — `RunAgentInput.resume` (`[{interruptId, status, payload?}]`). `resolved` → upstream `inputData={lastMessageId, message:""}` (payload accepted but not forwarded — upstream is go/no-go only); `cancelled` → no upstream call, `success` outcome; >1 `resolved` → `RUN_ERROR` (`CHATAGENT_INVALID_RESUME`).<br>• **Deliver:** `packages/twp-ai/src/twp_ai/schemas.py` (`ResumeItem` + `RunAgentInput.resume`); `clients/adk_caller.py` (`_resume_input_data`, `ResumeValidationError`); `errors/codes.py` (`CHATAGENT_INVALID_RESUME`); `tests/unit/test_adk_caller.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md`, `docs/00_rule_third_party_api.md` (`lastMessageId` pin), `docs/API.md`. | [x] | Dev |
 | T-CAv3S.HITL3 | Red+Green | • **Achieve:** Drop human-in-the-loop interrupt turns from the `GET /chatagent/v3/session` history — a persisted `humanInTheLoopMeta.isInterrupt=true` turn was mapped (via the `node_to_role`/`"assistant"` default) into a stray assistant message; it is a transient approval prompt (surfaced live via `RUN_FINISHED.outcome`, HITL1), not a conversation message, so it must not render in history. Keeps the read consistent with the stream.<br>• **Deliver:** `services/chatagent_session.py` (`_is_interrupt`, filter in `map_session_payload`); `tests/unit/test_chatagent_session_mapper.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md` §3.4.8. | [x] | Dev |
 
+
+---
+
+## Track T-SK — User Skill Presets (per-user CRUD + /chatagent/v3 injection)
+
+> Source: 2026-06-24 request. Goal: each user manages their own reusable
+> instruction presets ("skills") via CRUD, fully isolated from other users, and
+> can attach one to a `/chatagent/v3` turn (skill_id in `forwardedProps`). Skill
+> instructions ride the existing `<hidden>` machine-context block, so they reach
+> the upstream agent but are stripped from the served session history — respecting
+> the upstream-persona rule and the upstream memory-storage mechanism.
+
+**Counter: 完成 9 / 未完成 1 / descope 0**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-SK.1 | Structural | • **Achieve:** Add the `skills` table + error codes.<br>• **Deliver:** `migrations/013_skills.sql` + `migrations/schema.sql` append; `errors/codes.py` (`SKILL_NOT_FOUND`/`SKILL_NAME_CONFLICT`/`SKILL_VALIDATION`) + `docs/spec/error_codes.md` rows.<br>• **Success criteria:** schema applies under `init_mariadb`; new codes present in the catalog. | [x] | Dev |
+| T-SK.2 | Red+Green | • **Achieve:** Owner-scoped repository — every statement filters by `user_id`.<br>• **Deliver:** `repositories/skill_repository.py`; `tests/unit/test_skill_repository.py` asserts the WHERE clause + bound params carry `user_id` on get/list/update/delete.<br>• **Success criteria:** `pytest tests/unit/test_skill_repository.py` green. | [x] | Dev |
+| T-SK.3 | Red+Green | • **Achieve:** Service CRUD + typed errors + boundary logs + `resolve_instructions`.<br>• **Deliver:** `services/skill_service.py`; `schemas/skill.py`; `tests/unit/test_skill_service.py` + `tests/unit/test_skill_schema.py`.<br>• **Success criteria:** conflict→409, missing→404, disabled-not-resolvable; entry/exit logs carry identity only. | [x] | Dev |
+| T-SK.4 | Red+Green | • **Achieve:** `/skills/v1` router — owner-scoped CRUD; validation→`SKILL_VALIDATION`.<br>• **Deliver:** `routers/skill.py`; `tests/unit/test_skill_router.py` (201/200/204; 404 for foreign id; 409; 422; 422 MISSING_USER_ID).<br>• **Success criteria:** owner is always the resolved `X-User-Id`, never a body field. | [x] | Dev |
+| T-SK.5 | Behavioral | • **Achieve:** Wire repo+service in composition; mount router; pass `skill_service` to v3.<br>• **Deliver:** `bootstrap/composition.py` (Container field + build), `bootstrap/app.py` (mount + v3 arg).<br>• **Success criteria:** full unit suite green; app builds. | [x] | Dev |
+| T-SK.6 | Red+Green | • **Achieve:** `/chatagent/v3` injects an owner-scoped skill from `forwardedProps.skillId` as a `ContextItem`; missing/foreign/disabled → `RUN_ERROR SKILL_NOT_FOUND` (no upstream call).<br>• **Deliver:** `routers/chatagent_v3.py` (`_extract_skill_id`, `_inject_skill`); `tests/unit/test_chatagent_v3_skill.py`.<br>• **Success criteria:** instructions appended to `context`; pass-through when no skill; error path skips the agent. | [x] | Dev |
+| T-SK.7 | Red+Green | • **Achieve:** Integration proof against real MariaDB — isolation + name uniqueness enforced by the DB.<br>• **Deliver:** `tests/integration/test_skill_crud_int.py` (`@pytest.mark.docker`): cross-user read/update/delete are no-ops; `(user_id, name)` unique per owner; same name allowed across owners; disabled not resolvable.<br>• **Success criteria:** suite green under testcontainers MariaDB (CI / intranet registry). | [x] | QA |
+| T-SK.D1 | Structural | • **Achieve:** Document the Skills domain + conversation flow.<br>• **Deliver:** `docs/00_spec.md §3.10`; `docs/API.md §Skills`; `docs/spec/error_codes.md`.<br>• **Success criteria:** spec carries the CRUD contract, isolation rule, and the v3 injection/memory-strip flow. | [x] | Dev |
+| T-SK.D2 | Structural | • **Achieve:** Domain-map orientation for the new Skills slice.<br>• **Deliver:** `docs/00_domain_map.md` router/service/repo/schema rows updated.<br>• **Success criteria:** new files appear in the module lists. | [x] | Dev |
+| T-SK.FE1 | Red+Green | • **Achieve:** Frontend (mco-clean) Skills management UI + skill picker that sends `forwardedProps.skillId`.<br>• **Deliver:** per `docs/skills_frontend_plan.md` (plan only this cycle).<br>• **Success criteria:** users CRUD their skills and select one for a chat turn; verified in `packages/ai` + shell UI tests. | [ ] | Dev |

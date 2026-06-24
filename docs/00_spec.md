@@ -324,6 +324,46 @@ Standalone FastMCP service that federates arbitrary third-party REST APIs as MCP
 
 ---
 
+### 3.10 Skills — per-user reusable instruction presets (T-SK)
+
+A **skill** is a user-owned, reusable instruction preset (a persona / system
+instruction the user can attach to a `/chatagent/v3` turn). Skills are private:
+the owner is the resolved `user_id` (auth/middleware), never a body field, and
+**every** repository statement filters by `user_id`, so one user can never read
+or mutate another's skills (isolation enforced at the SQL layer + the DB
+`(user_id, name)` UNIQUE key, not by an application check alone).
+
+**CRUD — `/skills/v1`** (always registered; no env gate):
+
+- `POST /skills/v1` → `201` `{skill_id, name, description, instructions, enabled, created_at, updated_at}`.
+  Body `{name, description?, instructions, enabled?}` (`enabled` defaults `true`).
+- `GET /skills/v1` → `{ "skills": [ … ] }` (owner's skills, newest first; empty array, never `null`).
+- `GET /skills/v1/{skill_id}` → the skill, or `404 SKILL_NOT_FOUND` when absent **or owned by another user** (a foreign skill is indistinguishable from a missing one — no existence oracle).
+- `PUT /skills/v1/{skill_id}` → full replace (same body as POST) → the updated skill.
+- `DELETE /skills/v1/{skill_id}` → `204`.
+- Errors: `404 SKILL_NOT_FOUND` · `409 SKILL_NAME_CONFLICT` (duplicate `(user_id, name)`) · `422 SKILL_VALIDATION` (schema/field bounds) · `422 MISSING_USER_ID` (no resolved identity).
+
+**Conversation flow — referencing a skill on a `/chatagent/v3` turn:**
+
+```
+client                         ragent /chatagent/v3                upstream ChatAgent
+  │  RunAgentInput +                  │                                   │
+  │  forwardedProps:{skillId}  ─────▶ │  resolve_instructions(user_id,    │
+  │                                   │     skillId)  ── owner-scoped ──▶ skills(DB)
+  │                                   │  append ContextItem(instructions) │
+  │                                   │     to RunAgentInput.context       │
+  │                                   │  ── existing caller wraps it in ──▶│ reads <hidden>
+  │  ◀── twp-ai SSE (RUN_*) ──────────│     <hidden><context>…</context>   │   context, runs
+```
+
+- The skill_id rides in `forwardedProps.skillId` (the AG-UI extensibility field) — no change to the twp-ai `RunAgentInput` contract.
+- The router resolves it **owner-scoped** and appends the instructions as a `ContextItem`, reusing the existing machine-context path: the upstream caller wraps `context` into the `<hidden><context>…</context></hidden>` block. This deliberately respects two existing invariants — (a) **upstream rule:** the upstream agent owns its own loop and reads the `<hidden>` block as machine-supplied context (we do not impose a structural persona), and (b) **memory storage:** the upstream persists every turn verbatim by `session=threadId`, and the v3 session-read (`strip_machine_context`) strips the `<hidden>` block, so the injected instructions never leak into the rendered/served history — identical treatment to client `context`/`state`. Instructions are re-sent each turn (keeping the persona active across a long conversation) but are stripped on read, so served memory stays clean.
+- A missing / foreign / **disabled** skill is a hard error surfaced as a `RUN_ERROR` event (`code=SKILL_NOT_FOUND`) over the `200` stream — v3 never returns an HTTP 4xx — and the upstream is never called for that turn.
+
+**Data structure** — table `skills` (migration `013_skills.sql`): surrogate `id BIGINT` PK; `skill_id CHAR(26)` UUIDv7→Crockford Base32 business key (UNIQUE); `user_id VARCHAR(64)`; `name VARCHAR(128)`; `description VARCHAR(512)`; `instructions TEXT`; `enabled BOOLEAN`; `created_at`/`updated_at DATETIME(6)`. `UNIQUE (user_id, name)`; index `(user_id, skill_id)`. No physical FK (per §Database Practices).
+
+---
+
 ## 4. Inventories
 
 ### 4.1 Endpoints
