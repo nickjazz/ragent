@@ -9,6 +9,12 @@ import fakeredis
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from twp_ai.events import (
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageStartEvent,
+    to_sse,
+)
 
 from ragent.clients.chat_stream_store import ChatStreamStore
 from ragent.clients.rate_limiter import RateLimiter, RateLimitResult
@@ -48,6 +54,35 @@ def _make_app(
 
 def _store() -> ChatStreamStore:
     return ChatStreamStore(fakeredis.FakeStrictRedis(decode_responses=True))
+
+
+def _seed_running_run(
+    store: ChatStreamStore,
+    *,
+    user: str = "alice",
+    thread: str = "thread_1",
+    run: str = "run_1",
+    user_text: str | None = "What are the features?",
+    deltas: tuple[str, ...] = ("hi",),
+    message_id: str = "m1",
+) -> tuple[str, list[str]]:
+    """Seed an in-flight (no eos) buffered run directly; returns (key, frame_ids).
+
+    reconnect serves only still-running runs (a finished run → expired), so tests
+    that exercise the streaming path build a buffer with no terminal sentinel.
+    """
+    key = ChatStreamStore.key(user, thread, run)
+    store.set_current(user, thread, run)
+    store.try_start(key)
+    if user_text is not None:
+        store.stash_user_input(key, user_text)
+    ids = [store.append(key, to_sse(RunStartedEvent(run_id=run, thread_id=thread)))]
+    ids.append(store.append(key, to_sse(TextMessageStartEvent(message_id=message_id))))
+    for d in deltas:
+        ids.append(
+            store.append(key, to_sse(TextMessageContentEvent(message_id=message_id, delta=d)))
+        )
+    return key, ids
 
 
 def _run_input() -> dict:
@@ -245,47 +280,146 @@ def test_v3_resumable_post_streams_same_lifecycle_with_event_ids() -> None:
     assert len(set(ids)) == len(ids)
 
 
-def test_v3_reconnect_resumes_after_last_event_id() -> None:
-    # Simulate a drop after the first content frame, then reconnect with that
-    # frame's id: only the strictly-later frames replay.
+def test_v3_reconnect_on_finished_run_is_expired() -> None:
+    # Once the run finishes (eos written), reconnect returns expired — the client
+    # loads the completed turn from GET /session instead, so there is no
+    # buffer/session overlap to de-duplicate.
     store = _store()
     app, http_mock = _make_app(chat_stream_store=store)
-    http_mock.send.return_value = _resp_mock(
-        [
-            _msg_line("The ", message_id="msg-1"),
-            _msg_line("answer", message_id="msg-1"),
-            _done_line(),
-        ]
-    )
+    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
 
     with TestClient(app) as client:
-        first = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
-        # The producer has finished and the buffer is retained within its TTL.
-        ids = _ids(first.text)
-        resume_from = ids[1]  # after RUN_STARTED + first frame boundary
-
+        client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})  # completes
         r = client.get(
             "/chatagent/v3/reconnect",
-            params={"thread_id": "thread_1", "run_id": "run_1"},
-            headers={"X-User-Id": "alice", "Last-Event-ID": resume_from},
+            params={"thread_id": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert _events(r.text)[-1]["code"] == HttpErrorCode.CHATAGENT_STREAM_EXPIRED
+
+
+def test_v3_reconnect_resumes_after_last_event_id() -> None:
+    # Drop after some frames of a STILL-RUNNING run, then reconnect with the last
+    # id: only strictly-later frames replay; an incremental resume omits the user turn.
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    _key, ids = _seed_running_run(store, deltas=("The ", "answer"))
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1"},
+            headers={"X-User-Id": "alice", "Last-Event-ID": ids[1]},
         )
 
     replayed = _events(r.text)
-    # Everything up to and including `resume_from` is excluded.
     assert "RUN_STARTED" not in [e["type"] for e in replayed]
-    assert replayed[-1]["type"] == "RUN_FINISHED"
-    resumed_ids = _ids(r.text)
-    assert all(i > resume_from for i in resumed_ids)
+    assert "USER_MESSAGE" not in [e["type"] for e in replayed]
+    assert all(i > ids[1] for i in _ids(r.text))
 
 
-def test_v3_reconnect_unknown_run_emits_stream_expired() -> None:
+def test_v3_reconnect_resolves_current_run_and_replays_user_turn() -> None:
+    # From-start reconnect needs only thread_id; the server resolves the current
+    # run and prepends the stashed user turn (the live stream never carried it).
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    _seed_running_run(store, user_text="What are the features?")
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    events = _events(r.text)
+    assert events[0]["type"] == "USER_MESSAGE"
+    assert events[0]["content"] == "What are the features?"
+    assert events[0]["role"] == "user"
+    assert events[1]["type"] == "RUN_STARTED"
+
+
+def test_v3_reconnect_uses_latest_run_not_a_stale_client_run_id() -> None:
+    # The current pointer (server-elected) decides which run reconnect surfaces —
+    # the latest, never an older one the client might still hold.
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    _seed_running_run(store, run="run_1", user_text="first question")
+    _seed_running_run(store, run="run_2", user_text="second question")  # set_current → run_2
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert _events(r.text)[0]["content"] == "second question"
+
+
+def test_v3_repeated_run_id_still_hits_upstream_each_time() -> None:
+    # The buffer keys on a server-minted stream id, never the client run_id, so a
+    # repeated run_id is NOT deduplicated — each POST reaches upstream and produces
+    # a fresh run (v3 never deduped on run_id).
+    store = _store()
+    app, http_mock = _make_app(chat_stream_store=store)
+    http_mock.send.side_effect = [
+        _resp_mock([_msg_line("first", message_id="m1"), _done_line()]),
+        _resp_mock([_msg_line("second", message_id="m2"), _done_line()]),
+    ]
+
+    with TestClient(app) as client:
+        first = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+        second = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+
+    assert http_mock.send.call_count == 2  # both reached upstream, no replay
+    deltas = lambda r: [e["delta"] for e in _events(r.text) if e["type"] == "TEXT_MESSAGE_CONTENT"]  # noqa: E731
+    assert deltas(first) == ["first"]
+    assert deltas(second) == ["second"]
+
+
+def test_v3_resume_turn_does_not_stash_user_input() -> None:
+    # A HITL resume turn carries no new question — it must not stash a user turn,
+    # else reconnect would replay the previous question as a new one.
+    store = _store()
+    app, http_mock = _make_app(chat_stream_store=store)
+    http_mock.send.return_value = _resp_mock([_msg_line("resumed", message_id="m1"), _done_line()])
+
+    body = _run_input()
+    body["resume"] = [{"interruptId": "int-1", "status": "resolved"}]
+
+    with TestClient(app) as client:
+        client.post("/chatagent/v3", json=body, headers={"X-User-Id": "alice"})
+
+    stream_id = store.get_current("alice", "thread_1")
+    assert store.get_user_input(ChatStreamStore.key("alice", "thread_1", stream_id)) is None
+
+
+def test_v3_reconnect_replays_user_turn_for_zero_cursor() -> None:
+    # "0" is a truthy from-start sentinel; the user turn must still be replayed.
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    _seed_running_run(store)
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/reconnect",
+            params={"thread_id": "thread_1"},
+            headers={"X-User-Id": "alice", "Last-Event-ID": "0"},
+        )
+
+    assert _events(r.text)[0]["type"] == "USER_MESSAGE"
+
+
+def test_v3_reconnect_unknown_thread_emits_stream_expired() -> None:
     store = _store()
     app, _ = _make_app(chat_stream_store=store)
 
     with TestClient(app) as client:
         r = client.get(
             "/chatagent/v3/reconnect",
-            params={"thread_id": "thread_x", "run_id": "run_x"},
+            params={"thread_id": "thread_x"},
             headers={"X-User-Id": "alice"},
         )
 
@@ -294,33 +428,18 @@ def test_v3_reconnect_unknown_run_emits_stream_expired() -> None:
     assert events[-1]["code"] == HttpErrorCode.CHATAGENT_STREAM_EXPIRED
 
 
-def test_v3_duplicate_run_id_spawns_single_producer() -> None:
-    # The SET NX lock means a retried POST with the same runId reuses the buffer
-    # instead of generating again — the upstream is called exactly once.
-    store = _store()
-    app, http_mock = _make_app(chat_stream_store=store)
-    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
-
-    with TestClient(app) as client:
-        first = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
-        second = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
-
-    assert http_mock.send.call_count == 1
-    # Both responses replay the same buffered run.
-    assert [e["type"] for e in _events(first.text)] == [e["type"] for e in _events(second.text)]
-
-
 def test_v3_reconnect_rejects_malformed_last_event_id() -> None:
     # A garbage Last-Event-ID would make the XRANGE cursor raise; the route must
     # reject it cleanly (RUN_ERROR over 200), never 500.
     store = _store()
     app, _ = _make_app(chat_stream_store=store)
+    store.set_current("alice", "thread_1", "run_1")
     store.try_start(ChatStreamStore.key("alice", "thread_1", "run_1"))  # run is live
 
     with TestClient(app) as client:
         r = client.get(
             "/chatagent/v3/reconnect",
-            params={"thread_id": "thread_1", "run_id": "run_1"},
+            params={"thread_id": "thread_1"},
             headers={"X-User-Id": "alice", "Last-Event-ID": "not-a-redis-id"},
         )
 
@@ -333,12 +452,13 @@ def test_v3_reconnect_resumable_while_producer_lock_held_before_first_frame() ->
     # Startup race: lock taken, no frames yet — reconnect must NOT say expired.
     store = _store()
     app, _ = _make_app(chat_stream_store=store, stream_idle_timeout=0.2)
+    store.set_current("alice", "thread_1", "run_1")
     store.try_start(ChatStreamStore.key("alice", "thread_1", "run_1"))
 
     with TestClient(app) as client:
         r = client.get(
             "/chatagent/v3/reconnect",
-            params={"thread_id": "thread_1", "run_id": "run_1"},
+            params={"thread_id": "thread_1"},
             headers={"X-User-Id": "alice"},
         )
 
@@ -368,7 +488,8 @@ def test_v3_post_falls_back_to_legacy_stream_when_store_unavailable() -> None:
 
 
 def test_v3_reconnect_is_owner_scoped() -> None:
-    # A different user cannot reconnect to alice's run even with the right ids.
+    # A different user cannot reconnect to alice's run: the current pointer is
+    # per-user, so mallory resolves no run on the same thread.
     store = _store()
     app, http_mock = _make_app(chat_stream_store=store)
     http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
@@ -377,7 +498,7 @@ def test_v3_reconnect_is_owner_scoped() -> None:
         client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
         r = client.get(
             "/chatagent/v3/reconnect",
-            params={"thread_id": "thread_1", "run_id": "run_1"},
+            params={"thread_id": "thread_1"},
             headers={"X-User-Id": "mallory"},
         )
 
