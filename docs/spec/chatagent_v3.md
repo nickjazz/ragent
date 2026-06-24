@@ -125,17 +125,20 @@ with `code` set to `CHATAGENT_RATE_LIMITED` / `CHATAGENT_UPSTREAM_ERROR` /
 (`CHATAGENT_API_URL` set + Redis reachable), the POST stream is **decoupled from
 the client connection** so a refresh/disconnect does not abort generation:
 
-- On POST, a single background **producer** (a daemon thread elected via a
-  `SET NX` lock on `chatstream:{user}:{thread}:{run}:lock`, so a retried POST with
-  the same `runId` never double-runs) tees every twp-ai SSE frame into the Redis
-  Stream `chatstream:{user_id}:{thread_id}:{run_id}` via `XADD`, then writes an
-  `eos` sentinel and sets the TTL. `ADKAgent.run` never raises, so the buffer
+- On POST, a single background **producer** tees every twp-ai SSE frame into the
+  Redis Stream `chatstream:{user}:{thread}:{stream_id}` via `XADD`, then writes an
+  `eos` sentinel and sets the TTL. The `stream_id` is **server-minted per POST**
+  (`new_id()`), never the client `run_id`: v3 never deduplicated on `run_id`, so a
+  repeated `run_id` must still reach upstream and produce a fresh run, not silently
+  replay the previous buffer. (The `SET NX` lock on `…:{stream_id}:lock` therefore
+  never collides; it only marks the startup window for reconnect and detects a
+  Redis outage → legacy fallback.) `ADKAgent.run` never raises, so the buffer
   always closes with a terminal `RUN_FINISHED`/`RUN_ERROR` frame. The POST also
   records two recovery aids: a per-thread **current-run pointer**
-  `chatcurrent:{user}:{thread} = runId` (so reconnect resolves the run
-  server-side) and the run's **user turn** at `…:{run}:user` (the live stream
-  carries only the assistant side, so the question must be stashed to be
-  replayable).
+  `chatcurrent:{user}:{thread} = stream_id` (so reconnect resolves the run
+  server-side without a client id) and the run's **user turn** at
+  `…:{stream_id}:user` (the live stream carries only the assistant side, so the
+  question must be stashed to be replayable).
 - The POST response and `GET /reconnect` are **consumers**: they replay the
   buffer with `XRANGE` (polling, not blocking — one cursor loop serves both the
   live stream and a cross-replica reconnect, since the producer may run on a

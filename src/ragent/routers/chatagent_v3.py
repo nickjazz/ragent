@@ -129,31 +129,31 @@ def create_chatagent_v3_router(
             # Resumable path: a background producer tees the run into a Redis
             # Stream independent of this connection (so generation completes even
             # if the client refreshes); the response consumes that buffer. A
-            # later GET /reconnect consumes the same buffer.
-            key = chat_stream_store.key(user_id, body.thread_id or "", body.run_id)
-            started = chat_stream_store.try_start(key)
-            if started is None:
+            # later GET /reconnect resolves the buffer via the current pointer.
+            #
+            # The buffer key uses a SERVER-minted stream id, never the client
+            # run_id: v3 never deduplicated on run_id, so a repeated run_id must
+            # still reach upstream and produce a fresh run (not silently replay the
+            # previous buffer). reconnect finds the run via the current pointer, so
+            # the client never needs this id.
+            stream_id = new_id()
+            key = chat_stream_store.key(user_id, body.thread_id or "", stream_id)
+            if chat_stream_store.try_start(key) is None:
                 # Stream Redis unreachable — degrade to the legacy connection-bound
                 # stream so v3 chat keeps working (just not resumable this run).
                 logger.warning("chatagent_v3.stream_store_unavailable", user_id=user_id)
                 return StreamingResponse(
                     agent.run(body, body.model or ""), media_type="text/event-stream"
                 )
-            if started:
-                # Only an ELECTED run advances the pointer — a stale retry of an
-                # older run_id returns started=False and must not rewind the thread
-                # to it (the pointer already holds the newest run).
-                chat_stream_store.set_current(user_id, body.thread_id or "", body.run_id)
-                # Stash the user turn (the live stream omits it) so reconnect can
-                # restore the question without relying on client storage. A HITL
-                # `resume`/`cancel` turn carries no new question (upstream gets an
-                # empty message), so stashing the last historical user turn would
-                # make reconnect replay the previous question as a new one.
-                if not body.resume:
-                    chat_stream_store.stash_user_input(key, _last_user_text(body))
-                _spawn_producer(
-                    producer_pool, chat_stream_store, key, agent, body, body.model or ""
-                )
+            chat_stream_store.set_current(user_id, body.thread_id or "", stream_id)
+            # Stash the user turn (the live stream omits it) so reconnect can
+            # restore the question without relying on client storage. A HITL
+            # `resume`/`cancel` turn carries no new question (upstream gets an empty
+            # message), so stashing the last historical user turn would make
+            # reconnect replay the previous question as a new one.
+            if not body.resume:
+                chat_stream_store.stash_user_input(key, _last_user_text(body))
+            _spawn_producer(producer_pool, chat_stream_store, key, agent, body, body.model or "")
             return StreamingResponse(
                 _consume_stream(
                     chat_stream_store, key, "0", stream_idle_timeout, stream_poll_interval

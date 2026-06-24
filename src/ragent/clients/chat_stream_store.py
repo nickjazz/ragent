@@ -41,8 +41,10 @@ class ChatStreamStore:
         self._maxlen = maxlen
 
     @staticmethod
-    def key(user_id: str, thread_id: str, run_id: str) -> str:
-        return f"{_KEY_PREFIX}{user_id}:{thread_id}:{run_id}"
+    def key(user_id: str, thread_id: str, stream_id: str) -> str:
+        # stream_id is a SERVER-minted per-run id (not the client run_id), so a
+        # repeated run_id never collides into the same buffer.
+        return f"{_KEY_PREFIX}{user_id}:{thread_id}:{stream_id}"
 
     @staticmethod
     def _lock_key(key: str) -> str:
@@ -90,18 +92,18 @@ class ChatStreamStore:
             logger.warning("chat_stream_store.unavailable", op="try_start", error=str(exc))
             return None
 
-    def set_current(self, user_id: str, thread_id: str, run_id: str) -> None:
+    def set_current(self, user_id: str, thread_id: str, stream_id: str) -> None:
         """Point the thread at its latest run so reconnect resolves it server-side.
 
-        The reconnect endpoint trusts this, not a client-supplied run_id (which can
-        be stale — e.g. another tab started a newer run). Best-effort: a Redis blip
-        here only costs resumability of this run, never the request. The pointer's
-        TTL is set here (not at completion), so — like the producer lock — a single
-        run that streams longer than the TTL stops being reconnectable mid-flight;
-        once it finishes it is served from session history instead.
+        The reconnect endpoint trusts this server-minted stream_id, not a client
+        run_id (which the client may reuse). Best-effort: a Redis blip here only
+        costs resumability of this run, never the request. The pointer's TTL is set
+        here (not at completion), so — like the producer lock — a single run that
+        streams longer than the TTL stops being reconnectable mid-flight; once it
+        finishes it is served from session history instead.
         """
         try:
-            self._redis.set(self._current_key(user_id, thread_id), run_id, ex=self._ttl)
+            self._redis.set(self._current_key(user_id, thread_id), stream_id, ex=self._ttl)
         except redis_lib.RedisError as exc:
             logger.warning("chat_stream_store.unavailable", op="set_current", error=str(exc))
 

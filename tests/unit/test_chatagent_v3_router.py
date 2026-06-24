@@ -358,25 +358,25 @@ def test_v3_reconnect_uses_latest_run_not_a_stale_client_run_id() -> None:
     assert _events(r.text)[0]["content"] == "second question"
 
 
-def test_v3_stale_retry_does_not_rewind_current_pointer() -> None:
-    # A retried POST for an OLDER run (lock already held → not elected) must not
-    # rewind the thread's current pointer back to it.
+def test_v3_repeated_run_id_still_hits_upstream_each_time() -> None:
+    # The buffer keys on a server-minted stream id, never the client run_id, so a
+    # repeated run_id is NOT deduplicated — each POST reaches upstream and produces
+    # a fresh run (v3 never deduped on run_id).
     store = _store()
     app, http_mock = _make_app(chat_stream_store=store)
-    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
-
-    body2 = _run_input()
-    body2["runId"] = "run_2"
-    body2["messages"] = [{"id": "m2", "role": "user", "content": "second question"}]
+    http_mock.send.side_effect = [
+        _resp_mock([_msg_line("first", message_id="m1"), _done_line()]),
+        _resp_mock([_msg_line("second", message_id="m2"), _done_line()]),
+    ]
 
     with TestClient(app) as client:
-        client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})  # run_1
-        client.post("/chatagent/v3", json=body2, headers={"X-User-Id": "alice"})  # run_2
-        client.post(
-            "/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"}
-        )  # stale run_1
+        first = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+        second = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
 
-    assert store.get_current("alice", "thread_1") == "run_2"
+    assert http_mock.send.call_count == 2  # both reached upstream, no replay
+    deltas = lambda r: [e["delta"] for e in _events(r.text) if e["type"] == "TEXT_MESSAGE_CONTENT"]  # noqa: E731
+    assert deltas(first) == ["first"]
+    assert deltas(second) == ["second"]
 
 
 def test_v3_resume_turn_does_not_stash_user_input() -> None:
@@ -392,7 +392,8 @@ def test_v3_resume_turn_does_not_stash_user_input() -> None:
     with TestClient(app) as client:
         client.post("/chatagent/v3", json=body, headers={"X-User-Id": "alice"})
 
-    assert store.get_user_input(ChatStreamStore.key("alice", "thread_1", "run_1")) is None
+    stream_id = store.get_current("alice", "thread_1")
+    assert store.get_user_input(ChatStreamStore.key("alice", "thread_1", stream_id)) is None
 
 
 def test_v3_reconnect_replays_user_turn_for_zero_cursor() -> None:
@@ -425,22 +426,6 @@ def test_v3_reconnect_unknown_thread_emits_stream_expired() -> None:
     events = _events(r.text)
     assert events[-1]["type"] == "RUN_ERROR"
     assert events[-1]["code"] == HttpErrorCode.CHATAGENT_STREAM_EXPIRED
-
-
-def test_v3_duplicate_run_id_spawns_single_producer() -> None:
-    # The SET NX lock means a retried POST with the same runId reuses the buffer
-    # instead of generating again — the upstream is called exactly once.
-    store = _store()
-    app, http_mock = _make_app(chat_stream_store=store)
-    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
-
-    with TestClient(app) as client:
-        first = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
-        second = client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
-
-    assert http_mock.send.call_count == 1
-    # Both responses replay the same buffered run.
-    assert [e["type"] for e in _events(first.text)] == [e["type"] for e in _events(second.text)]
 
 
 def test_v3_reconnect_rejects_malformed_last_event_id() -> None:
