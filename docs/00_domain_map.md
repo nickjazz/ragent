@@ -6,7 +6,6 @@
 > 本文件與 `docs/00_rule.md`、`docs/00_spec.md` 共同構成行為契約；三者矛盾時以 `00_spec.md` 為準。
 
 ---
-
 ## 一、Domain 總覽
 
 ```
@@ -23,7 +22,7 @@
 │        ┌─────────────────────┼──────────────────────┐               │
 │        ▼                     ▼                       ▼               │
 │  ┌──────────┐   ┌─────────────────────┐   ┌──────────────────┐     │
-│  │Repositories│  │     Pipelines       │   │   Extractors      │     │
+│  │Repositories│  │     Pipelines       │   │     Extractors     │     │
 │  └──────────┘   └────────┬────────────┘   └──────────────────┘     │
 │                           │                                          │
 │        ┌──────────────────┼─────────────┐                          │
@@ -40,11 +39,11 @@
 │  └──────────┘  └──────────┘  └──────────┘  └───────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 
-  Reconciler (獨立 process — python -m ragent.reconciler)
+  獨立 process（不掛載於 FastAPI app，不在上圖框內）：
+  Workers (python -m ragent.worker)　／　Reconciler (python -m ragent.reconciler)
 ```
 
 ---
-
 ## 二、Domain 詳細邊界
 
 ### 2.1 Bootstrap（組合根）
@@ -71,7 +70,6 @@
 | `telemetry.py` | OTEL TracerProvider setup/shutdown |
 
 ---
-
 ### 2.2 Routers（表示層）
 
 | 項目 | 說明 |
@@ -105,7 +103,6 @@
 > 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/chatagent_agent_backend.md`。
 
 ---
-
 ### 2.3 Services（業務邏輯層）
 
 | 項目 | 說明 |
@@ -127,7 +124,6 @@
 | `embedding/preflight.py` | embedding cutover 前置檢查：warmup + similarity gate |
 
 ---
-
 ### 2.4 Repositories（資料持久層）
 
 | 項目 | 說明 |
@@ -146,7 +142,6 @@
 | `system_settings_repository.py` | `system_settings` 表 — embedding model config 讀寫 |
 
 ---
-
 ### 2.5 Pipelines（Haystack 管線）
 
 | 項目 | 說明 |
@@ -174,7 +169,6 @@
 | `observability.py` | `wrap_pipeline_component()` — 每個 Haystack component 的 structlog + OTEL 雙發射封裝 |
 
 ---
-
 ### 2.6 Extractors（可插拔萃取器）
 
 | 項目 | 說明 |
@@ -194,7 +188,6 @@
 | `stub_graph.py` | `StubGraphExtractor` — no-op（optional，P3 佔位）|
 
 ---
-
 ### 2.7 Clients（外部服務客戶端）
 
 | 項目 | 說明 |
@@ -216,9 +209,9 @@
 | `adk_caller.py` | `ADKCaller` — `/chatagent/v3` twp-ai run 的上游代理 backend(`RunAgentInput` → v2 wire → `UpstreamMessage` stream)。由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝注入,router 不再直接 import。|
 | `embedding_model_config.py` | embedding model identity 設定(B50);ES `dense_vector.dims` 界限於 boot 驗證 |
 | `unprotect.py` | `UnprotectClient` — 外部 unprotect API 取回原始 binary(T-UP.3)|
+| `chat_stream_store.py` | `ChatStreamStore`(T-CAv3R) — Redis Stream tee/replay，讓 `/chatagent/v3` SSE run 可斷線重連 |
 
 ---
-
 ### 2.8 Schemas（I/O DTO）
 
 | 項目 | 說明 |
@@ -238,7 +231,6 @@
 - `_common.py`(source_app / source_meta 共用 filter 欄位驗證)
 
 ---
-
 ### 2.9 Storage（物件儲存）
 
 | 項目 | 說明 |
@@ -251,7 +243,6 @@
 主要檔案：`minio_client.py`（MinioClient — S3 操作封裝）、`minio_registry.py`（MinioSiteRegistry — 多 site 查詢）。
 
 ---
-
 ### 2.10 Auth（認證）
 
 | 項目 | 說明 |
@@ -264,7 +255,6 @@
 主要檔案：`jwt.py`（VerifyingTokenManager — JWKS + joserfc 驗簽）、`deps.py`（get_user_id FastAPI Depends）。
 
 ---
-
 ### 2.11 Middleware（HTTP 中介層）
 
 | 項目 | 說明 |
@@ -277,7 +267,6 @@
 主要檔案：`logging.py`（RequestLoggingMiddleware — api.request/error；user_id 寫入 scope）、`taskiq_context.py`（StructlogContextMiddleware）。
 
 ---
-
 ### 2.12 Errors（錯誤類型）
 
 | 項目 | 說明 |
@@ -296,7 +285,6 @@
 | `upstream.py` | `UpstreamServiceError`（502）、`UpstreamTimeoutError`（504）基礎類別 |
 
 ---
-
 ### 2.13 Utility（橫切工具）
 
 | 項目 | 說明 |
@@ -317,7 +305,6 @@
 | `feedback_token.py` | HMAC feedback token 生成與驗證 |
 
 ---
-
 ### 2.14 Security（安全工具）
 
 | 項目 | 說明 |
@@ -333,8 +320,25 @@
 | `archive_guard.py` | DOCX / PPTX zip preflight — members、ratio、expanded bytes 檢查（`INGEST_MAX_ARCHIVE_MEMBERS` / `_RATIO` / `_EXPANDED_BYTES`）|
 
 ---
+### 2.15 Workers（TaskIQ Task Entrypoints）
 
-### 2.15 Reconciler（獨立 Process）
+| 項目 | 說明 |
+|---|---|
+| **路徑** | `src/ragent/workers/` |
+| **責任** | `@broker.task` 定義；worker process（`python -m ragent.worker`）的進入點，承接 `ingest.pipeline`／`ingest.backfill_candidate`／heartbeat。Task body 呼叫 `pipelines/`、`repositories/`、`services/`，不含自身業務規則之外的邏輯。 |
+| **允許依賴** | `bootstrap/`（`broker`、`metrics`、共用 `Container`）、`pipelines/`、`repositories/`、`services/`、`schemas/`、`errors/`、`utility/`。 |
+| **禁止事項** | ❌ 不得在 task body 內跨 external call 持有 DB transaction（同 `00_spec.md §3.1` locking）。❌ 不得被 `routers/`、`services/` 直接 import（只能透過 `kiq()` 派送）。❌ 不得讀取 `os.environ`。 |
+
+**模組清單：**
+
+| 檔案 | 職責 |
+|---|---|
+| `ingest.py` | `ingest.pipeline` task — TX-A claim → pipeline body（pipelines/ingest）→ TX-B 終態；`ingest.supersede` 選舉（呼叫 `services/ingest_service.IngestService`） |
+| `backfill.py` | `ingest.backfill_candidate` task（T-EM-R.9）— scroll stable_index、補嵌入到 candidate_index |
+| `heartbeat.py` | PENDING row 30s heartbeat 背景迴圈 |
+
+---
+### 2.16 Reconciler（獨立 Process）
 
 | 項目 | 說明 |
 |---|---|
@@ -344,8 +348,7 @@
 | **禁止事項** | ❌ 不得引入 TaskIQ `@broker.task` 定義（只呼叫 `kiq()`）。❌ 不得持有 DB transaction 跨 plugin / external call 邊界。❌ 必須以 `SELECT … FOR UPDATE SKIP LOCKED` 避免多 instance 競爭。 |
 
 ---
-
-### 2.16 MCP Hub（獨立 Process）
+### 2.17 MCP Hub（獨立 Process）
 
 | 項目 | 說明 |
 |---|---|
@@ -355,7 +358,6 @@
 | **禁止事項** | ❌ 不得與 ragent main process 共用任何 singleton。❌ 不得依賴 `bootstrap/composition.py`。 |
 
 ---
-
 ## 三、依賴方向規則（AI 操作前必讀）
 
 ```
@@ -375,6 +377,7 @@ Errors      → (stdlib only)
 Utility     → (stdlib only)
 Security    → (stdlib only)
 Bootstrap   → 全部（唯一可以組裝所有層的地方）
+Workers     → Bootstrap(broker/metrics/Container), Pipelines, Repositories, Services, Schemas, Errors, Utility
 Reconciler  → Repositories, Bootstrap(Container), Errors, Utility
 MCP Hub     → Utility, Errors（完全獨立 subprocess）
 
@@ -393,7 +396,6 @@ Bootstrap → Agent/Caller 的具體類別（組裝 factory closure，如 `_buil
 ```
 
 ---
-
 ## 四、AI 任務執行護欄（Harness Rules）
 
 ### R1：Task 定位 — 先問「我在哪個 Domain？」
@@ -407,7 +409,6 @@ Bootstrap → Agent/Caller 的具體類別（組裝 factory closure，如 `_buil
 如果不確定，先查 `docs/00_spec.md` 確認行為規格，再動手。
 
 ---
-
 ### R2：新檔案 — 放到正確 Domain
 
 | 要新增的類型 | 放在哪裡 |
@@ -424,7 +425,6 @@ Bootstrap → Agent/Caller 的具體類別（組裝 factory closure，如 `_buil
 | 新 MinIO site | `storage/minio_registry.py` |
 
 ---
-
 ### R3：禁止清單（任何 Domain 通用）
 
 | ❌ 禁止行為 | 正確做法 |
@@ -443,7 +443,6 @@ Bootstrap → Agent/Caller 的具體類別（組裝 factory closure，如 `_buil
 | `with self._http.post(...) as resp:` | `resp = self._http.post(...); resp.raise_for_status()` |
 
 ---
-
 ### R4：狀態機規則（Ingest Domain 特有）
 
 ```
@@ -464,7 +463,6 @@ Bootstrap → Agent/Caller 的具體類別（組裝 factory closure，如 `_buil
 Supersede 選舉規則：**同一 `(source_id, source_app)` 最多一個 READY**。轉為 READY 前，用 `SELECT MAX(created_at) FOR UPDATE` 選出 survivor；落敗者自降 PENDING → DELETING。
 
 ---
-
 ### R5：日誌規則摘要（所有 Domain）
 
 每個 public service method、每個 task、每個跨進程邊界，**必須有進出日誌**：
@@ -483,7 +481,6 @@ log.error("ingest.failed", document_id=doc_id, error_code="EMBEDDER_ERROR")
 **禁止記錄**：`query`、`prompt`、`messages`、`completion`、`chunks`、`embedding`、`documents`、`body`、`authorization`、`cookie`、`password`、`token`、`secret`。
 
 ---
-
 ### R6：測試層級規則
 
 | 測試類型 | 放在哪 | 規則 |
@@ -495,7 +492,6 @@ log.error("ingest.failed", document_id=doc_id, error_code="EMBEDDER_ERROR")
 **新 behavior 必須先有 failing test（Red）才能寫 production code（Green）— TDD 強制。**
 
 ---
-
 ### R7：Commit 前置條件
 
 1. `make format` ✅  
@@ -507,7 +503,6 @@ log.error("ingest.failed", document_id=doc_id, error_code="EMBEDDER_ERROR")
 7. `.claude/.pre_commit_approved` 由 hook 寫入（非手動）✅  
 
 ---
-
 ## 五、快速查詢索引
 
 > 新功能：查 `docs/00_spec.md` → `docs/00_plan.md` → 定位 Domain（§二）→ Red test → Green impl → `/simplify` + `/review` + commit。
