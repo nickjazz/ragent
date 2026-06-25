@@ -247,14 +247,14 @@ def test_direct_agent_classified_error_exposes_message_and_code() -> None:
     assert events[-1]["message"] == "llm call timed out"
 
 
-def test_direct_agent_unclassified_error_is_logged_server_side(caplog) -> None:
+def test_direct_agent_unclassified_error_is_logged_server_side(captured_logger_text) -> None:
     caller = _BoomCaller(RuntimeError("boom: secret_token=abc123"))
     request = RunAgentInput.model_validate(_run_input())
 
-    with caplog.at_level("ERROR"):
+    with captured_logger_text("twp_ai.agents.direct") as stream:
         list(DirectLLMAgent(caller).run(request, "model-a"))
 
-    assert "secret_token" in caplog.text
+    assert "secret_token" in stream.getvalue()
 
 
 def test_user_message_event_serialises_to_sse() -> None:
