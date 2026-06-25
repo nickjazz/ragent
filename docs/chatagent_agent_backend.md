@@ -18,7 +18,11 @@ or API-based) without touching router code.
 2. [The `Agent` Protocol](#2-the-agent-protocol)
 3. [Current implementations](#3-current-implementations)
 4. [Call chain](#4-call-chain)
+   - [4.1 Module dependency wireframe (mermaid)](#41-module-dependency-wireframe-mermaid)
+   - [4.2 Runtime call chain](#42-runtime-call-chain)
 5. [Brain-swap runbook](#5-brain-swap-runbook)
+   - [5.1 New Agent 上車步驟（精簡版）](#51-new-agent-上車步驟精簡版)
+   - [5.2 New Agent 上車步驟（完整版）](#52-new-agent-上車步驟完整版)
 6. [Zero-modification / two-touch-files checklist](#6-zero-modification--two-touch-files-checklist)
 7. [Known limitation: session history is not portable](#7-known-limitation-session-history-is-not-portable)
 
@@ -93,6 +97,64 @@ handler: `agent = agent_factory(user_id, raw_token)`.
 
 ## 4. Call chain
 
+### 4.1 Module dependency wireframe (mermaid)
+
+```mermaid
+graph TD
+    Router["routers/chatagent_v3.py<br/>(HTTP 層，只認 Agent 抽象)"]
+    Factory["AgentFactory<br/>(user_id, user_token) -&gt; Agent<br/>【組裝層】"]
+    AgentProto["Agent Protocol<br/>run(request, model) -&gt; Generator[str]<br/>【抽象層】"]
+
+    Router --> Factory
+    Factory --> AgentProto
+
+    AgentProto -.satisfies.-> DirectLLMAgent
+    AgentProto -.satisfies.-> ADKAgent
+    AgentProto -.satisfies.-> NewAgent
+
+    DirectLLMAgent["DirectLLMAgent<br/>twp_ai/agents/<br/>(現役 /twp/v1)<br/>【具體實作層】"]
+    ADKAgent["ADKAgent<br/>twp_ai/agents/adk.py<br/>(現役 /chatagent/v3)<br/>【具體實作層】"]
+    NewAgent["NewBrainAgent<br/>(假設新大腦)<br/>【具體實作層，假設新增】"]
+
+    RagentCaller["RagentCaller<br/>twp_ai.callers.ragent<br/>(包 ragent LLMClient)<br/>【具體實作層】"]
+    ADKCallerImpl["ADKCaller(impl)<br/>ragent.clients.adk_caller<br/>(HTTP → 外部 ADK 上游)<br/>【具體實作層】"]
+    NewCallerImpl["NewBrainCaller(impl)<br/>(假設新增)<br/>【具體實作層，假設新增】"]
+
+    DirectLLMAgent --> RagentCaller
+    ADKAgent --> ADKCallerImpl
+    NewAgent --> NewCallerImpl
+
+    subgraph ADKUpstream["外部 ADK 上游服務（ragent 不可見內部，純 HTTP 邊界外）"]
+        APILayer["API 層<br/>(接收 SSE 請求, 認證/路由)"]
+        AgentLayer["Agent 層<br/>(langgraph_node: planner/commander/summarizer)"]
+        MemoryLayer["Memory 層<br/>(session/對話歷史儲存)"]
+
+        APILayer --> AgentLayer
+        AgentLayer --> MemoryLayer
+    end
+
+    ADKCallerImpl -->|HTTP POST + SSE| APILayer
+
+    classDef abstract fill:#e8f0fe,stroke:#1a73e8,stroke-width:2px;
+    classDef concrete fill:#e6f4ea,stroke:#188038;
+    classDef hypo fill:#fff3cd,stroke:#cc8400,stroke-dasharray: 5 5;
+    classDef external fill:#f3e8fd,stroke:#9334e6;
+
+    class Factory,AgentProto abstract;
+    class DirectLLMAgent,ADKAgent,RagentCaller,ADKCallerImpl concrete;
+    class NewAgent,NewCallerImpl hypo;
+    class APILayer,AgentLayer,MemoryLayer external;
+```
+
+藍色 = 抽象層（`AgentFactory`、`Agent` Protocol）；綠色 = 現役具體實作；
+黃色虛線 = 假設新增的 New Agent 分支；紫色 = ragent 邊界外、不可見的外部
+ADK 上游內部結構（API 層 → Agent 層 → Memory 層）。`ADKCaller(impl)` 透過
+HTTP POST + SSE 跨邊界呼叫外部服務，ragent 對 ADK 內部的 Agent 層決策與
+Memory 層儲存沒有控制權與可見性（對應 §7 已記載的 session history 不可攜
+限制）。
+
+### 4.2 Runtime call chain
+
 ```
 POST /chatagent/v3
   └─ chatagent_v3_post()                         [routers/chatagent_v3.py]
@@ -126,6 +188,34 @@ GET /chatagent/v3/sessionList, /session (unchanged by this refactor):
 2. In `bootstrap/composition.py`, add a new `_build_xxx_agent_factory()` and select it with a `CHATAGENT_BACKEND` env switch, assigning the result to `Container.chatagent_agent_factory`.
 3. If the new backend's wire format differs from the ADK shape, write a new `map_session_payload`/`map_session_list_payload` for `services/chatagent_session.py`, switched the same way.
 4. **Do not modify** `routers/chatagent_v3.py` or `routers/_chatagent_proxy.py` — that is the property this refactor exists to guarantee.
+
+### 5.1 New Agent 上車步驟（精簡版）
+
+| 步驟 | 動作 | 對應檔案/模組 |
+|---|---|---|
+| 1 | 選路徑：自寫 Agent 或重用 DirectLLMAgent | `packages/twp-ai/src/twp_ai/agents/` |
+| 2 | 實作對應 Caller（仿 `ADKCaller`/`LLMCaller` 簽名，或自訂新 Caller） | `ragent/clients/` 或 `twp_ai/callers/` |
+| 3 | 新增 factory function + env 開關 | `src/ragent/bootstrap/composition.py` |
+| 4 | 確認 router/proxy/schema 零修改 | `routers/chatagent_v3.py`、`_chatagent_proxy.py`、`schemas/chatagent.py` |
+| 5 | 若 wire format 不同才改 session mapping | `services/chatagent_session.py`（條件性） |
+
+### 5.2 New Agent 上車步驟（完整版）
+
+| 步驟 | 動作 | 規格要求 | 對應檔案/模組 | 是否必須 |
+|---|---|---|---|---|
+| 1. 決定整合策略 | 選擇「路徑 A：從零寫 Agent」或「路徑 B：重用 DirectLLMAgent」 | 路徑 A 適用新大腦自管 tool-loop；路徑 B 適用新大腦只是 LLM/library，沒有自己的 streaming 協定 | 設計決策，無對應檔案 | 必須決定 |
+| 2. 實作 `Agent` Protocol | `def run(self, request: RunAgentInput, model: str) -> Generator[str, None, None]` | yield 必為已格式化 SSE 字串；絕不可拋例外；結尾必為 `RUN_FINISHED`/`RUN_ERROR` | `twp_ai/agent.py`（Protocol，不可改）；新類別放 `twp_ai/agents/xxx.py` | 必須（除非完全重用 `DirectLLMAgent`） |
+| 3. 實作新 Caller | 自訂 `stream_xxx(...)` 簽名（不必硬套 `ADKCaller`/`LLMCaller`），回傳上游訊息/事件的 Generator | 依路徑 A/B 決定回傳形狀；若重用 `DirectLLMAgent` 則需符合 `LLMCaller.stream_events()` 簽名 | 新 caller 放 `ragent/clients/xxx_caller.py` 或 `twp_ai/callers/xxx.py` | 必須 |
+| 4. 新增 factory function | `_build_xxx_agent_factory(http_client, *, ...) -> AgentFactory` | closure 內組裝新 caller + 新 Agent，回傳 `(user_id, user_token) -> Agent` | `src/ragent/bootstrap/composition.py` | 必須 |
+| 5. 新增 env 開關 | 用 `CHATAGENT_BACKEND` 之類環境變數判斷組裝哪個 factory | 在 `build_container()` 內 if/else 分支 | `src/ragent/bootstrap/composition.py` | 必須 |
+| 6. 指派到 Container | 把 factory 結果指派給 `Container.chatagent_agent_factory` | 型別仍是 `AgentFactory \| None` | `src/ragent/bootstrap/composition.py` | 必須 |
+| 7. 確認零修改模組 | 不應有任何 diff | router 只認抽象型別 `Agent`，不可 import 具體類別 | `routers/chatagent_v3.py`、`routers/_chatagent_proxy.py`、`schemas/chatagent.py`、`bootstrap/app.py` | 必須維持零修改 |
+| 8. 條件性改動：session wire format | 新大腦回傳格式與 ADK 不同時，新寫 `map_session_payload`/`map_session_list_payload` | 同樣用 `CHATAGENT_BACKEND` 開關切換 mapping function | `src/ragent/services/chatagent_session.py` | 條件性 |
+| 9. 驗收：型別/結構合規 | 確認新類別結構上滿足 Protocol | mypy/pyright 型別檢查通過 | 新增的 Agent/Caller 類別 | 必須 |
+| 10. 驗收：router 隔離迴歸測試 | 既有測試持續通過 | `test_v3_router_does_not_import_concrete_agent_or_caller_classes` | 對應測試檔 | 必須 |
+| 11. 驗收：錯誤路徑不中斷 stream | 模擬上游異常，確認以 `RUN_ERROR` 收尾 | 新增單元測試覆蓋異常情境 | 新增 Agent 的測試檔 | 必須 |
+| 12. 驗收：端到端切換生效 | 設定 `CHATAGENT_BACKEND` 後，`/chatagent/v3` 確實打到新大腦 | 手動或整合測試驗證 | 整合測試 / 手動驗證 | 必須 |
+| 13. 已知限制：session history 不可攜 | 舊 session 資料不會自動出現在新大腦的儲存裡 | 三種策略待選（雙軌並存 / ragent 自建 session DB / 一次性 ETL），皆非本次必做 | `docs/chatagent_agent_backend.md` §7（已記載） | 知情即可，非強制動作 |
 
 ---
 
