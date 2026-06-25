@@ -130,13 +130,21 @@ the same way `<hidden>` already is):
 {user message}
 ```
 
-Three reconstruction paths, one data shape:
+Two paths need attachment-specific code; a third needs none:
 
 1. **Live POST** — `/chatagent/v3` resolves `attachment_ids` → builds the
-   `<attachments>` block → stashes the full user turn (T-CAv3R2 pattern) in
-   Redis so a reconnect needs no DB round-trip.
-2. **Redis reconnect** — replays the stashed `UserMessageEvent`, attachments
-   metadata included, with no extra query.
+   `<attachments>` block → folds it into the outbound `inputData.message`
+   exactly like `<context>`/`<state>` already are. This happens before the
+   producer thread starts, so it requires no new persistence of its own.
+2. **Redis reconnect — no code change.** `ChatStreamStore` (§3.4.7) only
+   tees the upstream's *response* SSE frames (`XADD` per frame); it never
+   buffers the request. The `<attachments>` block lives solely in the
+   outbound request built in path 1 above, and the response stream never
+   echoes `<hidden>` content back (§3.4.7 "No `<hidden>` stripping on the
+   stream"). So a reconnect — which only replays the already-buffered
+   response frames via `XRANGE` — carries attachments correctly with zero
+   attachment-aware code; the existing resumable-stream mechanism is
+   already content-agnostic.
 3. **Session history** — `services/chatagent_session.py` gains
    `_extract_attachments_from_hidden()`, which **must run before**
    `utility/hidden.py::strip_machine_context()` — that helper removes the

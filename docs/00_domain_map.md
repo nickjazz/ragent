@@ -96,7 +96,7 @@
 | `mcp_tools/` | —(tool 描述子)| 每個 sub-module 定義一個 MCP tool 的 input model / inputSchema / Tool descriptor |
 | `admin_embedding.py` | `/embedding/v1` | embedding model 生命週期管理（B50；promote/cutover/rollback/commit/abort/state）|
 | `admin_ingest.py` | `/ingest/v1/upload` | multipart 上傳路由（direct route；no `APIRouter` prefix）|
-| `attachments.py` | `/chatagent/attachments` | `POST /upload`(MIME/size 驗證 → service 協調) / `GET ?threadId=`(列出該對話的 attachments)|
+| `attachments.py` | `/chatagent/v3/attachments` | `POST /upload`(MIME/size 驗證 → service 協調) / `GET ?threadId=`(列出該對話的 attachments)；獨立檔案但與 `chatagent_v3.py` 共用 `/chatagent/v3` 路徑空間（同 `admin_ingest.py` 與 `ingest.py` 共用 `/ingest/v1` 的既有模式），滿足 `tests/unit/test_api_versioning.py` 的版本前綴規則 |
 | `admin_ops.py` | `/ops/v1` | 維運操作(retry)|
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
@@ -247,7 +247,7 @@
 | **允許依賴** | `errors/`、`utility/`。 |
 | **禁止事項** | ❌ MinIO 物件在 READY / DELETE 後不得刪除（audit/replay 保留）— 規則在 `00_spec.md §3.1`。❌ 不得讀取 `os.environ`（site config 由 bootstrap 注入）。 |
 
-主要檔案：`minio_client.py`（MinioClient — S3 操作封裝）、`minio_registry.py`（MinioSiteRegistry — 多 site 查詢）、`document_store.py`（`DocumentStore` Protocol — `put`/`get`/`delete`/`exists`；DIP 邊界，service 層只依賴此介面，不直接 import `minio_client.py`）、`minio_document_store.py`（`MinIODocumentStore` — `DocumentStore` 的唯一實作，內部委派給 `MinioClient`）。
+主要檔案：`minio_client.py`（`MinIOClient` — 舊版 S3 操作封裝，未被 composition root 接線，與本計畫無關，保留供既有單元測試）、`minio_registry.py`（`MinioSiteRegistry` — 多 site 查詢，ingest 與 chat-attachment 共用的唯一生產路徑；`get_object`/`delete_object`/`stat_object` 已接受呼叫端自訂 key，`put_object_default` 才是 ingest 專屬鍵格式）、`document_store.py`（`DocumentStore` Protocol — `put`/`get`/`delete`/`exists`；DIP 邊界，service 層只依賴此介面，不直接 import `minio_registry.py`）、`minio_document_store.py`（`MinIODocumentStore` — `DocumentStore` 的唯一實作，建構時注入既有的 `MinioSiteRegistry`，使用 `default()` site；`get`/`delete`/`exists` 直接呼叫 registry 既有方法，`put` 呼叫 registry 新增的通用 `put_object(site, key, ...)` — 與 `put_object_default` 共用同一段 S3 呼叫邏輯，差異只在 key 由呼叫端提供）。
 
 ---
 ### 2.10 Auth（認證）
