@@ -44,7 +44,7 @@
 >   header. TTL 5 min; expired/unknown buffer → `RUN_ERROR(CHATAGENT_STREAM_EXPIRED)`,
 >   client falls back to `GET /chatagent/v3/session`.
 
-**Counter: 完成 6 / 未完成 1 / descope 0**
+**Counter: 完成 5 / 未完成 1 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
@@ -55,33 +55,6 @@
 | T-CAv3R.W1 | Behavioral | • **Achieve:** Wire the store into the composition root + v3 registration (built only when `CHATAGENT_API_URL` is set); add stream env vars.<br>• **Deliver:** `bootstrap/composition.py` (`chat_stream_store` field + `from_env`); `bootstrap/app.py` v3 registration; `docs/spec/env_vars.md`. | [x] | Dev |
 | T-CAv3R.D1 | Structural | • **Achieve:** Document the resumable-stream contract + reconnect endpoint.<br>• **Deliver:** `docs/spec/chatagent_v3.md` §3.4.7 resumable-stream block; `docs/00_spec.md` pointer if needed. | [x] | Dev |
 | T-CAv3R.FE1 | Red+Green | • **Achieve:** mco-clean `@twp/ai` persists `{threadId, runId, lastEventId}` for an in-flight run, reconnects via `GET /chatagent/v3/reconnect` (sends `Last-Event-ID` header) on remount, clears the marker on terminal frame, and falls back to `GET /chatagent/v3/session` on `CHATAGENT_STREAM_EXPIRED`. **(frontend — out of this backend cycle)** | [ ] | Dev |
-
-### Sub-track T-CAv3R2 — server-authoritative reconnect (robustness follow-up)
-
-> Source: 2026-06-24 design review. The merged reconnect trusted a **client-supplied
-> `run_id`**, which can be stale (another tab/device started a newer run) and would
-> resurrect an old, already-persisted turn out of order. And the live stream never
-> carries the user turn, so a refresh mid-generation showed the answer with no
-> question. Fix: make the **server** the authority on "the thread's current run",
-> and stash the user turn so reconnect can replay it — no reliance on client state.
->
-> **Locked decisions:**
-> - reconnect takes **`thread_id` only**; resolves the run from a per-thread
->   `chatcurrent:{user}:{thread}` pointer (set on POST). Per-user → owner-scoped.
-> - The run's user turn is stashed (`…:{run}:user`) and replayed as a new
->   `USER_MESSAGE` twp-ai event on a from-start reconnect (not on incremental).
-> - This avoids any cross-source (session vs buffer) dedup on the FE: the FE shows
->   session history + (gated) the one in-flight turn from reconnect, never merging.
-
-**Counter: 完成 4 / 未完成 1 / descope 0**
-
-| # | Category | Task | Status | Owner |
-|---|---|---|:---:|---|
-| T-CAv3R2.1 | Red+Green | • **Achieve:** `ChatStreamStore` — per-thread current-run pointer (`set_current`/`get_current`, distinct `chatcurrent:` prefix so a `run_id` named `current` cannot collide) + user-turn stash (`stash_user_input`/`get_user_input`); both fail-soft on Redis error.<br>• **Deliver:** `src/ragent/clients/chat_stream_store.py`; `tests/unit/test_chat_stream_store.py`. | [x] | Dev |
-| T-CAv3R2.2 | Red+Green | • **Achieve:** `USER_MESSAGE` twp-ai event (`{messageId, content, role:"user"}`) added to the event union.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/events.py`; `packages/twp-ai/tests/test_twp_protocol.py`. | [x] | Dev |
-| T-CAv3R2.3 | Red+Green | • **Achieve:** v3 POST records the current-run pointer + stashes the last user-turn text (electing producer only). | [x] | Dev |
-| T-CAv3R2.4 | Red+Green | • **Achieve:** `GET /chatagent/v3/reconnect` drops the `run_id` param; resolves the current run server-side; emits the stashed `USER_MESSAGE` first on a from-start replay; unknown/other-user thread → `CHATAGENT_STREAM_EXPIRED`.<br>• **Deliver:** `routers/chatagent_v3.py` (`_reconnect_stream`, `_last_user_text`); `tests/unit/test_chatagent_v3_router.py` (current-run resolve, latest-not-stale, user-turn replay); `docs/spec/chatagent_v3.md` §3.4.7, `docs/API.md`. | [x] | Dev |
-| T-CAv3R2.FE1 | Red+Green | • **Achieve:** mco-clean reconnect flow — on mount load `GET /session`, then `GET /reconnect?thread_id` (no client run_id); render the leading `USER_MESSAGE`; gate against session by last-user-turn content to avoid the grace-window overlap. **(frontend — out of this backend cycle)** | [ ] | Dev |
 
 ---
 
@@ -122,3 +95,61 @@
 | T-CAv3S.HITL2 | Red+Green | • **Achieve:** Resume a paused run — `RunAgentInput.resume` (`[{interruptId, status, payload?}]`). `resolved` → upstream `inputData={lastMessageId, message:""}` (payload accepted but not forwarded — upstream is go/no-go only); `cancelled` → no upstream call, `success` outcome; >1 `resolved` → `RUN_ERROR` (`CHATAGENT_INVALID_RESUME`).<br>• **Deliver:** `packages/twp-ai/src/twp_ai/schemas.py` (`ResumeItem` + `RunAgentInput.resume`); `clients/adk_caller.py` (`_resume_input_data`, `ResumeValidationError`); `errors/codes.py` (`CHATAGENT_INVALID_RESUME`); `tests/unit/test_adk_caller.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md`, `docs/00_rule_third_party_api.md` (`lastMessageId` pin), `docs/API.md`. | [x] | Dev |
 | T-CAv3S.HITL3 | Red+Green | • **Achieve:** Drop human-in-the-loop interrupt turns from the `GET /chatagent/v3/session` history — a persisted `humanInTheLoopMeta.isInterrupt=true` turn was mapped (via the `node_to_role`/`"assistant"` default) into a stray assistant message; it is a transient approval prompt (surfaced live via `RUN_FINISHED.outcome`, HITL1), not a conversation message, so it must not render in history. Keeps the read consistent with the stream.<br>• **Deliver:** `services/chatagent_session.py` (`_is_interrupt`, filter in `map_session_payload`); `tests/unit/test_chatagent_session_mapper.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md` §3.4.8. | [x] | Dev |
 
+---
+
+## Track T-CAT — Chat Attachments (對話內檔案上傳)
+
+> Source: 2026-06-25 design session. Goal: a user attaches a file to a
+> `/chatagent/v3` conversation; the agent references its content on the
+> current turn and on every later turn, across all three message
+> reconstruction paths (live POST / Redis reconnect / session history).
+> Full contract: [`docs/spec/chat_attachments.md`](spec/chat_attachments.md).
+>
+> **Locked decisions:**
+> - No thread-ownership check on attachment reads — identical trust model to
+>   existing chat session reads; isolation is `create_user` column + query
+>   predicate, not an authz check.
+> - Unprotect is **whitelisted by MIME** (`UNPROTECT_MIMES` — PDF/DOCX/PPTX
+>   only); plain-text formats skip the external call entirely (no DRM surface
+>   to unwrap, avoids wasted API calls).
+> - AST (complete + simplified) is encrypted at rest. **Single process-wide
+>   DEK**, not per-artifact: `RAGENT_KEK_BASE64` + `RAGENT_ENCRYPTED_DEK_BASE64`
+>   injected at startup, `KeyManager` unwraps the DEK once, holds it for the
+>   process lifetime. KEK rotation = re-wrap the same DEK offline, update both
+>   env vars, restart — no artifact re-encryption needed.
+> - `chat_attachment` pipeline (renamed from the earlier "document_structure"
+>   working name) only builds AST; it does not encrypt or persist (SRP —
+>   those live in `services/chat_attachment_service.py` and
+>   `storage/document_store.py` respectively).
+> - `DocumentStore` is a Protocol (`put`/`get`/`delete`/`exists`); services
+>   depend on the Protocol, never on `MinIODocumentStore` directly (DIP), so a
+>   future non-MinIO backend is a single new adapter, zero service changes.
+> - Attachment metadata persists inside the existing `<hidden>` preamble as a
+>   new `<attachments>` block — no `run_id` indirection, reuses the same
+>   binding mechanism `<context>`/`<state>` already use.
+> - CSV gets a new `_CsvASTSplitter` (stdlib-only, half-day). XLSX is
+>   explicitly descoped this cycle (needs a new dependency).
+
+**Counter: 完成 1 / 未完成 16 / descope 1**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAT.1 | Structural | • **Achieve:** New error codes for the attachment surface.<br>• **Deliver:** `src/ragent/errors/codes.py` (`ATTACHMENT_MIME_UNSUPPORTED` 415, `ATTACHMENT_TOO_LARGE` 413, `ATTACHMENT_PARSE_FAILED` 422); `docs/spec/chat_attachments.md` §8. | [ ] | Dev |
+| T-CAT.2 | Red+Green | • **Achieve:** `AttachmentMime` enum (schema-isolated from `IngestMime`, same six values) + extension fallback for unreliable browser `Content-Type`.<br>• **Deliver:** `src/ragent/schemas/attachments.py`; `tests/unit/test_attachments_schema.py`. | [ ] | Dev |
+| T-CAT.3 | Red+Green | • **Achieve:** Unprotect whitelist — only PDF/DOCX/PPTX go through `UnprotectClient`; text formats skip the call.<br>• **Deliver:** `UNPROTECT_MIMES` frozenset in `src/ragent/schemas/attachments.py`; `tests/unit/test_attachments_schema.py` (whitelist membership). | [ ] | Dev |
+| T-CAT.4 | Red+Green | • **Achieve:** `KeyManager` — unwrap process-wide DEK from `RAGENT_KEK_BASE64` + `RAGENT_ENCRYPTED_DEK_BASE64` once at construction; AES-KW unwrap.<br>• **Deliver:** `src/ragent/security/key_manager.py`; `tests/unit/test_key_manager.py` (wrap/unwrap round-trip, bad-KEK failure). | [ ] | Dev |
+| T-CAT.5 | Red+Green | • **Achieve:** `ASTCipher` — AES-256-GCM `encrypt_ast()`/`decrypt_ast()` keyed by `KeyManager.dek`; depends only on `.dek` (ISP).<br>• **Deliver:** `src/ragent/security/ast_cipher.py`; `tests/unit/test_ast_cipher.py` (round-trip, tamper-detection via GCM tag). | [ ] | Dev |
+| T-CAT.6 | Red+Green | • **Achieve:** `DocumentStore` Protocol (`put`/`get`/`delete`/`exists`) + `MinIODocumentStore` adapter delegating to existing `MinioClient`.<br>• **Deliver:** `src/ragent/storage/document_store.py`, `src/ragent/storage/minio_document_store.py`; `tests/unit/test_minio_document_store.py` (mocked `MinioClient`, `autospec=True`). | [ ] | Dev |
+| T-CAT.7 | Structural | • **Achieve:** `chat_attachments` + `chat_attachment_artifacts` tables (no `introduced_run_id` — binding lives in `<hidden>`, not DB).<br>• **Deliver:** `migrations/013_chat_attachments.sql`; alembic registration. | [ ] | Dev |
+| T-CAT.8 | Red+Green | • **Achieve:** `attachment_repository.py` — CRUD + `list_by_thread`, `update_status`. CRUD only, no business logic (R3).<br>• **Deliver:** `src/ragent/repositories/attachment_repository.py`; `tests/unit/test_attachment_repository.py`. | [ ] | Dev |
+| T-CAT.9 | Red+Green | • **Achieve:** `_CsvASTSplitter` — stdlib `csv` module, no new dependency. Routed by the existing `_MimeAwareSplitter` dispatch.<br>• **Deliver:** `src/ragent/pipelines/ingest/splitter.py` (`_CsvASTSplitter`); `tests/unit/test_splitter_csv.py`. | [ ] | Dev |
+| T-CAT.9d | — | • **Descope:** XLSX support — requires a new dependency (e.g. `openpyxl`); out of this cycle. | [~] | — |
+| T-CAT.10 | Red+Green | • **Achieve:** `ChatAttachmentPipeline` — load → optional unprotect (gated by T-CAT.3 whitelist) → AST build; "simplified" is derived from "complete" in memory (single parse per attachment, not two), reusing `_MimeAwareSplitter`. No encryption, no persistence (SRP). Scope is the six `AttachmentMime` values only — CSV (T-CAT.9) is an ingest-only addition, not in `AttachmentMime`, so it is out of scope here.<br>• **Deliver:** `src/ragent/pipelines/chat_attachment/pipeline.py`, `src/ragent/pipelines/chat_attachment/ast_builder.py`; `tests/unit/test_chat_attachment_pipeline.py` (mocked unprotect client, all six `AttachmentMime` values). | [ ] | Dev |
+| T-CAT.11 | Red+Green | • **Achieve:** `chat_attachment_service.py` — orchestrates validate → store raw bytes → pipeline.run() → cipher.encrypt_ast() per variant → store artifacts → repository write. Depends only on `DocumentStore`/`ASTCipher` Protocols + `attachment_repository` (DIP).<br>• **Deliver:** `src/ragent/services/chat_attachment_service.py`; `tests/unit/test_chat_attachment_service.py` (autospec mocks for store/cipher/repo/pipeline). | [ ] | Dev |
+| T-CAT.12 | Red+Green | • **Achieve:** `POST /chatagent/attachments/upload` + `GET /chatagent/attachments?threadId=`. Router does I/O translation only; no business logic (R3).<br>• **Deliver:** `src/ragent/routers/attachments.py`; `tests/integration/test_attachments_router.py`. | [ ] | Dev |
+| T-CAT.13 | Red+Green | • **Achieve:** `document_artifact_resolver.py` — `attachment_ids` → decrypted ASTs → `<attachments>` block content, for the chat-turn assembly step.<br>• **Deliver:** `src/ragent/services/document_artifact_resolver.py`; `tests/unit/test_document_artifact_resolver.py`. | [ ] | Dev |
+| T-CAT.14 | Red+Green | • **Achieve:** `POST /chatagent/v3` resolves `attachment_ids` into the `<attachments>` block inside `<hidden>` (alongside existing `<context>`/`<state>`) and stashes the full user turn (T-CAv3R2 pattern) so reconnect needs no DB round-trip.<br>• **Deliver:** `routers/chatagent_v3.py`; `packages/twp-ai/src/twp_ai/schemas.py` (`Attachment`, `Message.attachments`); `packages/twp-ai/src/twp_ai/events.py` (`UserMessageEvent.attachments`); `tests/integration/test_chatagent_v3_endpoint.py`. | [ ] | Dev |
+| T-CAT.15 | Red+Green | • **Achieve:** Reconnect replays the stashed `UserMessageEvent` with attachments metadata intact, no extra query.<br>• **Deliver:** `routers/chatagent_v3.py` reconnect route; `tests/integration/test_chatagent_v3_endpoint.py` (reconnect-with-attachments case). | [ ] | Dev |
+| T-CAT.16 | Red+Green | • **Achieve:** Session-history read parses `<attachments>` the same way `<context>` is parsed today, then strips it before the rendered text reaches the client.<br>• **Deliver:** `src/ragent/services/chatagent_session.py` (`_extract_attachments_from_hidden`); `tests/unit/test_chatagent_session_mapper.py`. | [ ] | Dev |
+| T-CAT.W1 | Behavioral | • **Achieve:** Wire `KeyManager`, `ASTCipher`, `MinIODocumentStore`, `attachment_repository`, `ChatAttachmentPipeline`, `chat_attachment_service`, `document_artifact_resolver` into the composition root.<br>• **Deliver:** `bootstrap/composition.py`; `docs/spec/env_vars.md` (`RAGENT_KEK_BASE64`, `RAGENT_ENCRYPTED_DEK_BASE64`). | [ ] | Dev |
+| T-CAT.D1 | Structural | • **Achieve:** Document the full attachment contract.<br>• **Deliver:** `docs/spec/chat_attachments.md` (done — this session); `docs/00_spec.md` §3.4.9 pointer (done); `docs/00_domain_map.md` module entries (done). | [x] | Dev |

@@ -227,6 +227,12 @@ Mounted at `POST /twp/v1/run`. Requires `TWP_DEFAULT_MODEL` env var. Standard au
 
 Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rate limit, and timeout with `/chatagent/v2`. Every failure is emitted as `RUN_ERROR` over `200 text/event-stream` (v3 never returns HTTP 429/502/504). Human-in-the-loop: an upstream `isInterrupt` ends the run with `RUN_FINISHED.outcome={type:"interrupt", interrupts:[…]}` (success otherwise); the client answers via request `resume` (`resolved` → upstream `lastMessageId`; `cancelled` → no upstream call). Session routes (`/sessionList`, `/session` GET/PUT/DELETE) are JSON proxies with twp-ai role mapping applied; failures use HTTP 504/502 (not `RUN_ERROR`). See [`docs/API.md §ChatAgent`](API.md#chatagent) for curl examples.
 
+#### 3.4.9 `POST /chatagent/attachments/upload`, `GET /chatagent/attachments` — in-conversation file attachments
+
+> Full spec: [docs/spec/chat_attachments.md](spec/chat_attachments.md) — MIME allow-list, unprotect whitelist, encrypted AST storage (KEK/DEK), `chat_attachment` pipeline, `<attachments>` persistence in `<hidden>`, three reconstruction paths (live POST / Redis reconnect / session history).
+
+Lets a user attach a file to a `/chatagent/v3` turn. Upload validates MIME + size, stores raw bytes (MinIO), runs the `chat_attachment` pipeline (load → optional unprotect → AST build), encrypts both AST variants (AES-256-GCM, process-wide DEK unwrapped from `RAGENT_KEK_BASE64`/`RAGENT_ENCRYPTED_DEK_BASE64` at startup) before writing artifacts. `POST /chatagent/v3` resolves `attachment_ids` into a `<attachments>` block inside the existing `<hidden>` preamble and stashes it server-side (T-CAv3R2) so reconnect/session-history replay carry the same attachment metadata without re-querying the DB.
+
 ---
 
 ### 3.5 Authentication & Permission
