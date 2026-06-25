@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import fakeredis
@@ -158,3 +159,87 @@ def test_current_and_stash_fail_soft_on_redis_error() -> None:
     store.stash_user_input(ChatStreamStore.key("a", "t", "r"), "x")  # does not raise
     assert store.get_current("a", "t") is None
     assert store.get_user_input(ChatStreamStore.key("a", "t", "r")) is None
+
+
+# --- T-CAv3L: session-list live status (running spinner + new-reply dot) -------
+
+
+def test_is_running_true_in_flight_false_after_done() -> None:
+    # The thread's CURRENT run is "running" until its eos sentinel is written.
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    assert store.is_running("alice", "t") is False  # no current run yet
+    store.set_current("alice", "t", "r")
+    store.append(key, "data: a\n\n")
+    assert store.is_running("alice", "t") is True
+    store.mark_done(key)
+    assert store.is_running("alice", "t") is False  # eos written → finished
+
+
+def test_is_running_false_without_current_pointer() -> None:
+    store = _store()
+    assert store.is_running("alice", "t") is False
+
+
+def test_unread_flag_set_exists_then_cleared() -> None:
+    store = _store()
+    assert store.has_unread("alice", "t") is False
+    store.mark_unread("alice", "t")
+    assert store.has_unread("alice", "t") is True
+    store.clear_unread("alice", "t")
+    assert store.has_unread("alice", "t") is False
+
+
+def test_unread_is_owner_and_thread_scoped() -> None:
+    store = _store()
+    store.mark_unread("alice", "t1")
+    assert store.has_unread("alice", "t1") is True
+    assert store.has_unread("bob", "t1") is False  # another user never sees it
+    assert store.has_unread("alice", "t2") is False  # another thread is independent
+
+
+def test_mark_unread_sets_ttl() -> None:
+    # The flag must expire so abandoned unread state self-cleans (no key leak).
+    store = _store(unread_ttl_seconds=1000)
+    store.mark_unread("alice", "t")
+    assert store._redis.ttl(ChatStreamStore._unread_key("alice", "t")) > 0  # noqa: SLF001
+
+
+def test_has_unread_fail_soft_on_redis_error() -> None:
+    redis = MagicMock()
+    redis.exists.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.has_unread("a", "t") is False
+
+
+def test_publish_session_event_reaches_a_subscriber() -> None:
+    store = _store()
+    pubsub = store.subscribe_session_events("alice")
+    pubsub.get_message(timeout=0.1)  # drain the subscribe confirmation
+    store.publish_session_event("alice", {"session": "t", "running": True})
+    msg = pubsub.get_message(timeout=0.5, ignore_subscribe_messages=True)
+    assert msg is not None
+    assert json.loads(msg["data"]) == {"session": "t", "running": True}
+
+
+def test_publish_session_event_is_owner_scoped() -> None:
+    # bob's publish must not reach alice's channel — the dot/spinner is per-user.
+    store = _store()
+    pubsub = store.subscribe_session_events("alice")
+    pubsub.get_message(timeout=0.1)
+    store.publish_session_event("bob", {"session": "t", "running": True})
+    assert pubsub.get_message(timeout=0.2, ignore_subscribe_messages=True) is None
+
+
+def test_publish_session_event_fail_soft_on_redis_error() -> None:
+    redis = MagicMock()
+    redis.publish.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    store.publish_session_event("a", {"x": 1})  # does not raise
+
+
+def test_subscribe_session_events_returns_none_when_redis_unavailable() -> None:
+    redis = MagicMock()
+    redis.pubsub.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.subscribe_session_events("a") is None

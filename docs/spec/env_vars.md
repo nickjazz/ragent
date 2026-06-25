@@ -60,6 +60,7 @@
 | `REDIS_STREAM_TTL_SECONDS`            | `300`            | How long a finished v3 run stays resumable (Redis Stream TTL). |
 | `REDIS_STREAM_MAXLEN`                 | `10000`          | Approximate per-run frame cap (`XADD MAXLEN ~`) for the v3 stream buffer. |
 | `CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS` | `30`           | Consumer gives up if the v3 stream buffer sees no new frame for this long. |
+| `REDIS_UNREAD_TTL_SECONDS`            | `2592000`        | TTL (default 30d) of the per-session new-reply flag backing the sessionList dot; survives well past a run buffer so the dot persists until the user opens the session. |
 
 #### 4.6.4 Third-party API endpoints & credentials
 

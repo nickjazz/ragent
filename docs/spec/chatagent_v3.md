@@ -191,7 +191,18 @@ message shape changes, while the upstream wire contract is untouched.
 
 - `GET /chatagent/v3/sessionList` — each entry's `sessionName` has the
   machine-context wrapper stripped (the upstream derives the title from the first
-  user turn, which carries the block); other metadata is passed through.
+  user turn, which carries the block); other metadata is passed through. When the
+  stream store is wired, each entry is also enriched with two live-status booleans
+  (the session id **is** the run `thread_id`):
+  - `running` — the thread's current run is still streaming (run pointer set, no
+    `eos`); drives the list spinner. Derived from the existing run pointer + buffer,
+    so no extra bookkeeping.
+  - `hasNewReply` — a run finished for this thread and the user has not opened it
+    since; drives the new-reply dot. Backed by a per-`(user, thread)` Redis flag
+    (`chatunread:`) set when a run completes and dropped on `GET /session`
+    (`REDIS_UNREAD_TTL_SECONDS`, default 30d). It is a presence flag, not a
+    timestamp — `hasNewReply` is a plain `EXISTS`, no clock comparison.
+  - With no store wired the list degrades to title-only (the fields are omitted).
 - `GET /chatagent/v3/session?session=<id>` — the upstream session envelope
   (`session`, …) is preserved, `sessionName` is stripped (same reason as
   sessionList), **human-in-the-loop interrupt turns (`humanInTheLoopMeta.isInterrupt=true`)
@@ -215,7 +226,27 @@ message shape changes, while the upstream wire contract is untouched.
     §3.4.7, never carries the block).
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
+- `GET /chatagent/v3/sessionEvents` — **SSE** live-status channel (registered only
+  when the stream store is wired). Streams `data:` frames as a user's runs change
+  state, so the session list updates without polling. Payloads mirror the list
+  fields: `{session, running}` when a run starts, `{session, running:false,
+  hasNewReply:true}` when it finishes, `{session, hasNewReply:false}` when the user
+  opens a session. Delivery is a per-user Redis pub/sub channel
+  (`sessionevents:{user}`), so any API replica's producer reaches the replica
+  holding the client's connection (cross-pod fan-out). The connection self-closes
+  after `CHATAGENT_STREAM_IDLE_TIMEOUT`-style idle (`session_events_idle_timeout`,
+  default 25s) and the browser's `EventSource` reconnects — bounding how long one
+  connection pins a worker thread and recovering a dropped subscription.
+  - **Snapshot + delta:** `sessionEvents` carries only *transitions*; the durable
+    truth is `sessionList` (`running`/`hasNewReply` above). A client takes the
+    `sessionList` snapshot on mount, then merges live deltas. A run the client is
+    itself streaming already updates from that session's chat stream, so the
+    channel only needs to carry the cross-tab / background transitions a snapshot
+    would otherwise miss until the next fetch; a client should suppress the dot for
+    the session it is actively viewing.
 
-These are JSON proxy routes (not the SSE stream), so timeout / upstream failures
-map to HTTP `504` / `502` as in v1 — the v3 `RUN_ERROR` framing applies only to
-`POST /chatagent/v3`.
+`sessionList` / `session` (GET/PUT/DELETE) are JSON proxy routes (not the SSE
+stream), so timeout / upstream failures map to HTTP `504` / `502` as in v1 — the
+v3 `RUN_ERROR` framing applies only to `POST /chatagent/v3`. `sessionEvents` is
+fail-soft: a Redis outage ends the stream cleanly and the client falls back to its
+`sessionList` snapshot.

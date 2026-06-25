@@ -33,6 +33,9 @@ def _make_app(
     rate_limiter: RateLimiter | None = None,
     chat_stream_store: ChatStreamStore | None = None,
     stream_idle_timeout: float = 3.0,
+    sessionlist_url: str | None = None,
+    session_url: str | None = None,
+    session_events_idle_timeout: float = 3.0,
 ):
     http_mock = MagicMock(spec=httpx.Client)
     app = FastAPI()
@@ -41,15 +44,25 @@ def _make_app(
         chatagent_ap_name="TestAP",
         chatagent_auth="Bearer up",
         chatagent_api_url="http://upstream",
+        chatagent_sessionlist_api_url=sessionlist_url,
+        chatagent_session_api_url=session_url,
         agent_factory=_real_agent_factory(
             http_mock, api_url="http://upstream", ap_name="TestAP", auth="Bearer up"
         ),
         rate_limiter=rate_limiter,
         chat_stream_store=chat_stream_store,
         stream_idle_timeout=stream_idle_timeout,
+        session_events_idle_timeout=session_events_idle_timeout,
     )
     app.include_router(router)
     return app, http_mock
+
+
+def _json_resp(payload: dict) -> MagicMock:
+    resp = MagicMock(spec=httpx.Response)
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = payload
+    return resp
 
 
 def _store() -> ChatStreamStore:
@@ -504,6 +517,130 @@ def test_v3_reconnect_is_owner_scoped() -> None:
 
     events = _events(r.text)
     assert events[-1]["code"] == HttpErrorCode.CHATAGENT_STREAM_EXPIRED
+
+
+# --- T-CAv3L: session-list live status (running spinner + new-reply dot) -------
+
+
+def test_v3_sessionlist_enriches_running_and_has_new_reply() -> None:
+    # thread_1 has an in-flight run (spinner); thread_2 has a completed-but-unopened
+    # reply (dot). The list reflects both from the store.
+    store = _store()
+    _seed_running_run(store, thread="thread_1", run="run_1")
+    store.mark_unread("alice", "thread_2")
+    app, http_mock = _make_app(chat_stream_store=store, sessionlist_url="http://up/list")
+    http_mock.get.return_value = _json_resp(
+        {
+            "totalCount": 2,
+            "sessions": [
+                {"session": "thread_1", "sessionName": "A"},
+                {"session": "thread_2", "sessionName": "B"},
+            ],
+        }
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v3/sessionList", headers={"X-User-Id": "alice"})
+
+    by_id = {s["session"]: s for s in r.json()["sessions"]}
+    assert by_id["thread_1"]["running"] is True
+    assert by_id["thread_1"]["hasNewReply"] is False
+    assert by_id["thread_2"]["running"] is False
+    assert by_id["thread_2"]["hasNewReply"] is True
+
+
+def test_v3_sessionlist_without_store_omits_status_fields() -> None:
+    # No store wired → the list degrades to title-only (pre-T-CAv3L shape).
+    app, http_mock = _make_app(sessionlist_url="http://up/list")
+    http_mock.get.return_value = _json_resp(
+        {"totalCount": 1, "sessions": [{"session": "t1", "sessionName": "A"}]}
+    )
+
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v3/sessionList", headers={"X-User-Id": "alice"})
+
+    entry = r.json()["sessions"][0]
+    assert "running" not in entry
+    assert "hasNewReply" not in entry
+
+
+def test_v3_get_session_clears_the_unread_flag() -> None:
+    # Opening a session marks it read — the dot drops on the next list fetch.
+    store = _store()
+    store.mark_unread("alice", "thread_1")
+    app, http_mock = _make_app(chat_stream_store=store, session_url="http://up/session")
+    http_mock.get.return_value = _json_resp(
+        {"session": "thread_1", "sessionName": "X", "messages": []}
+    )
+
+    with TestClient(app) as client:
+        client.get(
+            "/chatagent/v3/session",
+            params={"session": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert store.has_unread("alice", "thread_1") is False
+
+
+def test_v3_post_run_completion_marks_thread_unread() -> None:
+    # A finished run flags the thread unread so the list dots it (the user may have
+    # navigated away mid-run). mark_done is the LAST bookkeeping step, so by the time
+    # the consumer drains the eos the unread flag is already set.
+    store = _store()
+    app, http_mock = _make_app(chat_stream_store=store)
+    http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
+
+    with TestClient(app) as client:
+        client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
+
+    assert store.has_unread("alice", "thread_1") is True
+
+
+def test_v3_session_events_streams_published_status() -> None:
+    # The SSE channel relays live status transitions published to the user's channel.
+    import threading
+    import time
+
+    store = _store()
+    app, _ = _make_app(chat_stream_store=store, session_events_idle_timeout=0.6)
+
+    def publish_burst() -> None:
+        # Publish repeatedly so the event lands once the generator has subscribed
+        # (pub/sub has no backlog); the idle deadline resets on each delivery.
+        for _ in range(5):
+            time.sleep(0.1)
+            store.publish_session_event("alice", {"session": "thread_9", "running": True})
+
+    threading.Thread(target=publish_burst, daemon=True).start()
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v3/sessionEvents", headers={"X-User-Id": "alice"})
+
+    assert r.status_code == 200
+    assert "text/event-stream" in r.headers["content-type"]
+    assert "thread_9" in r.text
+
+
+def test_v3_session_events_not_registered_without_store() -> None:
+    app, _ = _make_app()  # no store
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v3/sessionEvents", headers={"X-User-Id": "alice"})
+    assert r.status_code == 404
+
+
+def test_v3_session_events_ends_cleanly_when_redis_unavailable() -> None:
+    # subscribe returning None (stream Redis down) ends the stream immediately
+    # rather than 500 — the client falls back to its sessionList snapshot.
+    store = MagicMock(spec=ChatStreamStore)
+    store.subscribe_session_events.return_value = None
+    store.try_start.return_value = None  # keep the POST path off the buffered branch
+    app, _ = _make_app(chat_stream_store=store, session_events_idle_timeout=0.3)
+
+    with TestClient(app) as client:
+        r = client.get("/chatagent/v3/sessionEvents", headers={"X-User-Id": "alice"})
+
+    assert r.status_code == 200
+    assert r.text == ""  # no frames emitted; the generator returned at once
 
 
 def test_v3_router_does_not_import_concrete_agent_or_caller_classes() -> None:

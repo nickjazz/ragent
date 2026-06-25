@@ -17,6 +17,7 @@ semantics that the in-memory test double does not honour.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
@@ -28,6 +29,8 @@ logger = structlog.get_logger(__name__)
 
 _KEY_PREFIX = "chatstream:"
 _CURRENT_PREFIX = "chatcurrent:"  # per-thread pointer → the latest run_id
+_UNREAD_PREFIX = "chatunread:"  # per-thread flag → a completed run the user hasn't opened
+_EVENTS_PREFIX = "sessionevents:"  # per-user pub/sub channel for live session-list status
 _FROM_START = ("0", "-", "", None)
 _FIELD_FRAME = "frame"  # XADD field holding one SSE frame string
 _FIELD_EOS = "eos"  # XADD field marking the terminal sentinel (no frame)
@@ -35,10 +38,20 @@ _STREAM_ID_RE = re.compile(r"^\d+-\d+$")  # Redis entry id: <ms>-<seq>
 
 
 class ChatStreamStore:
-    def __init__(self, redis_client: Any, *, ttl_seconds: int = 300, maxlen: int = 10_000) -> None:
+    def __init__(
+        self,
+        redis_client: Any,
+        *,
+        ttl_seconds: int = 300,
+        maxlen: int = 10_000,
+        unread_ttl_seconds: int = 2_592_000,
+    ) -> None:
         self._redis = redis_client
         self._ttl = ttl_seconds
         self._maxlen = maxlen
+        # The new-reply flag outlives a run buffer (which is TTL-bound to resumability);
+        # it must survive until the user next opens the session, so it gets its own long TTL.
+        self._unread_ttl = unread_ttl_seconds
 
     @staticmethod
     def key(user_id: str, thread_id: str, stream_id: str) -> str:
@@ -59,6 +72,16 @@ class ChatStreamStore:
         # Distinct prefix (not a suffix on the buffer key) so a client-supplied
         # run_id can never collide with the pointer.
         return f"{_CURRENT_PREFIX}{user_id}:{thread_id}"
+
+    @staticmethod
+    def _unread_key(user_id: str, thread_id: str) -> str:
+        return f"{_UNREAD_PREFIX}{user_id}:{thread_id}"
+
+    @staticmethod
+    def events_channel(user_id: str) -> str:
+        # Per-user channel: session-list status is private, so a user only ever
+        # subscribes to (and receives) their own runs' transitions.
+        return f"{_EVENTS_PREFIX}{user_id}"
 
     @staticmethod
     def is_from_start(last_id: str | None) -> bool:
@@ -148,6 +171,76 @@ class ChatStreamStore:
             return False
         return bool(tail) and _FIELD_EOS in tail[0][1]
 
+    def is_running(self, user_id: str, thread_id: str) -> bool:
+        """True while the thread's current run is still streaming (pointer set, no eos).
+
+        Derived from the existing run pointer + buffer state, so the session list can
+        show a spinner with no extra bookkeeping: a finished run writes ``eos``
+        (``is_done`` → True) and an abandoned pointer simply expires with its TTL.
+        Fail-soft via ``get_current``/``is_done`` (both return the safe default on a
+        Redis blip), so a list fetch never 500s on the spinner.
+        """
+        run_id = self.get_current(user_id, thread_id)
+        if run_id is None:
+            return False
+        return not self.is_done(self.key(user_id, thread_id, run_id))
+
+    def mark_unread(self, user_id: str, thread_id: str) -> None:
+        """Flag a completed reply the user has not opened yet (fail-soft).
+
+        A plain presence flag, not a timestamp: cleared on the next ``GET /session``,
+        so ``has_unread`` is a simple ``EXISTS`` with no clock comparison.
+        """
+        try:
+            self._redis.set(self._unread_key(user_id, thread_id), "1", ex=self._unread_ttl)
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="mark_unread", error=str(exc))
+
+    def clear_unread(self, user_id: str, thread_id: str) -> None:
+        """Drop the new-reply flag once the user opens the session (fail-soft)."""
+        try:
+            self._redis.delete(self._unread_key(user_id, thread_id))
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="clear_unread", error=str(exc))
+
+    def has_unread(self, user_id: str, thread_id: str) -> bool:
+        try:
+            return bool(self._redis.exists(self._unread_key(user_id, thread_id)))
+        except redis_lib.RedisError as exc:
+            logger.warning("chat_stream_store.unavailable", op="has_unread", error=str(exc))
+            return False
+
+    def publish_session_event(self, user_id: str, event: dict[str, Any]) -> None:
+        """Fan one live status change out to the user's open ``sessionEvents`` streams.
+
+        Best-effort: a Redis blip only costs this one live nudge — the durable truth
+        is the run pointer + unread flag, which the client re-reads from
+        ``sessionList`` on its next fetch.
+        """
+        try:
+            self._redis.publish(self.events_channel(user_id), json.dumps(event))
+        except redis_lib.RedisError as exc:
+            logger.warning(
+                "chat_stream_store.unavailable", op="publish_session_event", error=str(exc)
+            )
+
+    def subscribe_session_events(self, user_id: str) -> Any:
+        """A pubsub subscribed to the user's channel; the SSE generator drives it.
+
+        Returns ``None`` when the stream Redis is unreachable so the route degrades to
+        "no live channel" (client falls back to its ``sessionList`` snapshot) instead
+        of 500-ing.
+        """
+        try:
+            pubsub = self._redis.pubsub()
+            pubsub.subscribe(self.events_channel(user_id))
+            return pubsub
+        except redis_lib.RedisError as exc:
+            logger.warning(
+                "chat_stream_store.unavailable", op="subscribe_session_events", error=str(exc)
+            )
+            return None
+
     def append(self, key: str, frame: str) -> str:
         """Buffer one SSE frame; returns the entry id used as the SSE ``id:``."""
         return self._redis.xadd(key, {_FIELD_FRAME: frame}, maxlen=self._maxlen, approximate=True)
@@ -202,6 +295,7 @@ class ChatStreamStore:
     def from_env(cls) -> ChatStreamStore:
         ttl = int(os.environ.get("REDIS_STREAM_TTL_SECONDS", "300"))
         maxlen = int(os.environ.get("REDIS_STREAM_MAXLEN", "10000"))
+        unread_ttl = int(os.environ.get("REDIS_UNREAD_TTL_SECONDS", "2592000"))
         mode = os.environ.get("REDIS_MODE", "standalone")
         if mode == "sentinel":
             from redis.sentinel import Sentinel
@@ -215,7 +309,12 @@ class ChatStreamStore:
             ]
             sentinel = Sentinel(sentinels)
             client = sentinel.master_for(master, decode_responses=True)
-            return cls(client, ttl_seconds=ttl, maxlen=maxlen)
+            return cls(client, ttl_seconds=ttl, maxlen=maxlen, unread_ttl_seconds=unread_ttl)
 
         url = os.environ.get("REDIS_STREAM_URL", "redis://localhost:6379/2")
-        return cls(redis_lib.from_url(url, decode_responses=True), ttl_seconds=ttl, maxlen=maxlen)
+        return cls(
+            redis_lib.from_url(url, decode_responses=True),
+            ttl_seconds=ttl,
+            maxlen=maxlen,
+            unread_ttl_seconds=unread_ttl,
+        )

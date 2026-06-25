@@ -122,3 +122,39 @@
 | T-CAv3S.HITL2 | Red+Green | • **Achieve:** Resume a paused run — `RunAgentInput.resume` (`[{interruptId, status, payload?}]`). `resolved` → upstream `inputData={lastMessageId, message:""}` (payload accepted but not forwarded — upstream is go/no-go only); `cancelled` → no upstream call, `success` outcome; >1 `resolved` → `RUN_ERROR` (`CHATAGENT_INVALID_RESUME`).<br>• **Deliver:** `packages/twp-ai/src/twp_ai/schemas.py` (`ResumeItem` + `RunAgentInput.resume`); `clients/adk_caller.py` (`_resume_input_data`, `ResumeValidationError`); `errors/codes.py` (`CHATAGENT_INVALID_RESUME`); `tests/unit/test_adk_caller.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md`, `docs/00_rule_third_party_api.md` (`lastMessageId` pin), `docs/API.md`. | [x] | Dev |
 | T-CAv3S.HITL3 | Red+Green | • **Achieve:** Drop human-in-the-loop interrupt turns from the `GET /chatagent/v3/session` history — a persisted `humanInTheLoopMeta.isInterrupt=true` turn was mapped (via the `node_to_role`/`"assistant"` default) into a stray assistant message; it is a transient approval prompt (surfaced live via `RUN_FINISHED.outcome`, HITL1), not a conversation message, so it must not render in history. Keeps the read consistent with the stream.<br>• **Deliver:** `services/chatagent_session.py` (`_is_interrupt`, filter in `map_session_payload`); `tests/unit/test_chatagent_session_mapper.py` + `tests/integration/test_chatagent_v3_endpoint.py`; `docs/spec/chatagent_v3.md` §3.4.8. | [x] | Dev |
 
+---
+
+## Track T-CAv3L — ChatAgent v3 Session List Live Status (running spinner + new-reply dot)
+
+> Source: 2026-06-25 design session. Goal: the session list shows, per session, a
+> spinner while a run is in flight and a dot when a reply finished that the user
+> has not opened yet — across tabs / devices.
+>
+> **Locked decisions:**
+> - **Snapshot + delta.** Durable truth is the `sessionList` snapshot
+>   (`running`/`hasNewReply`); realtime is a *delta* channel. The client merges.
+> - **`session_id == thread_id`** (confirmed), so per-session status reuses the
+>   existing run pointer (`chatcurrent:`) — `running` needs no new bookkeeping.
+> - **New-reply is a Redis presence flag** (`chatunread:`), not a timestamp: set on
+>   run completion, dropped on `GET /session`. `hasNewReply` is a plain `EXISTS`.
+>   Own long TTL (`REDIS_UNREAD_TTL_SECONDS`, 30d) so it outlives the run buffer.
+> - **Realtime via SSE + Redis pub/sub**, not NATS: keeps the channel inside
+>   `/chatagent/v3`'s own HTTP/SSE boundary (consistent with v3 being an SSE proxy);
+>   per-user channel `sessionevents:{user}` gives cross-pod fan-out for free. SSE
+>   (not WebSocket) — the push is one-way, runs over existing HTTP/auth, and reuses
+>   the v3 stack's SSE idiom. A client's own active run already updates from that
+>   session's chat stream, so the channel only carries cross-tab / background deltas.
+
+**Counter: 完成 7 / 未完成 1 / descope 0**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-CAv3L.1 | Red+Green | • **Achieve:** `ChatStreamStore` running + new-reply markers — `is_running` (current pointer + not `eos`), `mark_unread`/`clear_unread`/`has_unread` (presence flag), own `unread_ttl_seconds`; all fail-soft.<br>• **Deliver:** `src/ragent/clients/chat_stream_store.py`; `tests/unit/test_chat_stream_store.py`.<br>• **Success criteria:** `pytest tests/unit/test_chat_stream_store.py` exits 0 with the running/unread cases collected. | [x] | Dev |
+| T-CAv3L.2 | Red+Green | • **Achieve:** `ChatStreamStore` per-user pub/sub — `events_channel`, `publish_session_event` (fail-soft), `subscribe_session_events` (None on Redis outage).<br>• **Deliver:** `src/ragent/clients/chat_stream_store.py`; `tests/unit/test_chat_stream_store.py` (subscribe→publish→get_message, owner-scoped).<br>• **Success criteria:** a published event reaches a same-user subscriber and never a different user's channel. | [x] | Dev |
+| T-CAv3L.3 | Red+Green | • **Achieve:** `map_session_list_payload(payload, status_of=None)` merges per-entry `{running, hasNewReply}` keyed by `session`; `status_of=None` keeps the title-only shape; malformed entry (no `session`) skips status.<br>• **Deliver:** `src/ragent/services/chatagent_session.py` (`_map_session_entry`); `tests/unit/test_chatagent_session_mapper.py`.<br>• **Success criteria:** status merged when fn provided; unchanged when None. | [x] | Dev |
+| T-CAv3L.4 | Red+Green | • **Achieve:** Router wiring — `GET /sessionList` enriches via a store-backed `status_of` closure; `GET /session` clears the flag + broadcasts the cleared dot; the run producer publishes `running:true` on start and `running:false`+`hasNewReply:true`+`mark_unread` on finish (`mark_done` last for consumer ordering).<br>• **Deliver:** `routers/chatagent_v3.py` (`_session_status_fn`, `_spawn_producer`); `tests/unit/test_chatagent_v3_router.py`.<br>• **Success criteria:** list reflects running + dot; `GET /session` clears it; a finished POST marks the thread unread. | [x] | Dev |
+| T-CAv3L.5 | Red+Green | • **Achieve:** `GET /chatagent/v3/sessionEvents` SSE — subscribes the user's pub/sub channel, relays each transition as a `data:` frame, self-closes after idle (browser reconnects), fail-soft on Redis outage; registered only when the store is wired.<br>• **Deliver:** `routers/chatagent_v3.py` (`_session_events_stream`, `session_events_idle_timeout`); `tests/unit/test_chatagent_v3_router.py`.<br>• **Success criteria:** a published event is streamed to a subscribed client; route is 404 with no store. | [x] | Dev |
+| T-CAv3L.W1 | Behavioral | • **Achieve:** `REDIS_UNREAD_TTL_SECONDS` read in `ChatStreamStore.from_env` (no composition change — the store is the existing env-factory seam).<br>• **Deliver:** `clients/chat_stream_store.py` `from_env`; `docs/spec/env_vars.md` + `.env.example`.<br>• **Success criteria:** `tests/unit/test_env_example_drift.py` stays green with the new var symmetric. | [x] | Dev |
+| T-CAv3L.D1 | Structural | • **Achieve:** Document the live-status fields + `sessionEvents` SSE channel and the snapshot+delta model.<br>• **Deliver:** `docs/spec/chatagent_v3.md` §3.4.8.<br>• **Success criteria:** spec describes `running`/`hasNewReply`, the SSE channel payloads, and the cross-pod pub/sub fan-out. | [x] | Dev |
+| T-CAv3L.FE1 | Red+Green | • **Achieve:** mco-clean session list renders the spinner/dot — takes the `sessionList` snapshot on mount, subscribes `GET /chatagent/v3/sessionEvents` and merges deltas, suppresses the dot for the actively-viewed session. **(frontend — out of this backend cycle)**<br>• **Deliver:** mco-clean `@twp/ai` session-list data layer + UI.<br>• **Success criteria:** spinner shows while a background run streams; dot appears on completion and clears on open; cross-tab updates without a manual refresh. | [ ] | Dev |
+

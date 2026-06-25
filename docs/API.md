@@ -598,9 +598,16 @@ Same upstream and registration env vars as the `/chatagent/v1/session*` routes (
 
 These session routes register independently of `POST /chatagent/v3`: a session-only deployment (only `CHATAGENT_SESSIONLIST_API_URL`/`CHATAGENT_SESSION_API_URL` set, `CHATAGENT_API_URL` unset) starts cleanly with just the session routes registered — `POST /chatagent/v3` (and its `Agent` factory) is omitted entirely rather than crashing at startup.
 
-- `GET /chatagent/v3/sessionList?startTime=&endTime=` — as v1, but each entry's `sessionName` has the machine-context wrapper stripped.
-- `GET /chatagent/v3/session?session=<id>` — `sessionName` stripped as above; every `messages[]` entry is reshaped to `{id, role, content, createTime, updateTime}` (`id` = upstream `messageId`; `role` via the same `node_to_role` rule as the v3 stream; machine-context wrapper stripped from `content`; `createTime`/`updateTime` = upstream persistence timestamps passed through, null when absent).
+- `GET /chatagent/v3/sessionList?startTime=&endTime=` — as v1, but each entry's `sessionName` has the machine-context wrapper stripped, and (when the stream store is wired) each entry carries `running` (a run is in flight → spinner) and `hasNewReply` (a reply finished the user has not opened → dot). `session_id == thread_id`.
+- `GET /chatagent/v3/session?session=<id>` — `sessionName` stripped as above; every `messages[]` entry is reshaped to `{id, role, content, createTime, updateTime}` (`id` = upstream `messageId`; `role` via the same `node_to_role` rule as the v3 stream; machine-context wrapper stripped from `content`; `createTime`/`updateTime` = upstream persistence timestamps passed through, null when absent). Opening a session also clears its `hasNewReply` dot.
 - `PUT /chatagent/v3/session` / `DELETE /chatagent/v3/session` — rename / delete, proxied unchanged (same bodies as v1).
+- `GET /chatagent/v3/sessionEvents` — **SSE** live-status channel (registered when the stream store is wired). Push-updates the list without polling: `data:` frames carry `{session, running}` / `{session, running:false, hasNewReply:true}` / `{session, hasNewReply:false}` as runs start/finish/are opened. The client takes the `sessionList` snapshot on mount, then merges these deltas (suppressing the dot for the session it is actively viewing — that one already updates from its own chat stream). Per-user Redis pub/sub (`sessionevents:{user}`) fans events across API replicas; the connection self-closes on idle and the browser's `EventSource` reconnects.
+
+```bash
+curl -N "http://localhost:8000/chatagent/v3/sessionEvents" \
+  -H "X-User-Id: u-123"
+# → text/event-stream: data: {"session":"thread_1","running":true} ...
+```
 
 ---
 
