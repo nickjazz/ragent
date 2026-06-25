@@ -322,6 +322,14 @@ Standalone FastMCP service that federates arbitrary third-party REST APIs as MCP
 
 > Full spec: [docs/spec/mcp_hub.md](spec/mcp_hub.md) — transport, env vars, tools.yaml schema, header forwarding, metrics.
 
+### 3.10 Projects
+
+Groups upstream-owned sessions under a named project. Sessions live entirely in the ChatAgent upstream (keyed by `user`/`apName`/`session`), which has no project concept, so ragent owns the project entity and the project↔session membership in MariaDB and overlays it on the upstream session content.
+
+> Full spec: [docs/spec/projects.md](spec/projects.md) — data model, endpoints, chat-time vs explicit association, cascade-delete semantics, and the `sessionList` exclusion of grouped sessions.
+
+A session belongs to **at most one** project (optional — ungrouped is the default). Association happens either at chat time (`POST /chatagent/v3` with `forwardedProps.projectId`, best-effort) or explicitly (`POST /project/v1/{id}/sessions`). Removing a session from a project **deletes the session upstream**; deleting a project cascades that delete to all its member sessions. `GET /chatagent/v3/sessionList` excludes grouped sessions so the flat list shows only ungrouped ones. Registered only when `CHATAGENT_SESSION_API_URL` is set.
+
 ---
 
 ## 4. Inventories
@@ -375,6 +383,18 @@ Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (p
 | POST | `/embedding/v1/backfill` | `X-User-Id` | Enqueue backfill task → `200 {state, queued}` |
 | GET  | `/embedding/v1/state` | `X-User-Id` | Registry snapshot → `200 {stable, candidate, read, retired}` |
 | GET  | `/embedding/v1/cutover/preflight` | `X-User-Id` | Run gates without action → `200 {pass, gates}` |
+
+**Project routes (§3.10)** — group upstream-owned sessions; registered only when `CHATAGENT_SESSION_API_URL` is set. Full detail in [`docs/spec/projects.md`](spec/projects.md):
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST   | `/project/v1`                          | `X-User-Id` | Create project → `201 {projectId, name, createTime}` |
+| GET    | `/project/v1`                          | `X-User-Id` | List the caller's projects → `200 {projects[]}` (each with `sessionCount`) |
+| GET    | `/project/v1/{projectId}`              | `X-User-Id` | Project + its sessions (membership ∩ upstream sessionList) → `200 {projectId, name, sessions[]}`; `404 PROJECT_NOT_FOUND` |
+| PUT    | `/project/v1/{projectId}`              | `X-User-Id` | Rename → `200 {projectId, name, updateTime}`; `404 PROJECT_NOT_FOUND` |
+| DELETE | `/project/v1/{projectId}`              | `X-User-Id` | Delete project + cascade-delete member sessions upstream → `200 {projectId, sessionsDeleted, sessionsFailed[]}`; `404 PROJECT_NOT_FOUND` |
+| POST   | `/project/v1/{projectId}/sessions`     | `X-User-Id` | Add an existing session → `204`; `404 PROJECT_NOT_FOUND` / `409 PROJECT_SESSION_CONFLICT` |
+| DELETE | `/project/v1/{projectId}/sessions/{session}` | `X-User-Id` | Remove session = upstream delete + unlink → `204`; `404` / `502` / `504` |
 
 ### 4.1.1 Error Response Schema (B5)
 
@@ -461,7 +481,7 @@ All 3rd-party calls: timeout/retry/backoff per `00_rule.md`; circuit-breaker on 
 
 > Full schemas: [`docs/spec/data_structures.md`](spec/data_structures.md)
 
-MariaDB tables: `documents`, `feedback`, `system_settings`. ES indexes: `chunks_v1` (content + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
+MariaDB tables: `documents`, `feedback`, `system_settings`, `projects`, `project_sessions` (§3.10 — project grouping over upstream-owned sessions; `project_sessions.session_id` is the PK enforcing one-project-per-session). ES indexes: `chunks_v1` (content + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
 
 ---
 
