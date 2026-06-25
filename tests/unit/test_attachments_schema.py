@@ -1,6 +1,6 @@
-"""Tests for attachment schema (T-CAT.2)."""
+"""Tests for attachment schema (T-CAT.2, T-CAT.3)."""
 
-from ragent.schemas.attachments import AttachmentMime, MIME_EXTENSIONS
+from ragent.schemas.attachments import MIME_EXTENSIONS, UNPROTECT_MIMES, AttachmentMime
 
 
 def test_attachment_mime_enum_has_six_values():
@@ -63,3 +63,27 @@ def test_attachment_mime_case_insensitive_lookup():
     assert AttachmentMime("TEXT/PLAIN") == AttachmentMime.TEXT_PLAIN
     assert AttachmentMime("application/pdf") == AttachmentMime.PDF
     assert AttachmentMime("APPLICATION/PDF") == AttachmentMime.PDF
+
+
+def test_unprotect_mimes_whitelist_size():
+    """T-CAT.3: Unprotect whitelist must contain only PDF/DOCX/PPTX."""
+    assert len(UNPROTECT_MIMES) == 3
+
+
+def test_unprotect_mimes_whitelist_membership():
+    """Only binary formats (PDF, DOCX, PPTX) should be in the whitelist."""
+    assert AttachmentMime.PDF in UNPROTECT_MIMES
+    assert AttachmentMime.DOCX in UNPROTECT_MIMES
+    assert AttachmentMime.PPTX in UNPROTECT_MIMES
+
+
+def test_unprotect_mimes_text_formats_excluded():
+    """Text formats should NOT be in the unprotect whitelist."""
+    assert AttachmentMime.TEXT_PLAIN not in UNPROTECT_MIMES
+    assert AttachmentMime.TEXT_MARKDOWN not in UNPROTECT_MIMES
+    assert AttachmentMime.TEXT_HTML not in UNPROTECT_MIMES
+
+
+def test_unprotect_mimes_is_frozenset():
+    """UNPROTECT_MIMES must be a frozenset (immutable)."""
+    assert isinstance(UNPROTECT_MIMES, frozenset)
