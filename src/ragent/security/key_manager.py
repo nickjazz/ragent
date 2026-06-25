@@ -1,0 +1,44 @@
+"""KeyManager — process-wide DEK unwrap (T-CAT.4).
+
+Unwraps a single Data Encryption Key (DEK) from a Key Encryption Key (KEK)
+once at construction; the DEK is held in memory for the process lifetime.
+ISP: callers only ever see `.dek` — the KEK and the wrap/unwrap mechanics
+never leak past this module.
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+
+from cryptography.hazmat.primitives.keywrap import (
+    InvalidUnwrap,
+    aes_key_unwrap,
+)
+
+
+class KeyManagerError(Exception):
+    """Raised when the DEK cannot be unwrapped (bad KEK or malformed input)."""
+
+
+class KeyManager:
+    """Unwraps and holds the process-wide DEK."""
+
+    def __init__(self, *, kek_b64: str, encrypted_dek_b64: str) -> None:
+        try:
+            kek = base64.b64decode(kek_b64, validate=True)
+            wrapped_dek = base64.b64decode(encrypted_dek_b64, validate=True)
+            self._dek = aes_key_unwrap(kek, wrapped_dek)
+        except (InvalidUnwrap, ValueError) as exc:
+            raise KeyManagerError(f"failed to unwrap DEK: {exc}") from exc
+
+    @property
+    def dek(self) -> bytes:
+        return self._dek
+
+    @classmethod
+    def from_env(cls) -> KeyManager:
+        return cls(
+            kek_b64=os.environ.get("RAGENT_KEK_BASE64", ""),
+            encrypted_dek_b64=os.environ.get("RAGENT_ENCRYPTED_DEK_BASE64", ""),
+        )

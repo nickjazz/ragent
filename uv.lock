@@ -3777,6 +3777,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiomysql" },
     { name = "alembic" },
+    { name = "cryptography" },
     { name = "elasticsearch-haystack" },
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -3840,6 +3841,7 @@ requires-dist = [
     { name = "aiomysql", specifier = "==0.3.2" },
     { name = "alembic", specifier = "==1.18.4" },
     { name = "bandit", marker = "extra == 'dev'", specifier = "==1.9.4" },
+    { name = "cryptography", specifier = "==48.0.1" },
     { name = "detect-secrets", marker = "extra == 'dev'", specifier = "==1.5.0" },
     { name = "elasticsearch-haystack", specifier = "==6.1.0" },
     { name = "fastapi", specifier = "==0.136.3" },

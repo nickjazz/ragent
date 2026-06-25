@@ -47,8 +47,10 @@ MIME_EXTENSIONS: dict[AttachmentMime, str] = {
 
 _EXTENSION_TO_MIME: dict[str, AttachmentMime] = {v: k for k, v in MIME_EXTENSIONS.items()}
 
-UNPROTECT_MIMES: frozenset[AttachmentMime] = frozenset({
-    AttachmentMime.PDF,
-    AttachmentMime.DOCX,
-    AttachmentMime.PPTX,
-})
+UNPROTECT_MIMES: frozenset[AttachmentMime] = frozenset(
+    {
+        AttachmentMime.PDF,
+        AttachmentMime.DOCX,
+        AttachmentMime.PPTX,
+    }
+)
