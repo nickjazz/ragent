@@ -628,6 +628,65 @@ def test_v3_session_events_not_registered_without_store() -> None:
     assert r.status_code == 404
 
 
+def test_v3_get_session_keeps_unread_when_upstream_fails() -> None:
+    # Clear-after-success: a 502/504 upstream failure must NOT clear the dot for a
+    # session the user never actually saw.
+    store = _store()
+    store.mark_unread("alice", "thread_1")
+    app, http_mock = _make_app(chat_stream_store=store, session_url="http://up/session")
+    http_mock.get.side_effect = httpx.RequestError("upstream down")  # proxy_get → 502
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/chatagent/v3/session",
+            params={"session": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert r.status_code == 502
+    assert store.has_unread("alice", "thread_1") is True  # not cleared on failure
+
+
+class _OneFrameAgent:
+    def run(self, request, model):  # noqa: ARG002 — stub matches the Agent protocol
+        yield to_sse(RunStartedEvent(run_id="r", thread_id="t"))
+
+
+def test_run_producer_marks_unread_when_a_reply_is_expected() -> None:
+    from ragent.routers.chatagent_v3 import _run_producer
+
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    _run_producer(store, key, _OneFrameAgent(), object(), "", "alice", "t", reply_expected=True)
+    assert store.has_unread("alice", "t") is True
+
+
+def test_run_producer_skips_unread_for_control_only_resume() -> None:
+    # A cancelled-only resume yields no new reply → no dot.
+    from ragent.routers.chatagent_v3 import _run_producer
+
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    _run_producer(store, key, _OneFrameAgent(), object(), "", "alice", "t", reply_expected=False)
+    assert store.has_unread("alice", "t") is False
+
+
+def test_run_producer_logs_instead_of_swallowing_a_background_error() -> None:
+    # Fire-and-forget: an escaping error (e.g. mark_done on a Redis drop) must be logged,
+    # not silently swallowed by the executor Future.
+    from structlog.testing import capture_logs
+
+    from ragent.routers.chatagent_v3 import _run_producer
+
+    store = MagicMock(spec=ChatStreamStore)
+    store.mark_done.side_effect = RuntimeError("redis dropped")
+
+    with capture_logs() as logs:
+        _run_producer(store, "k", _OneFrameAgent(), object(), "", "alice", "t", reply_expected=True)
+
+    assert any(e["event"] == "chatagent_v3.producer_failed" for e in logs)
+
+
 def test_v3_session_events_ends_cleanly_when_redis_unavailable() -> None:
     # subscribe returning None (stream Redis down) ends the stream immediately
     # rather than 500 — the client falls back to its sessionList snapshot.

@@ -181,6 +181,16 @@ def test_is_running_false_without_current_pointer() -> None:
     assert store.is_running("alice", "t") is False
 
 
+def test_is_running_false_when_pointer_outlives_dead_buffer() -> None:
+    # Ghost-spinner guard: a pointer can outlive its run's buffer+lock (producer died
+    # before eos). Without the is_resumable gate, is_done would see an empty stream and
+    # read False → "running" forever until the pointer TTL. The gate returns False.
+    store = _store()
+    store.set_current("alice", "t", "r")  # pointer exists...
+    # ...but no try_start (no lock) and no append (no frames) → not resumable
+    assert store.is_running("alice", "t") is False
+
+
 def test_unread_flag_set_exists_then_cleared() -> None:
     store = _store()
     assert store.has_unread("alice", "t") is False

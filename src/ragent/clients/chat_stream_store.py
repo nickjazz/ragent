@@ -179,11 +179,20 @@ class ChatStreamStore:
         (``is_done`` → True) and an abandoned pointer simply expires with its TTL.
         Fail-soft via ``get_current``/``is_done`` (both return the safe default on a
         Redis blip), so a list fetch never 500s on the spinner.
+
+        The ``is_resumable`` gate avoids a ghost spinner: if the pointer outlives its
+        run's buffer+lock (e.g. a producer died before ``eos``), ``is_done`` would see
+        an empty stream and read False → "running" forever until the pointer TTL.
+        ``is_resumable`` is the same liveness predicate ``reconnect`` uses, so a run is
+        "running" here iff it is still reconnectable there.
         """
         run_id = self.get_current(user_id, thread_id)
         if run_id is None:
             return False
-        return not self.is_done(self.key(user_id, thread_id, run_id))
+        key = self.key(user_id, thread_id, run_id)
+        if not self.is_resumable(key):
+            return False
+        return not self.is_done(key)
 
     def mark_unread(self, user_id: str, thread_id: str) -> None:
         """Flag a completed reply the user has not opened yet (fail-soft).

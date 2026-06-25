@@ -154,8 +154,20 @@ def create_chatagent_v3_router(
             # reconnect replay the previous question as a new one.
             if not body.resume:
                 chat_stream_store.stash_user_input(key, _last_user_text(body))
+            # A resume whose interrupts are all "cancelled" contacts no upstream and
+            # yields no new reply, so it must not dot the session as unread.
+            reply_expected = not (
+                body.resume and all(item.status == "cancelled" for item in body.resume)
+            )
             _spawn_producer(
-                producer_pool, chat_stream_store, key, agent, body, body.model or "", user_id
+                producer_pool,
+                chat_stream_store,
+                key,
+                agent,
+                body,
+                body.model or "",
+                user_id,
+                reply_expected,
             )
             return StreamingResponse(
                 _consume_stream(
@@ -290,16 +302,9 @@ def create_chatagent_v3_router(
             x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
         ) -> Response:
             user_id = x_user_id or "anonymous"
-            # Opening a session marks it read: drop the new-reply flag and broadcast
-            # the cleared dot so the user's other tabs update without a refetch.
-            if chat_stream_store is not None:
-                chat_stream_store.clear_unread(user_id, session)
-                chat_stream_store.publish_session_event(
-                    user_id, {"session": session, "hasNewReply": False}
-                )
             params = {"user": user_id, "apName": chatagent_ap_name, "session": session}
             # v3 reshapes the persisted history: twp-ai roles + <hidden> stripped.
-            return await proxy_get(
+            response = await proxy_get(
                 http_client=http_client,
                 url=chatagent_session_api_url,
                 params=params,
@@ -308,6 +313,15 @@ def create_chatagent_v3_router(
                 log_prefix="v3.session",
                 transform=map_session_payload,
             )
+            # Mark read only after a successful fetch — a 502/504 upstream failure must
+            # not clear the dot for a session the user never actually saw. Broadcast the
+            # cleared dot so the user's other tabs update without a refetch.
+            if chat_stream_store is not None and response.status_code < 400:
+                chat_stream_store.clear_unread(user_id, session)
+                chat_stream_store.publish_session_event(
+                    user_id, {"session": session, "hasNewReply": False}
+                )
+            return response
 
         @router.put("/session")
         async def chatagent_v3_session_rename(
@@ -438,6 +452,7 @@ def _spawn_producer(
     body: RunAgentInput,
     model: str,
     user_id: str,
+    reply_expected: bool,
 ) -> None:
     """Tee a run into the Redis Stream from a pooled background thread.
 
@@ -452,22 +467,50 @@ def _spawn_producer(
     observe the closing ``eos`` after the unread flag is already set — the list is
     never momentarily "finished but not yet unread".
     """
+    pool.submit(
+        _run_producer, store, key, agent, body, model, user_id, body.thread_id or "", reply_expected
+    )
 
-    thread_id = body.thread_id or ""
 
-    def _produce() -> None:
-        store.publish_session_event(user_id, {"session": thread_id, "running": True})
+def _run_producer(
+    store: ChatStreamStore,
+    key: str,
+    agent: Agent,
+    body: RunAgentInput,
+    model: str,
+    user_id: str,
+    thread_id: str,
+    reply_expected: bool,
+) -> None:
+    """The producer body (extracted from the thread submit so it is unit-testable).
+
+    Wrapped in a top-level guard: it runs as a fire-and-forget pool task whose Future
+    is never awaited, so an escaping error (e.g. ``mark_done``'s pipeline on a Redis
+    drop) would otherwise vanish with no log.
+    """
+    store.publish_session_event(user_id, {"session": thread_id, "running": True})
+    try:
         try:
             for frame in agent.run(body, model):
                 store.append(key, frame)
         finally:
-            store.mark_unread(user_id, thread_id)
+            # A control-only resume (all interrupts cancelled) contacts no upstream and
+            # produces no new reply, so it must not dot the session — only clear the
+            # spinner. mark_unread is gated on an actual reply; mark_done still closes.
+            if reply_expected:
+                store.mark_unread(user_id, thread_id)
             store.publish_session_event(
-                user_id, {"session": thread_id, "running": False, "hasNewReply": True}
+                user_id,
+                {"session": thread_id, "running": False, "hasNewReply": reply_expected},
             )
             store.mark_done(key)
-
-    pool.submit(_produce)
+    except Exception as exc:
+        logger.error(
+            "chatagent_v3.producer_failed",
+            user_id=user_id,
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
 
 
 def _consume_stream(

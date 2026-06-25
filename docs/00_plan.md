@@ -145,7 +145,7 @@
 >   the v3 stack's SSE idiom. A client's own active run already updates from that
 >   session's chat stream, so the channel only carries cross-tab / background deltas.
 
-**Counter: 完成 7 / 未完成 1 / descope 0**
+**Counter: 完成 8 / 未完成 1 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
@@ -156,5 +156,6 @@
 | T-CAv3L.5 | Red+Green | • **Achieve:** `GET /chatagent/v3/sessionEvents` SSE — subscribes the user's pub/sub channel, relays each transition as a `data:` frame, self-closes after idle (browser reconnects), fail-soft on Redis outage; registered only when the store is wired.<br>• **Deliver:** `routers/chatagent_v3.py` (`_session_events_stream`, `session_events_idle_timeout`); `tests/unit/test_chatagent_v3_router.py`.<br>• **Success criteria:** a published event is streamed to a subscribed client; route is 404 with no store. | [x] | Dev |
 | T-CAv3L.W1 | Behavioral | • **Achieve:** `REDIS_UNREAD_TTL_SECONDS` read in `ChatStreamStore.from_env` (no composition change — the store is the existing env-factory seam).<br>• **Deliver:** `clients/chat_stream_store.py` `from_env`; `docs/spec/env_vars.md` + `.env.example`.<br>• **Success criteria:** `tests/unit/test_env_example_drift.py` stays green with the new var symmetric. | [x] | Dev |
 | T-CAv3L.D1 | Structural | • **Achieve:** Document the live-status fields + `sessionEvents` SSE channel and the snapshot+delta model.<br>• **Deliver:** `docs/spec/chatagent_v3.md` §3.4.8.<br>• **Success criteria:** spec describes `running`/`hasNewReply`, the SSE channel payloads, and the cross-pod pub/sub fan-out. | [x] | Dev |
+| T-CAv3L.R1 | Red+Green | • **Achieve:** PR #201 review fixes — (a) `is_running` gates on `is_resumable` so a pointer that outlives its dead buffer no longer shows a ghost spinner; (b) `_produce` extracted to `_run_producer` with a top-level `try/except` logging `chatagent_v3.producer_failed` (fire-and-forget Future no longer swallows errors); (c) `reply_expected` gates the unread dot so a control-only (all-`cancelled`) resume leaves no stale dot; (d) `GET /session` clears the flag only after a `<400` upstream response.<br>• **Deliver:** `clients/chat_stream_store.py`, `routers/chatagent_v3.py`; `tests/unit/test_chat_stream_store.py` + `tests/unit/test_chatagent_v3_router.py`.<br>• **Success criteria:** the four review threads are addressed with tests; affected suites green. | [x] | Dev |
 | T-CAv3L.FE1 | Red+Green | • **Achieve:** mco-clean session list renders the spinner/dot — takes the `sessionList` snapshot on mount, subscribes `GET /chatagent/v3/sessionEvents` and merges deltas, suppresses the dot for the actively-viewed session. **(frontend — out of this backend cycle)**<br>• **Deliver:** mco-clean `@twp/ai` session-list data layer + UI.<br>• **Success criteria:** spinner shows while a background run streams; dot appears on completion and clears on open; cross-tab updates without a manual refresh. | [ ] | Dev |
 
