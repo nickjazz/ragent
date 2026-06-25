@@ -179,6 +179,12 @@ class MinioSiteRegistry:
         content_type = getattr(stat, "content_type", None)
         return size, content_type
 
+    def put_object(
+        self, site: str, object_key: str, data: io.IOBase, length: int, content_type: str
+    ) -> None:
+        rec = self.get(site)
+        rec.client.put_object(rec.bucket, object_key, data, length, content_type=content_type)
+
     def put_object_default(
         self,
         *,
@@ -189,9 +195,8 @@ class MinioSiteRegistry:
         length: int,
         content_type: str,
     ) -> str:
-        rec = self.default()
         key = f"{_sanitise(source_app)}_{_sanitise(source_id)}_{document_id}"
-        rec.client.put_object(rec.bucket, key, data, length, content_type=content_type)
+        self.put_object(DEFAULT_SITE, key, data, length, content_type)
         return key
 
     def delete_object(self, site: str, object_key: str) -> None:
