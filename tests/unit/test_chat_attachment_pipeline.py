@@ -6,7 +6,7 @@ import pytest
 from haystack.dataclasses import Document
 
 from ragent.pipelines.chat_attachment.pipeline import ChatAttachmentPipeline
-from ragent.schemas.attachments import AttachmentMime, UNPROTECT_MIMES
+from ragent.schemas.attachments import AttachmentMime
 
 
 class TestChatAttachmentPipeline:
@@ -19,9 +19,7 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = b"hello world"
-        result = await pipeline.run(
-            file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN
-        )
+        result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN)
 
         assert "complete" in result
         assert "simplified" in result
@@ -34,9 +32,7 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = b"# Title\nContent here"
-        result = await pipeline.run(
-            file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_MARKDOWN
-        )
+        result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_MARKDOWN)
 
         assert "complete" in result
         assert "simplified" in result
@@ -49,22 +45,24 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = b"<html><body>test</body></html>"
-        result = await pipeline.run(
-            file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_HTML
-        )
+        result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_HTML)
 
         assert "complete" in result
         assert "simplified" in result
         unprotect_client.unprotect.assert_not_called()
 
-    @pytest.mark.parametrize("mime_type", [AttachmentMime.PDF, AttachmentMime.DOCX, AttachmentMime.PPTX])
+    @pytest.mark.parametrize(
+        "mime_type", [AttachmentMime.PDF, AttachmentMime.DOCX, AttachmentMime.PPTX]
+    )
     @pytest.mark.asyncio
     async def test_pipeline_calls_unprotect_for_protected_mimes(self, mime_type: AttachmentMime):
         """Binary MIME types (PDF/DOCX/PPTX) trigger unprotect before AST building."""
         unprotect_client = AsyncMock()
         unprotect_client.unprotect.return_value = b"unprotected content"
 
-        with patch("ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter") as mock_splitter_class:
+        with patch(
+            "ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter"
+        ) as mock_splitter_class:
             mock_splitter = MagicMock()
             mock_splitter_class.return_value = mock_splitter
             mock_splitter.run.return_value = {"documents": [Document(content="test")]}
@@ -85,9 +83,7 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = b"line 1\nline 2"
-        result = await pipeline.run(
-            file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN
-        )
+        result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN)
 
         complete = result["complete"]
         assert isinstance(complete, list)
@@ -100,9 +96,7 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = b"line 1\nline 2\nline 3"
-        result = await pipeline.run(
-            file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN
-        )
+        result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_PLAIN)
 
         complete = result["complete"]
         simplified = result["simplified"]
@@ -117,7 +111,9 @@ class TestChatAttachmentPipeline:
         unprotect_client = AsyncMock()
         unprotect_client.unprotect.return_value = b"unprotected"
 
-        with patch("ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter") as mock_splitter_class:
+        with patch(
+            "ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter"
+        ) as mock_splitter_class:
             mock_splitter = MagicMock()
             mock_splitter_class.return_value = mock_splitter
             mock_splitter.run.return_value = {"documents": [Document(content="test")]}

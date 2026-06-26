@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from haystack.dataclasses import Document
 
 from ragent.pipelines.ingest.splitter import _MimeAwareSplitter
-from ragent.schemas.attachments import AttachmentMime, UNPROTECT_MIMES
+from ragent.schemas.attachments import UNPROTECT_MIMES, AttachmentMime
 
 if TYPE_CHECKING:
     from ragent.clients.unprotect_client import UnprotectClient
@@ -24,9 +24,7 @@ class ChatAttachmentPipeline:
         self._unprotect_client = unprotect_client
         self._splitter = _MimeAwareSplitter()
 
-    async def run(
-        self, file_bytes: bytes, mime_type: AttachmentMime
-    ) -> dict[str, list[Document]]:
+    async def run(self, file_bytes: bytes, mime_type: AttachmentMime) -> dict[str, list[Document]]:
         """Run the attachment pipeline: load → unprotect → AST build.
 
         Args:
