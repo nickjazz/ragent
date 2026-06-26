@@ -1,0 +1,218 @@
+"""T-CAT.8 — AttachmentRepository: CRUD + list_by_thread, update_status (unit, mocked conn)."""
+
+import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+from ragent.repositories.attachment_repository import (
+    ArtifactRow,
+    AttachmentRepository,
+    AttachmentRow,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _dt(s: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(s).replace(tzinfo=datetime.timezone.utc)
+
+
+def _row(**kwargs) -> dict:
+    base = dict(
+        attachment_id="ATTAAAAAAAAAAAAAAAAAAAAAA",
+        thread_id="thread-1",
+        create_user="alice",
+        filename="report.pdf",
+        mime_type="application/pdf",
+        size_bytes=12345,
+        status="UPLOADED",
+        created_at=_dt("2026-01-01T00:00:00"),
+        updated_at=_dt("2026-01-01T00:00:00"),
+    )
+    base.update(kwargs)
+    return base
+
+
+def _artifact_row(**kwargs) -> dict:
+    base = dict(
+        attachment_id="ATTAAAAAAAAAAAAAAAAAAAAAA",
+        ast_type="complete",
+        storage_key="chat_attachments/ATT.../complete.json",
+        created_at=_dt("2026-01-01T00:00:00"),
+    )
+    base.update(kwargs)
+    return base
+
+
+def _mock_engine(rows=None, rowcount=1):
+    """Build an AsyncMock engine that doubles as connection for unit tests.
+
+    repo uses `async with self._engine.begin() as conn: await conn.execute(...)`.
+    """
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = rows or []
+    result.mappings.return_value.first.return_value = rows[0] if rows else None
+    result.rowcount = rowcount
+
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=result)
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    engine = MagicMock()
+    engine.begin = MagicMock(return_value=ctx)
+    return engine, conn
+
+
+# ---------------------------------------------------------------------------
+# create
+# ---------------------------------------------------------------------------
+
+
+async def test_create_returns_attachment_id():
+    engine, _ = _mock_engine()
+    repo = AttachmentRepository(engine)
+    attachment_id = await repo.create(
+        attachment_id="ATT001",
+        thread_id="thread-1",
+        create_user="alice",
+        filename="report.pdf",
+        mime_type="application/pdf",
+        size_bytes=12345,
+    )
+    assert attachment_id == "ATT001"
+
+
+async def test_create_inserts_all_mandatory_fields():
+    engine, conn = _mock_engine()
+    repo = AttachmentRepository(engine)
+    await repo.create(
+        attachment_id="ATT001",
+        thread_id="thread-1",
+        create_user="alice",
+        filename="report.pdf",
+        mime_type="application/pdf",
+        size_bytes=12345,
+    )
+    conn.execute.assert_called_once()
+    params = conn.execute.call_args[0][1]
+    assert params["attachment_id"] == "ATT001"
+    assert params["thread_id"] == "thread-1"
+    assert params["create_user"] == "alice"
+    assert params["filename"] == "report.pdf"
+    assert params["mime_type"] == "application/pdf"
+    assert params["size_bytes"] == 12345
+
+
+# ---------------------------------------------------------------------------
+# get
+# ---------------------------------------------------------------------------
+
+
+async def test_get_returns_attachment_row():
+    row = _row(attachment_id="ATT001", status="READY")
+    engine, _ = _mock_engine(rows=[row])
+    repo = AttachmentRepository(engine)
+    attachment = await repo.get("ATT001")
+    assert attachment is not None
+    assert isinstance(attachment, AttachmentRow)
+    assert attachment.attachment_id == "ATT001"
+    assert attachment.status == "READY"
+    assert attachment.thread_id == "thread-1"
+    assert attachment.filename == "report.pdf"
+
+
+async def test_get_returns_none_for_missing():
+    engine, _ = _mock_engine(rows=[])
+    repo = AttachmentRepository(engine)
+    assert await repo.get("MISSING") is None
+
+
+# ---------------------------------------------------------------------------
+# list_by_thread
+# ---------------------------------------------------------------------------
+
+
+async def test_list_by_thread_returns_rows():
+    rows = [_row(attachment_id=f"ATT{i}") for i in range(3)]
+    engine, _ = _mock_engine(rows=rows)
+    repo = AttachmentRepository(engine)
+    results = await repo.list_by_thread("thread-1")
+    assert len(results) == 3
+    assert all(isinstance(r, AttachmentRow) for r in results)
+
+
+async def test_list_by_thread_filters_by_thread_id():
+    engine, conn = _mock_engine(rows=[])
+    repo = AttachmentRepository(engine)
+    await repo.list_by_thread("thread-1")
+    sql_text = str(conn.execute.call_args[0][0])
+    assert "thread_id" in sql_text
+
+
+async def test_list_by_thread_after_cursor_filters():
+    row = _row(attachment_id="ATT5")
+    engine, conn = _mock_engine(rows=[row])
+    repo = AttachmentRepository(engine)
+    results = await repo.list_by_thread("thread-1", after="ATT9", limit=5)
+    assert results[0].attachment_id == "ATT5"
+    sql_text = str(conn.execute.call_args[0][0])
+    assert "< :after" in sql_text
+
+
+# ---------------------------------------------------------------------------
+# update_status
+# ---------------------------------------------------------------------------
+
+
+async def test_update_status_executes_update():
+    engine, conn = _mock_engine()
+    repo = AttachmentRepository(engine)
+    await repo.update_status("ATT001", "READY")
+    conn.execute.assert_called_once()
+    params = conn.execute.call_args[0][1]
+    assert params["status"] == "READY"
+    assert params["id"] == "ATT001"
+
+
+# ---------------------------------------------------------------------------
+# add_artifact
+# ---------------------------------------------------------------------------
+
+
+async def test_add_artifact_executes_insert():
+    engine, conn = _mock_engine()
+    repo = AttachmentRepository(engine)
+    await repo.add_artifact("ATT001", "complete", "chat_attachments/ATT001/complete.json")
+    conn.execute.assert_called_once()
+    params = conn.execute.call_args[0][1]
+    assert params["attachment_id"] == "ATT001"
+    assert params["ast_type"] == "complete"
+    assert params["storage_key"] == "chat_attachments/ATT001/complete.json"
+
+
+# ---------------------------------------------------------------------------
+# get_artifacts
+# ---------------------------------------------------------------------------
+
+
+async def test_get_artifacts_returns_rows():
+    rows = [
+        _artifact_row(ast_type="complete", storage_key="key-complete"),
+        _artifact_row(ast_type="simplified", storage_key="key-simplified"),
+    ]
+    engine, _ = _mock_engine(rows=rows)
+    repo = AttachmentRepository(engine)
+    results = await repo.get_artifacts("ATT001")
+    assert len(results) == 2
+    assert all(isinstance(r, ArtifactRow) for r in results)
+    assert {r.ast_type for r in results} == {"complete", "simplified"}
+
+
+async def test_get_artifacts_returns_empty_for_missing():
+    engine, _ = _mock_engine(rows=[])
+    repo = AttachmentRepository(engine)
+    assert await repo.get_artifacts("MISSING") == []
