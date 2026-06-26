@@ -24,30 +24,39 @@ This is a distinct domain from `/chatagent/v3` and may evolve independently.
 
 ### Data model (MariaDB)
 
-Two tables (no FK — application-layer relations per `00_domain_map.md §2.4`):
+Two tables. Per `00_rule.md §Database Practices` every table carries a surrogate
+`id BIGINT UNSIGNED AUTO_INCREMENT` PK (storage/ordering only — never exposed in
+APIs or logs) plus the Crockford-Base32 business id as a `UNIQUE KEY`; no physical
+FK (application-layer relations per `00_domain_map.md §2.4`):
 
 ```
 projects
-  project_id  CHAR(26)     PRIMARY KEY   -- new_id(), §5.3
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY  -- surrogate
+  project_id  CHAR(26)     NOT NULL                 -- business id, new_id() §5.3
   user_id     VARCHAR(64)  NOT NULL
   name        VARCHAR(255) NOT NULL
   created_at  DATETIME(6)  NOT NULL
   updated_at  DATETIME(6)  NOT NULL
-  INDEX idx_projects_user (user_id)      -- list a user's projects
+  UNIQUE KEY uq_projects_project_id (project_id)
+  INDEX idx_projects_user (user_id)                 -- list a user's projects
 
 project_sessions
-  session_id  VARCHAR(64)  PRIMARY KEY   -- upstream session id (ragent-minted)
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY  -- surrogate
+  session_id  VARCHAR(64)  NOT NULL                 -- business id, upstream session id
   project_id  CHAR(26)     NOT NULL
   user_id     VARCHAR(64)  NOT NULL
   created_at  DATETIME(6)  NOT NULL
-  INDEX idx_project_sessions_project (project_id)  -- list one project's sessions
-  INDEX idx_project_sessions_user    (user_id)     -- exclude grouped from sessionList
+  UNIQUE KEY uq_project_sessions_session (session_id)  -- one project per session
+  INDEX idx_project_sessions_project (project_id)      -- list one project's sessions
+  INDEX idx_project_sessions_user    (user_id)         -- exclude grouped from sessionList
 ```
 
-`session_id` is the **PRIMARY KEY**: this is how *"a session belongs to at most
-one project"* is enforced at the storage layer. A session with no row is
-**ungrouped** — projects are optional. All queries additionally scope by
-`user_id` so one user can never read or mutate another user's projects/sessions.
+`project_sessions.session_id` is a **`UNIQUE KEY`**: this is how *"a session
+belongs to at most one project"* is enforced at the storage layer (the business
+identity tuple is the single `session_id`, per `00_rule.md` rule item 3). A
+session with no row is **ungrouped** — projects are optional. All queries
+additionally scope by `user_id` so one user can never read or mutate another
+user's projects/sessions.
 
 ### Endpoints
 
@@ -60,7 +69,7 @@ query. `projectId` is a 26-char id; `session` is the upstream session id.
 | GET    | `/project/v1`                          | — | `200 { projects: [{ projectId, name, createTime, updateTime, sessionCount }] }` |
 | GET    | `/project/v1/{projectId}`              | — | `200 { projectId, name, sessions: [SessionEntry] }` (`404 PROJECT_NOT_FOUND`) |
 | PUT    | `/project/v1/{projectId}`              | `{ "name": str }` | `200 { projectId, name, updateTime }` (`404 PROJECT_NOT_FOUND`) |
-| DELETE | `/project/v1/{projectId}`              | — | `200 { projectId, sessionsDeleted, sessionsFailed: [session] }` (`404 PROJECT_NOT_FOUND`) |
+| DELETE | `/project/v1/{projectId}`              | — | `200 { projectId, sessionsDeleted, sessionsFailed: [session], retained }` (`404 PROJECT_NOT_FOUND`) |
 | POST   | `/project/v1/{projectId}/sessions`     | `{ "session": str }` | `204` (`404 PROJECT_NOT_FOUND` / `409 PROJECT_SESSION_CONFLICT`) |
 | DELETE | `/project/v1/{projectId}/sessions/{session}` | — | `204` (`404 PROJECT_NOT_FOUND` / `502`/`504` on upstream delete) |
 
@@ -80,6 +89,15 @@ session was deleted upstream out-of-band) is silently dropped from the response
 and **lazily removed** from `project_sessions` — it is a dangling row, not a
 session.
 
+**Cost / scaling note.** This reuses the **same** upstream `sessionList` call the
+existing `GET /chatagent/v3/sessionList` (and the left-list exclusion below)
+already makes — it is not a new class of bottleneck, and the membership set bounds
+the rendered result. Caching the upstream list is deliberately **not** done in
+this cycle (YAGNI — no measured hot path; a stale cache would also mis-render
+freshly-created sessions). If the upstream later exposes a batch fetch by
+`session_ids` (e.g. `GET /sessionList?ids=…`), `list_project_sessions` switches to
+it — a service-layer change behind the same contract, no schema impact.
+
 ### Associating a session with a project
 
 Two paths, both *"create membership if absent"*:
@@ -92,11 +110,23 @@ Two paths, both *"create membership if absent"*:
    (`chatagent_v3.project_associate_failed`) and the session is created ungrouped.
    If the session already has a membership (a continuing thread), it is **left
    unchanged** — chat-time association creates, never moves.
+
+   *Why silent-degrade and not a `404` here (PR #200 review):* `POST /chatagent/v3`
+   is bound by the v3 error contract — it **never returns an HTTP 4xx**; the only
+   in-band failure channel is a `RUN_ERROR`, which *terminates the run*. Rejecting
+   an invalid `projectId` would therefore abort the chat, which contradicts the
+   locked "never block chat" decision. So an invalid/unowned `projectId` degrades
+   to ungrouped + warning rather than failing the turn. A client that needs a hard
+   guarantee uses the **explicit** path (2) — which *does* return `404`/`409` — or
+   verifies via `GET /project/v1/{id}` after the run. (If a frontend-visible signal
+   is later wanted without blocking, the additive option is a non-fatal
+   `projectAssociated` flag on `RUN_STARTED`; deferred unless a UX need appears.)
 2. **Explicitly — `POST /project/v1/{projectId}/sessions`.** Adds an existing
    (typically ungrouped) session to a project. If the session already belongs to
-   **another** project, the `session_id` PRIMARY KEY collides → `409
-   PROJECT_SESSION_CONFLICT` (re-adding to the *same* project is idempotent
-   `204`). There is no implicit move.
+   **another** project, the `session_id` `UNIQUE KEY`
+   (`uq_project_sessions_session`) collides → `409 PROJECT_SESSION_CONFLICT`
+   (re-adding to the *same* project is idempotent `204`). There is no implicit
+   move.
 
 ### Deletion semantics — a session's lifecycle follows its project
 
@@ -104,17 +134,30 @@ Removing a session from a project **deletes the session**, not just the link
 (decision: 2026-06-25 design session):
 
 - `DELETE /project/v1/{projectId}/sessions/{session}` — calls the upstream
-  `DELETE /session` first; **on success**, removes the `project_sessions` row →
-  `204`. On upstream failure the membership is **left intact** and the failure
-  surfaces as `502 CHATAGENT_UPSTREAM_ERROR` / `504 CHATAGENT_TIMEOUT` (the
-  single-session path is atomic-ish: the link is dropped only once the session is
-  actually gone).
+  `DELETE /session` first; **on success — or a `404` (the session is already gone
+  upstream, e.g. deleted out-of-band)** — removes the `project_sessions` row →
+  `204`. Treating `404` as success is what guarantees a dangling link is always
+  clearable; otherwise every retry would re-hit the upstream `404` and the link
+  could never be removed. Only a *real* upstream failure (5xx / timeout / network)
+  leaves the membership intact and surfaces as `502 CHATAGENT_UPSTREAM_ERROR` /
+  `504 CHATAGENT_TIMEOUT` (atomic-ish: the link is dropped only once the session
+  is actually gone).
 - `DELETE /project/v1/{projectId}` (whole project) — for each member session,
-  calls the upstream `DELETE /session` (best-effort, collecting failures), then
-  deletes the `project_sessions` rows and the `projects` row. A session whose
-  upstream delete failed becomes an **ungrouped orphan** (recoverable, not lost)
-  and is reported in `sessionsFailed`. The bulk path cannot be transactional
-  across many upstream calls, so it returns a `200` summary rather than `204`.
+  calls the upstream `DELETE /session` (`404` counts as success per above) and
+  removes the `project_sessions` row **only for the sessions that were actually
+  deleted**. Sessions whose upstream delete *failed* (5xx / timeout) **keep their
+  membership and stay in the project** — they are reported in `sessionsFailed` and
+  do **not** spill back into the flat sidebar as ungrouped orphans (which would be
+  the opposite of the user's intent). The `projects` row is deleted **only when
+  every member delete succeeded** (the project is now empty); on partial failure
+  the project is **retained** with the failed sessions still in it, so the client
+  simply retries `DELETE` until `sessionsFailed` is empty. The bulk path cannot be
+  transactional across many upstream calls, so it returns a `200` summary
+  `{ projectId, sessionsDeleted, sessionsFailed, retained }` rather than `204`:
+  `projectId` is **always echoed**; `sessionsDeleted` is the count removed;
+  `sessionsFailed` lists the session ids whose upstream delete failed; `retained`
+  is a boolean — `true` when the project was kept because `sessionsFailed` is
+  non-empty, `false` when the project (now empty) was deleted.
 
 Because the upstream is not transactional, neither path holds a DB transaction
 across the upstream call (`00_spec.md §3.1` locking rule). There is **no
@@ -149,8 +192,12 @@ Both new codes are added to `src/ragent/errors/codes.py` (`HttpErrorCode`) and
 
 ### Configuration
 
-No new env vars. The cascade-delete path reuses the existing
-`CHATAGENT_SESSION_API_URL` + `CHATAGENT_AP_NAME` (the same upstream the v3
-`DELETE /session` proxy uses); the project routes are registered only when that
-URL is set (so cascade delete is always possible where projects are enabled).
-The repository uses the shared MariaDB engine from the composition root.
+No new env vars. The project read path needs the upstream **sessionList**
+(`GET /project/v1/{id}` intersects with it) and the cascade-delete path needs the
+upstream **session** delete (`CHATAGENT_SESSION_API_URL`) + `CHATAGENT_AP_NAME`.
+Both upstream surfaces are therefore required: `/project/v1` is registered **only
+when BOTH `CHATAGENT_SESSIONLIST_API_URL` AND `CHATAGENT_SESSION_API_URL` are
+set** (the same two URLs that gate the v3 `sessionList` and `session` routes
+respectively). With only one set, the project surface would expose a route whose
+read or delete path cannot be satisfied, so it stays unregistered. The repository
+uses the shared MariaDB engine from the composition root.
