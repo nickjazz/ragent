@@ -125,9 +125,7 @@ def create_chatagent_v3_router(
             assert agent_factory is not None  # this route only registers when it is
             attachments_block = None
             if body.attachment_ids and document_artifact_resolver is not None:
-                attachments_block = await document_artifact_resolver.resolve(
-                    body.attachment_ids
-                )
+                attachments_block = await document_artifact_resolver.resolve(body.attachment_ids)
             agent = agent_factory(user_id, raw_token, attachments_block)
             logger.info("chatagent_v3.request", user_id=user_id)
 
