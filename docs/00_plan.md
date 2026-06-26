@@ -138,12 +138,15 @@
 > - **New-reply is a Redis presence flag** (`chatunread:`), not a timestamp: set on
 >   run completion, dropped on `GET /session`. `hasNewReply` is a plain `EXISTS`.
 >   Own long TTL (`REDIS_UNREAD_TTL_SECONDS`, 30d) so it outlives the run buffer.
-> - **Realtime via SSE + Redis pub/sub**, not NATS: keeps the channel inside
->   `/chatagent/v3`'s own HTTP/SSE boundary (consistent with v3 being an SSE proxy);
->   per-user channel `sessionevents:{user}` gives cross-pod fan-out for free. SSE
->   (not WebSocket) — the push is one-way, runs over existing HTTP/auth, and reuses
->   the v3 stack's SSE idiom. A client's own active run already updates from that
->   session's chat stream, so the channel only carries cross-tab / background deltas.
+> - **Realtime delta channel — SUPERSEDED.** This track originally shipped an SSE
+>   `sessionEvents` endpoint (Redis pub/sub, `sessionevents:{user}`). PR #201 review
+>   rejected it (native `EventSource` can't carry header auth; the sync SSE generator
+>   pins an AnyIO threadpool token per connection). **See Track T-CAv3N** — the realtime
+>   delta moved to NATS (`session.<user>.status`); the SSE route + Redis pub/sub were
+>   removed. The snapshot half of this track (`sessionList` `running`/`hasNewReply`,
+>   `chatunread:` flag) stands; only the delivery channel changed. A client's own active
+>   run already updates from that session's chat stream, so the channel only carries
+>   cross-tab / background deltas.
 
 **Counter: 完成 7 / 未完成 1 / descope 1**
 
@@ -170,7 +173,7 @@
 > server-authoritative) — ragent publishes per-user status; the frontend
 > subscribes over its existing NATS connection. SSE endpoint + Redis pub/sub removed.
 
-**Counter: 完成 6 / 未完成 1 / descope 0**
+**Counter: 完成 7 / 未完成 1 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
@@ -180,5 +183,6 @@
 | T-CAv3N.4 | Red+Green | • **Achieve:** (#5 review) `ChatStreamStore.status_many(user, thread_ids)` — batch `{running, hasNewReply}` in 2 pipelined round-trips (replaces N×3 per-session calls); sessionList enrichment uses it.<br>• **Deliver:** `clients/chat_stream_store.py`, `routers/chatagent_v3.py` (`_session_status_fn`); `tests/unit/test_chat_stream_store.py`.<br>• **Success criteria:** batched statuses match per-session results; fail-soft all-False. | [x] | Dev |
 | T-CAv3N.W1 | Behavioral | • **Achieve:** Wire `NatsSessionPublisher` into composition (env config) + Container + lifespan connect/close + v3 registration.<br>• **Deliver:** `bootstrap/composition.py`, `bootstrap/app.py`; `docs/spec/env_vars.md` + `.env.example` (`NATS_SERVERS`/`NATS_SESSION_SUBJECT_PREFIX`/`NATS_TOKEN`/`NATS_CREDS`).<br>• **Success criteria:** app boots with NATS unset (snapshot-only); env drift green. | [x] | Dev |
 | T-CAv3N.D1 | Structural | • **Achieve:** (#2/#4 review) Document NATS realtime + the lossy snapshot+delta re-sync contract; drop the EventSource claim.<br>• **Deliver:** `docs/spec/chatagent_v3.md` §3.4.8, `docs/00_spec.md`, `docs/API.md`.<br>• **Success criteria:** spec describes the NATS subject, payloads, best-effort publish, and mandatory sessionList re-sync on (re)connect. | [x] | Dev |
+| T-CAv3N.R1 | Red+Green | • **Achieve:** PR #201 NATS-round review fixes — (a) `status_many` splits the resumable `EXISTS` into two single-key calls (Redis Cluster CROSSSLOT-safe, same pipeline); (b) `NATS_SERVERS` parsing strips whitespace + drops empties; (c) `_close_infra` wraps the NATS close (never-raises contract); (d) the new-reply dot is gated on a **successful** terminal — a run ending in `RUN_ERROR` (not just a cancelled resume) no longer dots the session; (e) fixed the stale SSE "locked decision" in the T-CAv3L track to point at T-CAv3N.<br>• **Deliver:** `clients/chat_stream_store.py`, `clients/nats_publisher.py`, `bootstrap/app.py`, `routers/chatagent_v3.py` (`_terminal_is_success`); `tests/unit/test_chat_stream_store.py` + `test_nats_publisher.py` + `test_app_lifespan_infra.py` + `test_chatagent_v3_router.py`; `docs/00_plan.md`.<br>• **Success criteria:** RUN_ERROR run leaves no dot; close survives a NATS failure; whitespace servers parse; review threads addressed. | [x] | Dev |
 | T-CAv3N.FE1 | Red+Green | • **Achieve:** mco-clean subscribes `session.<user>.status` over its NATS connection, merges deltas onto the sessionList snapshot, re-syncs on (re)connect/error. **(frontend — out of this backend cycle)**<br>• **Deliver:** mco-clean `@twp/ai` session-list data layer.<br>• **Success criteria:** spinner/dot update in realtime cross-tab; snapshot re-sync on reconnect. | [ ] | Dev |
 

@@ -72,11 +72,11 @@ async def test_connect_opens_connection_via_nats(monkeypatch) -> None:
         return _NC()
 
     monkeypatch.setattr("nats.connect", _fake_connect)
-    pub = NatsSessionPublisher(servers="nats://a,nats://b", token="tok")
+    pub = NatsSessionPublisher(servers="nats://a, nats://b , ", token="tok")
 
     await pub.connect(asyncio.get_running_loop())
 
-    assert opened["servers"] == ["nats://a", "nats://b"]  # comma-split
+    assert opened["servers"] == ["nats://a", "nats://b"]  # comma-split, stripped, empties dropped
     assert opened["opts"]["token"] == "tok"
 
 

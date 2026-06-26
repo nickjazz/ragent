@@ -237,7 +237,11 @@ class ChatStreamStore:
             for t, run_id in zip(thread_ids, run_ids, strict=True):
                 if run_id is not None:
                     key = self.key(user_id, t, run_id)
-                    batch.exists(key, self._lock_key(key))  # is_resumable
+                    # Split the is_resumable check into two single-key EXISTS: the buffer
+                    # and lock keys hash to different cluster slots, so a multi-key EXISTS
+                    # would raise CROSSSLOT under Redis Cluster (free here — same pipeline).
+                    batch.exists(key)
+                    batch.exists(self._lock_key(key))
                     batch.xrevrange(key, max="+", min="-", count=1)  # is_done tail
                     live.append(t)
             res = batch.execute()
@@ -249,9 +253,9 @@ class ChatStreamStore:
             result[t]["hasNewReply"] = bool(unread)
         idx = len(thread_ids)
         for t in live:
-            resumable = bool(res[idx])
-            tail = res[idx + 1]
-            idx += 2
+            resumable = bool(res[idx]) or bool(res[idx + 1])  # buffer or lock present
+            tail = res[idx + 2]
+            idx += 3
             is_done = bool(tail) and _FIELD_EOS in tail[0][1]
             result[t]["running"] = resumable and not is_done
         return result

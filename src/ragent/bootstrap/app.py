@@ -110,7 +110,10 @@ async def _check_infra_ready(probes: dict, broker: Any, container: Any) -> None:
 async def _close_infra(container: Any) -> None:
     """Best-effort close of ES client, DB engine, and NATS publisher; never raises."""
     if container.nats_publisher is not None:
-        await container.nats_publisher.close()
+        try:
+            await container.nats_publisher.close()
+        except Exception:  # noqa: BLE001 — shutdown path; log and continue
+            logger.warning("api.shutdown.nats_close_failed", exc_info=True)
     try:
         container.es_client.close()
     except Exception:  # noqa: BLE001 — shutdown path; log and continue

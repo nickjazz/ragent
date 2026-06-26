@@ -10,6 +10,8 @@ import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from twp_ai.events import (
+    RunErrorEvent,
+    RunFinishedEvent,
     RunStartedEvent,
     TextMessageContentEvent,
     TextMessageStartEvent,
@@ -616,12 +618,19 @@ def test_v3_active_viewer_clears_unread_on_completion() -> None:
     assert store.has_unread("alice", "thread_1") is False  # watched live → read
 
 
-class _OneFrameAgent:
+class _FinishedAgent:
     def run(self, request, model):  # noqa: ARG002 — stub matches the Agent protocol
         yield to_sse(RunStartedEvent(run_id="r", thread_id="t"))
+        yield to_sse(RunFinishedEvent(run_id="r", thread_id="t"))
 
 
-def test_run_producer_marks_unread_when_a_reply_is_expected() -> None:
+class _ErroredAgent:
+    def run(self, request, model):  # noqa: ARG002 — terminal is RUN_ERROR (no reply persisted)
+        yield to_sse(RunStartedEvent(run_id="r", thread_id="t"))
+        yield to_sse(RunErrorEvent(message="boom", run_id="r", thread_id="t"))
+
+
+def test_run_producer_marks_unread_on_successful_finish() -> None:
     # The producer marks the thread unread (the background/no-viewer case — a watching
     # consumer would later clear it on eos drain).
     from ragent.routers.chatagent_v3 import _run_producer
@@ -629,7 +638,7 @@ def test_run_producer_marks_unread_when_a_reply_is_expected() -> None:
     store = _store()
     key = ChatStreamStore.key("alice", "t", "r")
     _run_producer(
-        store, None, key, _OneFrameAgent(), object(), "", "alice", "t", reply_expected=True
+        store, None, key, _FinishedAgent(), object(), "", "alice", "t", reply_expected=True
     )
     assert store.has_unread("alice", "t") is True
 
@@ -641,7 +650,20 @@ def test_run_producer_skips_unread_for_control_only_resume() -> None:
     store = _store()
     key = ChatStreamStore.key("alice", "t", "r")
     _run_producer(
-        store, None, key, _OneFrameAgent(), object(), "", "alice", "t", reply_expected=False
+        store, None, key, _FinishedAgent(), object(), "", "alice", "t", reply_expected=False
+    )
+    assert store.has_unread("alice", "t") is False
+
+
+def test_run_producer_skips_unread_when_run_errors() -> None:
+    # A run ending in RUN_ERROR (e.g. upstream timeout after disconnect) persisted no
+    # reply — it must not dot the session even though reply_expected is True.
+    from ragent.routers.chatagent_v3 import _run_producer
+
+    store = _store()
+    key = ChatStreamStore.key("alice", "t", "r")
+    _run_producer(
+        store, None, key, _ErroredAgent(), object(), "", "alice", "t", reply_expected=True
     )
     assert store.has_unread("alice", "t") is False
 
@@ -653,7 +675,7 @@ def test_run_producer_publishes_running_transitions_over_nats() -> None:
     store = _store()
     key = ChatStreamStore.key("alice", "t", "r")
     _run_producer(
-        store, pub, key, _OneFrameAgent(), object(), "", "alice", "t", reply_expected=True
+        store, pub, key, _FinishedAgent(), object(), "", "alice", "t", reply_expected=True
     )
 
     events = [call.args[1] for call in pub.publish.call_args_list]
@@ -673,7 +695,7 @@ def test_run_producer_logs_instead_of_swallowing_a_background_error() -> None:
 
     with capture_logs() as logs:
         _run_producer(
-            store, None, "k", _OneFrameAgent(), object(), "", "alice", "t", reply_expected=True
+            store, None, "k", _FinishedAgent(), object(), "", "alice", "t", reply_expected=True
         )
 
     assert any(e["event"] == "chatagent_v3.producer_failed" for e in logs)

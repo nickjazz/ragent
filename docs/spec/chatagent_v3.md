@@ -199,7 +199,9 @@ message shape changes, while the upstream wire contract is untouched.
     so no extra bookkeeping.
   - `hasNewReply` — a run finished for this thread and the user has not read it
     since; drives the new-reply dot. Backed by a per-`(user, thread)` Redis flag
-    (`chatunread:`) set when a run completes and dropped when the user **reads** it —
+    (`chatunread:`) set when a run finishes **with a reply** (a successful `RUN_FINISHED`
+    terminal — a `RUN_ERROR` run or a control-only cancelled resume persisted no reply, so
+    it sets nothing) and dropped when the user **reads** it —
     either by opening the session (`GET /session`, after a successful fetch) **or** by
     watching the live run to its `eos` (the active POST/`reconnect` consumer clears on
     drain; a client that disconnects before `eos` leaves the dot, so a backgrounded

@@ -8,6 +8,7 @@ over a 200 stream, never as an HTTP 4xx/5xx code.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -365,6 +366,22 @@ def _last_user_text(body: RunAgentInput) -> str:
     return ""
 
 
+def _terminal_is_success(frame: str | None) -> bool:
+    """True when the run's last frame is RUN_FINISHED (success/interrupt), not RUN_ERROR.
+
+    The producer tracks the last appended frame; the terminal twp-ai event is always the
+    final one. A RUN_ERROR terminal persisted no assistant reply, so it must not set the
+    new-reply dot. A malformed/empty terminal is treated as "no reply" (safe default).
+    """
+    if not frame:
+        return False
+    try:
+        payload = json.loads(frame.removeprefix("data: ").strip())
+    except (ValueError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("type") == "RUN_FINISHED"
+
+
 def _session_status_fn(
     store: ChatStreamStore | None, user_id: str, payload: object
 ) -> Callable[[str], dict[str, bool]] | None:
@@ -476,20 +493,25 @@ def _run_producer(
     """
     if nats_publisher is not None:
         nats_publisher.publish(user_id, {"session": thread_id, "running": True})
+    last_frame: str | None = None
     try:
         try:
             for frame in agent.run(body, model):
                 store.append(key, frame)
+                last_frame = frame
         finally:
-            # A control-only resume (all interrupts cancelled) contacts no upstream and
-            # produces no new reply, so it must not dot the session — only clear the
-            # spinner. mark_unread is gated on an actual reply; mark_done still closes.
-            if reply_expected:
+            # A real new reply needs BOTH a non-cancelled turn (reply_expected) AND a
+            # successful terminal (RUN_FINISHED, not RUN_ERROR): a control-only cancel
+            # or a run that errored out (e.g. upstream timeout after disconnect)
+            # persisted no reply, so it must not dot the session. The spinner is always
+            # cleared regardless; mark_done still closes the buffer.
+            reply = reply_expected and _terminal_is_success(last_frame)
+            if reply:
                 store.mark_unread(user_id, thread_id)
             if nats_publisher is not None:
                 nats_publisher.publish(
                     user_id,
-                    {"session": thread_id, "running": False, "hasNewReply": reply_expected},
+                    {"session": thread_id, "running": False, "hasNewReply": reply},
                 )
             store.mark_done(key)
     except Exception as exc:

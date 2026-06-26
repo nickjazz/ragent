@@ -72,7 +72,8 @@ class NatsSessionPublisher:
                 opts["token"] = self._token
             if self._creds:
                 opts["user_credentials"] = self._creds
-            self._nc = await nats.connect(self._servers.split(","), name="ragent", **opts)
+            servers = [s.strip() for s in self._servers.split(",") if s.strip()]
+            self._nc = await nats.connect(servers, name="ragent", **opts)
             self._loop = loop
             logger.info("nats.connected")
         except Exception as exc:  # noqa: BLE001 — best-effort channel; degrade to snapshot-only
