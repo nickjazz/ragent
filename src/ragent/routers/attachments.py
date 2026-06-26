@@ -67,9 +67,7 @@ def create_attachments_router(
         try:
             mime_type = AttachmentMime(mime_str)
         except ValueError as e:
-            raise HTTPException(
-                status_code=415, detail=f"Unsupported MIME type: {mime_str}"
-            ) from e
+            raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime_str}") from e
 
         attachment_id = await service.upload(
             file_bytes=file_bytes,

@@ -1,6 +1,5 @@
 """T-CAT.16 — Extract and strip attachments from session history hidden block."""
 
-
 from ragent.services.chatagent_session import _extract_attachments_from_hidden
 
 
