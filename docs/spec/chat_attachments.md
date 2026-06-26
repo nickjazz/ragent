@@ -13,9 +13,7 @@ history).
 
 ## 2. MIME allow-list
 
-Reuses the same six formats as ingest (`AttachmentMime` enum, schema-isolated
-from `IngestMime` so the two domains can evolve independently even though the
-values match today):
+Six formats are supported for chat attachments (`AttachmentMime` enum):
 
 ```
 text/plain, text/markdown, text/html,
@@ -23,6 +21,8 @@ application/vnd.openxmlformats-officedocument.wordprocessingml.document,  (docx)
 application/vnd.openxmlformats-officedocument.presentationml.presentation,  (pptx)
 application/pdf
 ```
+
+**Note:** `text/csv` is intentionally omitted from attachments (though supported by ingest). CSV requires tabular presentation (column headers, alignment) which plain-text AST representation doesn't preserve well for agent-readability. If CSV support is needed, consider uploading as a data-interchange format (e.g., import-it-as-context or store-it-in-a-table) in a future iteration. The `AttachmentMime` and `IngestMime` enums are schema-isolated so the two domains can evolve independently.
 
 Extension fallback applies when the browser-supplied `Content-Type` is
 generic/incorrect (`MIME_EXTENSIONS` mapping, shared util). Rejection →
@@ -114,6 +114,70 @@ is the only implementation today; built once in `bootstrap/composition.py`
 and injected.
 
 ## 7. Async processing (worker mode, T-CAT.W2)
+
+### User Story
+
+**As a** user in a chat session  
+**I want to** attach large files (PDF, DOCX, PPTX) without blocking the UI  
+**So that** I can upload and immediately continue chatting, while the file processing happens in the background
+
+**Scenario:** Alice attaches a 50MB PDF to a thread.
+- **Upload (immediate):** Browser POSTs file → API accepts 202 → returns `attachmentId` within <100ms
+- **Process (async):** Worker claims row, runs pipeline (parse PDF AST), encrypts, persists artifacts (~5-30s depending on file size)
+- **Poll (client-driven):** Browser polls `GET /attachments/{id}` with exponential backoff (1s → 2s → 4s → cap 10s)
+- **States:** `UPLOADED` (queued) → `PROCESSING` (running) → `READY` (done) or `FAILED` (error + details)
+- **Result:** When status=READY, Alice can reference the attachment in her next message; agent fetches decrypted AST
+
+### Processing Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser/Client
+    participant API as FastAPI<br/>(request thread)
+    participant Store as DocumentStore<br/>(S3/MinIO)
+    participant DB as MariaDB
+    participant Worker as TaskIQ<br/>Worker Pool
+    participant Pipeline as Pipeline<br/>+Encrypt
+
+    Browser->>API: POST /upload<br/>(file, threadId)
+    activate API
+    API->>Store: PUT raw bytes
+    API->>DB: INSERT chat_attachments<br/>(status=UPLOADED)
+    API->>Worker: ENQUEUE attachment.process<br/>(attachment_id)
+    deactivate API
+    API-->>Browser: 202 Accepted<br/>(attachmentId)
+    
+    rect rgb(200, 220, 255)
+    note over Browser,Browser: Client polls every 1-10 seconds
+    end
+    
+    Browser->>API: GET /{attachmentId}
+    API->>DB: SELECT status, errorCode
+    API-->>Browser: 200 OK<br/>(status=UPLOADED)
+    
+    activate Worker
+    Worker->>DB: CLAIM<br/>(UPDATE status<br/>UPLOADED→PROCESSING)
+    activate Pipeline
+    Worker->>Store: GET raw bytes
+    Worker->>Pipeline: Load & Unprotect<br/>(PDF→plaintext)
+    Worker->>Pipeline: AST split<br/>(complete + simplified)
+    Worker->>Worker: Encrypt AST<br/>(AES-256-GCM)
+    deactivate Pipeline
+    Worker->>Store: PUT encrypted AST
+    Worker->>DB: add_artifact ×2<br/>(complete, simplified)
+    Worker->>DB: UPDATE status<br/>→ READY
+    deactivate Worker
+    
+    Browser->>API: GET /{attachmentId}
+    API->>DB: SELECT status
+    API-->>Browser: 200 OK<br/>(status=READY)
+    
+    rect rgb(200, 255, 200)
+    note over Browser,Browser: Attachment ready<br/>for next message
+    end
+```
+
+### Implementation Details
 
 `POST .../upload` is fast intake only: store raw bytes → `chat_attachments`
 row (`UPLOADED`) → enqueue `attachment.process` via `TaskiqDispatcher` →
