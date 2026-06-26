@@ -26,6 +26,9 @@ class AttachmentRow:
     status: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    # 014_chat_attachments_async.sql: persisted failure diagnostics.
+    error_code: str | None = None
+    error_reason: str | None = None
 
     @classmethod
     def from_mapping(cls, m: Any) -> AttachmentRow:
@@ -39,6 +42,8 @@ class AttachmentRow:
             status=m["status"],
             created_at=m["created_at"],
             updated_at=m["updated_at"],
+            error_code=m.get("error_code"),
+            error_reason=m.get("error_reason"),
         )
 
 
@@ -139,14 +144,58 @@ class AttachmentRepository:
         )
         return [AttachmentRow.from_mapping(r) for r in rows]
 
-    async def update_status(self, attachment_id: str, status: str) -> None:
+    async def update_status(
+        self,
+        attachment_id: str,
+        status: str,
+        error_code: str | None = None,
+        error_reason: str | None = None,
+    ) -> None:
         await self._execute(
             text(
-                "UPDATE chat_attachments SET status = :status, updated_at = NOW(6)"
+                "UPDATE chat_attachments SET status = :status, updated_at = NOW(6),"
+                " error_code = :error_code, error_reason = :error_reason"
                 " WHERE attachment_id = :id"
             ),
-            {"status": status, "id": attachment_id},
+            {
+                "status": status,
+                "id": attachment_id,
+                "error_code": error_code,
+                "error_reason": error_reason[:255] if error_reason else None,
+            },
         )
+
+    async def claim_for_processing(self, attachment_id: str) -> AttachmentRow | None:
+        """Pre-state SELECT + atomic conditional UPDATE, UPLOADED→PROCESSING.
+
+        Mirrors `DocumentRepository._atomic_claim` (no `attempt` counter —
+        out of scope for chat attachments). Returns the pre-state row on a
+        successful claim, or `None` if the row is missing, already terminal,
+        or a concurrent worker won the race.
+        """
+        async with self._engine.begin() as conn:
+            pre = (
+                (
+                    await conn.execute(
+                        text("SELECT * FROM chat_attachments WHERE attachment_id = :id"),
+                        {"id": attachment_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if pre is None or pre["status"] != "UPLOADED":
+                return None
+            update_result = await conn.execute(
+                text(
+                    "UPDATE chat_attachments SET status='PROCESSING', updated_at=NOW(6)"
+                    " WHERE attachment_id=:id AND status='UPLOADED'"
+                ),
+                {"id": attachment_id},
+            )
+            if update_result.rowcount == 0:
+                return None
+            return AttachmentRow.from_mapping(pre)
 
     # ------------------------------------------------------------------
     # chat_attachment_artifacts — CRUD

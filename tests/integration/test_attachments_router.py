@@ -53,7 +53,7 @@ def test_post_attachments_upload_stores_and_returns_id() -> None:
             headers={"X-User-Id": "alice"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         body = resp.json()
         assert body["attachmentId"] == "att_test_123"
 
@@ -106,6 +106,86 @@ def test_get_attachments_lists_by_thread() -> None:
         assert body["attachments"][0]["attachmentId"] == "att_1"
 
 
+def test_get_attachments_lists_error_fields_when_failed() -> None:
+    """GET /chatagent/v3/attachments surfaces errorCode/errorReason for FAILED rows."""
+    app, mocks = _build_test_app_with_mocked_attachments()
+    mocks["repository"].list_by_thread = AsyncMock(
+        return_value=[
+            AttachmentRow(
+                attachment_id="att_1",
+                thread_id="thread-1",
+                create_user="alice",
+                filename="test.txt",
+                mime_type="text/plain",
+                size_bytes=100,
+                status="FAILED",
+                created_at=_NOW,
+                updated_at=_NOW,
+                error_code="PIPELINE_UNEXPECTED_ERROR",
+                error_reason="RuntimeError: boom",
+            )
+        ]
+    )
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/chatagent/v3/attachments?threadId=thread-1",
+            headers={"X-User-Id": "alice"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["attachments"][0]
+        assert body["errorCode"] == "PIPELINE_UNEXPECTED_ERROR"
+        assert body["errorReason"] == "RuntimeError: boom"
+
+
+def test_get_attachment_by_id_returns_status_and_error_fields() -> None:
+    """GET /chatagent/v3/attachments/{id} returns the single attachment with error fields."""
+    app, mocks = _build_test_app_with_mocked_attachments()
+    mocks["repository"].get = AsyncMock(
+        return_value=AttachmentRow(
+            attachment_id="att_1",
+            thread_id="thread-1",
+            create_user="alice",
+            filename="test.txt",
+            mime_type="text/plain",
+            size_bytes=100,
+            status="PROCESSING",
+            created_at=_NOW,
+            updated_at=_NOW,
+        )
+    )
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/chatagent/v3/attachments/att_1",
+            headers={"X-User-Id": "alice"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["attachmentId"] == "att_1"
+        assert body["status"] == "PROCESSING"
+        assert body["errorCode"] is None
+        assert body["errorReason"] is None
+
+
+def test_get_attachment_by_id_returns_404_when_not_found() -> None:
+    """GET /chatagent/v3/attachments/{id} returns 404 problem-details for unknown id."""
+    app, mocks = _build_test_app_with_mocked_attachments()
+    mocks["repository"].get = AsyncMock(return_value=None)
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/chatagent/v3/attachments/att_missing",
+            headers={"X-User-Id": "alice"},
+        )
+
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["error_code"] == "ATTACHMENT_NOT_FOUND"
+
+
 def test_post_attachments_upload_logs_request() -> None:
     """POST upload logs attachments.upload_request with thread/filename context."""
     app, mocks = _build_test_app_with_mocked_attachments()
@@ -119,7 +199,7 @@ def test_post_attachments_upload_logs_request() -> None:
             headers={"X-User-Id": "alice"},
         )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     request_log = next(e for e in logs if e["event"] == "attachments.upload_request")
     assert request_log["thread_id"] == "thread-1"
     assert request_log["filename"] == "test.txt"

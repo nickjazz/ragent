@@ -334,6 +334,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     # Importing the workers module triggers `@broker.task` decorator
     # registration so that `dispatcher.enqueue(label, ...)` can resolve
     # task labels at producer side (B25).
+    import ragent.workers.attachment  # noqa: F401
     import ragent.workers.backfill  # noqa: F401
     import ragent.workers.ingest  # noqa: F401
     from ragent.bootstrap.broker import broker as taskiq_broker

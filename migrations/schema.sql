@@ -1,5 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
--- Latest migration folded in: 013_chat_attachments.sql
+-- Latest migration folded in: 014_chat_attachments_async.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 -- 013_chat_attachments.sql: chat-attachment metadata + per-AST-variant
 -- storage pointers (T-CAT.7). No `introduced_run_id` — the
 -- `<hidden><attachments>` block already binds the attachment to its turn.
+-- 014_chat_attachments_async.sql: added PROCESSING (async worker hand-off)
+-- + error_code/error_reason failure diagnostics (T-CAT.W2).
 CREATE TABLE IF NOT EXISTS chat_attachments (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   attachment_id CHAR(26)     NOT NULL,
@@ -95,9 +97,11 @@ CREATE TABLE IF NOT EXISTS chat_attachments (
   filename      VARCHAR(256) NOT NULL,
   mime_type     VARCHAR(128) NOT NULL,
   size_bytes    BIGINT UNSIGNED NOT NULL,
-  status        ENUM('UPLOADED','READY','FAILED') NOT NULL DEFAULT 'UPLOADED',
+  status        ENUM('UPLOADED','PROCESSING','READY','FAILED') NOT NULL DEFAULT 'UPLOADED',
   created_at    DATETIME(6)  NOT NULL,
   updated_at    DATETIME(6)  NOT NULL,
+  error_code    VARCHAR(64)  NULL,
+  error_reason  VARCHAR(255) NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_attachment_id (attachment_id),
   INDEX idx_thread_created (thread_id, created_at),

@@ -96,7 +96,7 @@
 | `mcp_tools/` | —(tool 描述子)| 每個 sub-module 定義一個 MCP tool 的 input model / inputSchema / Tool descriptor |
 | `admin_embedding.py` | `/embedding/v1` | embedding model 生命週期管理（B50；promote/cutover/rollback/commit/abort/state）|
 | `admin_ingest.py` | `/ingest/v1/upload` | multipart 上傳路由（direct route；no `APIRouter` prefix）|
-| `attachments.py` | `/chatagent/v3/attachments` | `POST /upload`(MIME/size 驗證 → service 協調) / `GET ?threadId=`(列出該對話的 attachments)；獨立檔案但與 `chatagent_v3.py` 共用 `/chatagent/v3` 路徑空間（同 `admin_ingest.py` 與 `ingest.py` 共用 `/ingest/v1` 的既有模式），滿足 `tests/unit/test_api_versioning.py` 的版本前綴規則 |
+| `attachments.py` | `/chatagent/v3/attachments` | `POST /upload`(MIME/size 驗證 → `service.upload()` 快速 intake，202)/ `GET ?threadId=`(列出該對話的 attachments，含 `errorCode`/`errorReason`)/ `GET /{attachmentId}`(輪詢單筆狀態；不存在回 404 `ATTACHMENT_NOT_FOUND`，T-CAT.W2)；獨立檔案但與 `chatagent_v3.py` 共用 `/chatagent/v3` 路徑空間（同 `admin_ingest.py` 與 `ingest.py` 共用 `/ingest/v1` 的既有模式），滿足 `tests/unit/test_api_versioning.py` 的版本前綴規則 |
 | `admin_ops.py` | `/ops/v1` | 維運操作(retry)|
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
@@ -123,7 +123,7 @@
 | `embedding/lifecycle.py` | embedding model 狀態機：draft → staging → active → retired（B50）|
 | `embedding/backfill.py` | backfill 長跑背景 op（enqueue 給 worker）|
 | `embedding/preflight.py` | embedding cutover 前置檢查：warmup + similarity gate |
-| `chat_attachment_service.py` | 上傳流程協調：驗證 MIME/size → `DocumentStore.put`(raw bytes) → `ChatAttachmentPipeline.run()` → `ASTCipher.encrypt_ast()` → `DocumentStore.put`(每個 artifact) → `attachment_repository` 寫入 |
+| `chat_attachment_service.py` | `upload()`(快速 intake，同步)：`DocumentStore.put`(raw bytes) → `attachment_repository.create()`(UPLOADED) → `dispatcher.enqueue("attachment.process", ...)`。`process()`(worker 呼叫，異步，T-CAT.W2)：`attachment_repository.claim_for_processing()`(UPLOADED→PROCESSING)→ 取回 raw bytes → `ChatAttachmentPipeline.run()` → `ASTCipher.encrypt_ast()` → `DocumentStore.put`(每個 artifact)→ `add_artifact` → `update_status(READY)`；例外時 terminalize 為 FAILED（`error_code`/`error_reason`），不 re-raise |
 | `document_artifact_resolver.py` | `attachment_ids` → `ContextItems`：`DocumentStore.get` → `ASTCipher.decrypt_ast` → 組裝給 `/chatagent/v3` 的 `<attachments>` 區塊 |
 
 ---
@@ -143,7 +143,7 @@
 | `document_repository.py` | `documents` 表 — CRUD、status 轉換、選舉（supersede）|
 | `feedback_repository.py` | `feedback` 表 — 投票記錄寫入 |
 | `system_settings_repository.py` | `system_settings` 表 — embedding model config 讀寫 |
-| `attachment_repository.py` | `chat_attachments` + `chat_attachment_artifacts` 表 — CRUD、依 `thread_id`/`create_user` 查詢 |
+| `attachment_repository.py` | `chat_attachments` + `chat_attachment_artifacts` 表 — CRUD、依 `thread_id`/`create_user` 查詢；`claim_for_processing()` 原子 claim(UPLOADED→PROCESSING，鏡像 `DocumentRepository._atomic_claim`)；`update_status()` 可選寫入 `error_code`/`error_reason`(T-CAT.W2) |
 
 ---
 ### 2.5 Pipelines（Haystack 管線）
@@ -345,6 +345,7 @@
 | `ingest.py` | `ingest.pipeline` task — TX-A claim → pipeline body（pipelines/ingest）→ TX-B 終態；`ingest.supersede` 選舉（呼叫 `services/ingest_service.IngestService`） |
 | `backfill.py` | `ingest.backfill_candidate` task（T-EM-R.9）— scroll stable_index、補嵌入到 candidate_index |
 | `heartbeat.py` | PENDING row 30s heartbeat 背景迴圈 |
+| `attachment.py` | `attachment.process` task（T-CAT.W2）— 呼叫 `services/chat_attachment_service.ChatAttachmentService.process()`；`RAGENT_KEK_BASE64` 未設定時 no-op + log |
 
 ---
 ### 2.16 Reconciler（獨立 Process）

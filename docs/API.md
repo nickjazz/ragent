@@ -806,13 +806,13 @@ In-conversation file attachments for chat sessions. Users can attach files to a 
 
 ### `POST /chatagent/v3/attachments/upload` — Upload an attachment
 
-Accepts a single file and stores it with metadata in the attachment repository. Returns the attachment ID for inclusion in subsequent chat requests.
+Fast intake only (T-CAT.W2): stores the raw file and an `UPLOADED` row, then enqueues async processing (`attachment.process` worker task) and returns immediately. The pipeline run + AST encryption happen out-of-request; poll `GET /chatagent/v3/attachments/{attachmentId}` for completion.
 
 **Request:** `multipart/form-data`
 - `file` — the attachment file (required)
 - `threadId` — conversation thread ID (required, form field)
 
-**Response (200 OK):**
+**Response (202 Accepted):**
 ```json
 {
   "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ"
@@ -830,9 +830,38 @@ curl -X POST "http://localhost:8000/chatagent/v3/attachments/upload" \
 **Errors:**
 - `415 ATTACHMENT_MIME_UNSUPPORTED` — MIME type not in allow-list (after extension fallback).
 - `413 ATTACHMENT_TOO_LARGE` — file size exceeds cap.
-- `422 ATTACHMENT_PARSE_FAILED` — AST building failed during processing.
+- `422 ATTACHMENT_PARSE_FAILED` — AST building failed during async processing (surfaced via `status=FAILED` on poll, not on the upload response).
 
-**Business-step logs:** `attachments.upload_request` / `attachments.upload_rejected_mime` (router); `chat_attachment.upload_started` / `chat_attachment.upload_completed` / `chat_attachment.upload_failed` (service, carries a `stage` field identifying which phase of the upload pipeline failed).
+**Business-step logs:** `attachments.upload_request` / `attachments.upload_rejected_mime` (router); `chat_attachment.upload_started` / `chat_attachment.upload_completed` / `chat_attachment.upload_failed` (service, fast intake only); `chat_attachment.process_completed` / `chat_attachment.process_failed` (service, async worker — carries a `stage` field identifying which phase of processing failed).
+
+### `GET /chatagent/v3/attachments/{attachmentId}` — Poll attachment status
+
+Polls a single attachment's processing status. Clients poll this after upload with backoff until `status` is `READY` or `FAILED`.
+
+`status` is one of `UPLOADED` (raw bytes stored, processing pending), `PROCESSING` (worker claimed, pipeline+encryption running), `READY` (artifacts persisted, resolvable in chat), `FAILED`.
+
+```bash
+curl "http://localhost:8000/chatagent/v3/attachments/att_01J9ABCDEFGHJKMNPQRSTVWXYZ" \
+  -H "X-User-Id: alice"
+```
+
+```json
+// 200 OK
+{
+  "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ",
+  "filename": "Q3_OKRs.pdf",
+  "mimeType": "application/pdf",
+  "sizeBytes": 125432,
+  "status": "READY",
+  "errorCode": null,
+  "errorReason": null
+}
+```
+
+`errorCode`/`errorReason` are set when `status="FAILED"` (e.g. `PIPELINE_UNEXPECTED_ERROR`).
+
+**Errors:**
+- `404 ATTACHMENT_NOT_FOUND` — unknown `attachmentId`.
 
 ### `GET /chatagent/v3/attachments` — List thread attachments
 
@@ -840,8 +869,6 @@ Lists all attachments for a conversation thread.
 
 **Query params:**
 - `threadId` — thread ID (required)
-
-`status` is one of `UPLOADED` (raw bytes stored, pipeline pending), `READY` (artifacts persisted, resolvable in chat), `FAILED`.
 
 **Response (200 OK):**
 ```json
@@ -852,7 +879,9 @@ Lists all attachments for a conversation thread.
       "filename": "Q3_OKRs.pdf",
       "mimeType": "application/pdf",
       "sizeBytes": 125432,
-      "status": "READY"
+      "status": "READY",
+      "errorCode": null,
+      "errorReason": null
     }
   ]
 }

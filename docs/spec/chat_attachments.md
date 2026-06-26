@@ -113,7 +113,39 @@ abstraction, not directly on MinIO (Dependency Inversion). `MinIODocumentStore`
 is the only implementation today; built once in `bootstrap/composition.py`
 and injected.
 
-## 7. Persistence & reconstruction paths
+## 7. Async processing (worker mode, T-CAT.W2)
+
+`POST .../upload` is fast intake only: store raw bytes → `chat_attachments`
+row (`UPLOADED`) → enqueue `attachment.process` via `TaskiqDispatcher` →
+return `202` with `attachmentId`. The pipeline run (§4), unprotect
+round-trip, AST build, and AES-GCM encryption (§5) all happen later, inside
+the `ragent.worker` process — mirrors the existing `ingest` worker pattern
+(`POST /ingest/v1` 202+id / `GET /ingest/v1/{id}` poll) so the API-server
+request thread never blocks on PDF/DOCX/PPTX processing.
+
+`workers/attachment.py`'s `attachment.process` task calls
+`ChatAttachmentService.process(attachment_id)`, which:
+
+1. Atomically claims the row (`UPLOADED → PROCESSING`, single transaction,
+   conditional `UPDATE ... WHERE status='UPLOADED'`) — a `None` return means
+   the row was already claimed, already terminal, or missing, and `process()`
+   no-ops (logs and returns, no exception).
+2. Re-fetches raw bytes from `DocumentStore` and runs the pipeline + encrypt
+   + persist-artifacts steps that used to run inline in `upload()`.
+3. Promotes to `READY` on success, or to `FAILED` with `error_code` /
+   `error_reason` on any exception — caught and never re-raised, since
+   nothing upstream of a TaskIQ task would handle it (no reconciler sweep in
+   this scope; a crashed `PROCESSING` row stays `PROCESSING` until a future
+   iteration adds one, same limitation `ingest` had before its reconciler
+   existed).
+
+Clients poll `GET /chatagent/v3/attachments/{attachmentId}` (mirrors
+`GET /ingest/v1/{id}`) until `status` is `READY` or `FAILED`; `404` via
+`ATTACHMENT_NOT_FOUND` problem-details for an unknown id. The existing
+`GET /chatagent/v3/attachments` list endpoint returns the same
+`errorCode`/`errorReason` fields for free (same `AttachmentInfo` model).
+
+## 8. Persistence & reconstruction paths
 
 Attachment metadata (filename, MIME, size, `attachment_id`) is rendered into
 an `<attachments>` block inside the same `<hidden>` preamble `/chatagent/v3`
@@ -158,17 +190,22 @@ existing chat-session trust model; isolation comes from the `create_user`
 column on `chat_attachments` plus the query predicate, not from an
 authorization check.
 
-## 8. Error codes
+## 9. Error codes
 
 | Code | HTTP | Trigger |
 |---|---|---|
 | `ATTACHMENT_MIME_UNSUPPORTED` | 415 | MIME not in `AttachmentMime` allow-list (after extension fallback) |
 | `ATTACHMENT_TOO_LARGE` | 413 | size exceeds cap |
 | `ATTACHMENT_PARSE_FAILED` | 422 | `chat_attachment` pipeline raised during AST build |
+| `ATTACHMENT_NOT_FOUND` | 404 | `GET /chatagent/v3/attachments/{id}` on unknown id (T-CAT.W2) |
 
-## 9. DB schema (`013_chat_attachments.sql`)
+## 10. DB schema (`014_chat_attachments_async.sql`, folds `013_chat_attachments.sql`)
 
 `chat_attachments` (id, thread_id, create_user, filename, mime_type,
-size_bytes, status, created_at) + `chat_attachment_artifacts` (attachment_id
-FK, ast_type, storage_key, created_at). No `introduced_run_id` column — the
-`<hidden>` block already binds the attachment to its turn.
+size_bytes, `status ENUM('UPLOADED','PROCESSING','READY','FAILED')`,
+`error_code VARCHAR(64) NULL`, `error_reason VARCHAR(255) NULL`,
+created_at) + `chat_attachment_artifacts` (attachment_id FK, ast_type,
+storage_key, created_at). No `introduced_run_id` column — the `<hidden>`
+block already binds the attachment to its turn. `error_code`/`error_reason`
+mirror `documents.error_code`/`error_reason` (`006_documents_error_code.sql`)
+— populated only when `process()` terminalizes to `FAILED` (§7).

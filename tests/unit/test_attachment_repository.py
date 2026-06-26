@@ -67,6 +67,30 @@ def _mock_engine(rows=None, rowcount=1):
     return engine, conn
 
 
+def _mock_claim_engine(pre_row, update_rowcount):
+    """Engine whose conn.execute() returns the SELECT result, then the UPDATE result.
+
+    Mirrors `claim_for_processing`'s two-statement transaction: a pre-state
+    SELECT followed by a conditional UPDATE.
+    """
+    pre_result = MagicMock()
+    pre_result.mappings.return_value.first.return_value = pre_row
+
+    update_result = MagicMock()
+    update_result.rowcount = update_rowcount
+
+    conn = AsyncMock()
+    conn.execute = AsyncMock(side_effect=[pre_result, update_result])
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=conn)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    engine = MagicMock()
+    engine.begin = MagicMock(return_value=ctx)
+    return engine, conn
+
+
 # ---------------------------------------------------------------------------
 # create
 # ---------------------------------------------------------------------------
@@ -176,6 +200,67 @@ async def test_update_status_executes_update():
     params = conn.execute.call_args[0][1]
     assert params["status"] == "READY"
     assert params["id"] == "ATT001"
+
+
+async def test_update_status_persists_error_code_and_reason():
+    engine, conn = _mock_engine()
+    repo = AttachmentRepository(engine)
+    await repo.update_status("ATT001", "FAILED", error_code="EMBEDDER_ERROR", error_reason="boom")
+    params = conn.execute.call_args[0][1]
+    assert params["error_code"] == "EMBEDDER_ERROR"
+    assert params["error_reason"] == "boom"
+
+
+async def test_update_status_defaults_error_fields_to_none():
+    engine, conn = _mock_engine()
+    repo = AttachmentRepository(engine)
+    await repo.update_status("ATT001", "READY")
+    params = conn.execute.call_args[0][1]
+    assert params["error_code"] is None
+    assert params["error_reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# claim_for_processing
+# ---------------------------------------------------------------------------
+
+
+async def test_claim_for_processing_happy_path_returns_pre_state():
+    pre_row = _row(attachment_id="ATT001", status="UPLOADED")
+    engine, conn = _mock_claim_engine(pre_row, update_rowcount=1)
+    repo = AttachmentRepository(engine)
+
+    claimed = await repo.claim_for_processing("ATT001")
+
+    assert isinstance(claimed, AttachmentRow)
+    assert claimed.attachment_id == "ATT001"
+    assert claimed.status == "UPLOADED"
+    assert conn.execute.call_count == 2
+
+
+async def test_claim_for_processing_returns_none_on_lost_race():
+    pre_row = _row(attachment_id="ATT001", status="UPLOADED")
+    engine, _ = _mock_claim_engine(pre_row, update_rowcount=0)
+    repo = AttachmentRepository(engine)
+
+    assert await repo.claim_for_processing("ATT001") is None
+
+
+async def test_claim_for_processing_returns_none_for_terminal_status():
+    pre_row = _row(attachment_id="ATT001", status="READY")
+    engine, conn = _mock_claim_engine(pre_row, update_rowcount=1)
+    repo = AttachmentRepository(engine)
+
+    assert await repo.claim_for_processing("ATT001") is None
+    conn.execute.assert_called_once()
+
+
+async def test_claim_for_processing_returns_none_for_missing_row():
+    engine, conn = _mock_claim_engine(pre_row=None, update_rowcount=1)
+    repo = AttachmentRepository(engine)
+
+    assert await repo.claim_for_processing("MISSING") is None
+    conn.execute.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

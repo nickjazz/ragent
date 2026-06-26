@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ragent.auth.deps import get_user_id
+from ragent.errors.codes import HttpErrorCode
+from ragent.errors.problem import problem
 from ragent.schemas.attachments import AttachmentMime
 
 if TYPE_CHECKING:
@@ -32,12 +34,26 @@ class AttachmentInfo(BaseModel):
     mimeType: str
     sizeBytes: int
     status: str
+    errorCode: str | None = None
+    errorReason: str | None = None
 
 
 class ListAttachmentsResponse(BaseModel):
     """Response from GET /chatagent/v3/attachments."""
 
     attachments: list[AttachmentInfo]
+
+
+def _to_attachment_info(att) -> AttachmentInfo:
+    return AttachmentInfo(
+        attachmentId=att.attachment_id,
+        filename=att.filename,
+        mimeType=att.mime_type,
+        sizeBytes=att.size_bytes,
+        status=att.status,
+        errorCode=att.error_code,
+        errorReason=att.error_reason,
+    )
 
 
 def create_attachments_router(
@@ -55,7 +71,7 @@ def create_attachments_router(
     """
     router = APIRouter(prefix="/chatagent/v3/attachments", tags=["attachments"])
 
-    @router.post("/upload", response_model=UploadAttachmentResponse, status_code=200)
+    @router.post("/upload", response_model=UploadAttachmentResponse, status_code=202)
     async def upload_attachment(
         file: Annotated[UploadFile, File()],
         threadId: Annotated[str, Form()],
@@ -106,16 +122,20 @@ def create_attachments_router(
         attachments = await repository.list_by_thread(threadId)
 
         return ListAttachmentsResponse(
-            attachments=[
-                AttachmentInfo(
-                    attachmentId=att.attachment_id,
-                    filename=att.filename,
-                    mimeType=att.mime_type,
-                    sizeBytes=att.size_bytes,
-                    status=att.status,
-                )
-                for att in attachments
-            ]
+            attachments=[_to_attachment_info(att) for att in attachments]
         )
+
+    @router.get("/{attachmentId}", response_model=AttachmentInfo, status_code=200)
+    async def get_attachment(
+        attachmentId: str,
+        user_id: Annotated[str | None, Depends(get_user_id)] = None,
+    ):
+        """Poll a single attachment's processing status."""
+        att = await repository.get(attachmentId)
+        if att is None:
+            logger.info("attachments.not_found", attachment_id=attachmentId, user_id=user_id)
+            return problem(404, HttpErrorCode.ATTACHMENT_NOT_FOUND, "Attachment not found")
+
+        return _to_attachment_info(att)
 
     return router

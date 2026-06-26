@@ -19,6 +19,10 @@ if __name__ == "__main__":  # pragma: no cover
     start_listen(
         WorkerArgs(
             broker="ragent.bootstrap.broker:broker",
-            modules=["ragent.workers.ingest", "ragent.workers.backfill"],
+            modules=[
+                "ragent.workers.ingest",
+                "ragent.workers.backfill",
+                "ragent.workers.attachment",
+            ],
         ),
     )

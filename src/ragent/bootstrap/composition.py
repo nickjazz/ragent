@@ -385,6 +385,8 @@ def build_container() -> Container:
     chat_attachment_service: ChatAttachmentService | None = None
     document_artifact_resolver: DocumentArtifactResolver | None = None
     if os.environ.get("RAGENT_KEK_BASE64"):
+        from ragent.bootstrap.broker import broker as taskiq_broker
+        from ragent.bootstrap.dispatcher import TaskiqDispatcher
         from ragent.pipelines.chat_attachment.pipeline import ChatAttachmentPipeline
         from ragent.repositories.attachment_repository import AttachmentRepository
         from ragent.security.ast_cipher import ASTCipher
@@ -407,6 +409,7 @@ def build_container() -> Container:
             ast_cipher=ast_cipher,
             attachment_repository=attachment_repository,
             pipeline=ChatAttachmentPipeline(unprotect_client=unprotect_client),
+            dispatcher=TaskiqDispatcher(taskiq_broker),
         )
 
     # T8.5a / T-AM.2 — Build the joserfc-based JWKS verifier iff inbound JWT
