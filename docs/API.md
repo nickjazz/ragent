@@ -796,6 +796,72 @@ Cutover hard gates: `state_is_candidate`, `field_dim_matches`, `candidate_covera
 
 ---
 
+## Attachments (`/chatagent/v3/attachments`)
+
+In-conversation file attachments for chat sessions. Users can attach files to a thread and reference their content in chat turns. Attachments are stored encrypted at rest and accessible across live chat, session history, and stream reconnect.
+
+**MIME types supported:** `text/plain`, `text/markdown`, `text/html`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (DOCX), `application/vnd.openxmlformats-officedocument.presentationml.presentation` (PPTX), `application/pdf`.
+
+**Defaults:** max size 50 MB (env var `ATTACHMENT_MAX_SIZE_BYTES`).
+
+### `POST /chatagent/v3/attachments/upload` — Upload an attachment
+
+Accepts a single file and stores it with metadata in the attachment repository. Returns the attachment ID for inclusion in subsequent chat requests.
+
+**Request:** `multipart/form-data`
+- `file` — the attachment file (required)
+- `threadId` — conversation thread ID (required, form field)
+
+**Response (200 OK):**
+```json
+{
+  "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ"
+}
+```
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8000/chatagent/v3/attachments/upload" \
+  -H "X-User-Id: alice" \
+  -F "file=@report.pdf" \
+  -F "threadId=thread_1"
+```
+
+**Errors:**
+- `415 ATTACHMENT_MIME_UNSUPPORTED` — MIME type not in allow-list (after extension fallback).
+- `413 ATTACHMENT_TOO_LARGE` — file size exceeds cap.
+- `422 ATTACHMENT_PARSE_FAILED` — AST building failed during processing.
+
+### `GET /chatagent/v3/attachments` — List thread attachments
+
+Lists all attachments for a conversation thread.
+
+**Query params:**
+- `threadId` — thread ID (required)
+
+**Response (200 OK):**
+```json
+{
+  "attachments": [
+    {
+      "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ",
+      "filename": "Q3_OKRs.pdf",
+      "mimeType": "application/pdf",
+      "sizeBytes": 125432,
+      "status": "READY"
+    }
+  ]
+}
+```
+
+**Example:**
+```bash
+curl "http://localhost:8000/chatagent/v3/attachments?threadId=thread_1" \
+  -H "X-User-Id: alice"
+```
+
+---
+
 ## Operational Endpoints (`/ops/v1`)
 
 ### `POST /ops/v1/retry` — Batch force-retry stuck documents

@@ -215,7 +215,7 @@ def _resume_input_data(request: RunAgentInput) -> dict | None:
     return {"lastMessageId": resolved[0].interrupt_id, "message": ""}
 
 
-def _compose_message(request: RunAgentInput) -> str:
+def _compose_message(request: RunAgentInput, attachments: str | None = None) -> str:
     """Prepend the client-supplied context/state ahead of the user's question.
 
     The upstream is a general, tool-capable agent that owns its own persona and
@@ -231,7 +231,7 @@ def _compose_message(request: RunAgentInput) -> str:
     still read it.
     """
     user_message = _last_user_message(request.messages)
-    preamble = _context_preamble(request.context, request.state)
+    preamble = _context_preamble(request.context, request.state, attachments)
     if not preamble:
         return user_message
     if not user_message:
@@ -252,8 +252,12 @@ def _neutralize_wrapper_tags(value: str) -> str:
     return _WRAPPER_TAG_RE.sub(r"&lt;\1&gt;", value)
 
 
-def _context_preamble(context: list[ContextItem], state: object) -> str:
+def _context_preamble(
+    context: list[ContextItem], state: object, attachments: str | None = None
+) -> str:
     sections: list[str] = []
+    if attachments:
+        sections.append(f"<attachments>{_neutralize_wrapper_tags(attachments)}</attachments>")
     if context:
         context_json = json.dumps(
             [item.model_dump(by_alias=True) for item in context],

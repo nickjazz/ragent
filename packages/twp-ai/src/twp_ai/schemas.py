@@ -84,6 +84,15 @@ class ResumeItem(TwpAiModel):
     payload: Any = None
 
 
+class Attachment(TwpAiModel):
+    """In-conversation file attachment (T-CAT)."""
+
+    attachment_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+
+
 class RunAgentInput(TwpAiModel):
     # Session id. Optional on the wire: a brand-new conversation has none yet, so
     # the client may omit it and the *server* assigns one (ragent mints it for
@@ -102,3 +111,6 @@ class RunAgentInput(TwpAiModel):
     # Human-in-the-loop continuation. When present, this turn answers a prior
     # interrupt instead of sending a new user message (see ResumeItem).
     resume: list[ResumeItem] | None = None
+    # In-conversation file attachments (T-CAT). Optional list of attachment IDs
+    # to resolve into the <attachments> block inside <hidden>.
+    attachment_ids: list[str] | None = None
