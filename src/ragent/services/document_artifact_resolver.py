@@ -85,9 +85,7 @@ class DocumentArtifactResolver:
                     try:
                         encrypted_data = self._doc_store.get(selected.storage_key)
                         encrypted_obj = json.loads(encrypted_data.decode("utf-8"))
-                        decrypted = self._ast_cipher.decrypt_ast(encrypted_obj)
-                        if decrypted is not None:
-                            att_info["ast"] = decrypted
+                        att_info["ast"] = self._ast_cipher.decrypt_ast(encrypted_obj)
                     except (ValueError, KeyError, json.JSONDecodeError, ASTDecryptionError) as e:
                         logger.warning(
                             "document_artifact_resolver.decrypt_failed",
