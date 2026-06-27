@@ -320,7 +320,7 @@ spoofed `user_id` is rejected as `MCP_TOOL_INPUT_INVALID`). With no resolved
 identity the call **fails closed** (`MISSING_USER_ID`) — a skill is never created
 under an unknown owner. Args mirror `SkillWriteRequest` (`{name, description?,
 instructions, enabled?}`); a name collision → `SKILL_NAME_CONFLICT`. Result:
-`structuredContent.skill = {skill_id, name, description, enabled}`. The tool is
+`structuredContent.skill = {skill_id, name, description, enabled, readonly}`. The tool is
 advertised in `tools/list` only when `skill_service` is wired. `annotations.readOnlyHint=false`.
 Whether an agent actually calls it depends on the upstream ChatAgent's MCP client
 config (or a frontend tool runtime) — that wiring is outside ragent.
@@ -369,8 +369,11 @@ indistinguishable); `PUT`/`DELETE` on a preset `skill_id` → `409 SKILL_READONL
 
 **CRUD — `/skills/v1`** (always registered; no env gate):
 
-- `POST /skills/v1` → `201` `{skill_id, name, description, instructions, enabled, created_at, updated_at}`.
+- `POST /skills/v1` → `201` `{skill_id, name, description, instructions, enabled, readonly, created_at, updated_at}`.
   Body `{name, description?, instructions, enabled?}` (`enabled` defaults `true`).
+  `readonly` is a server-derived response field (not a DB column): `true` for
+  built-in presets, `false` for the user's own skills — so the frontend can
+  flag built-ins without hard-coding preset ids.
 - `GET /skills/v1` → `{ "skills": [ … ] }` (owner's skills, newest first; empty array, never `null`).
 - `GET /skills/v1/{skill_id}` → the skill, or `404 SKILL_NOT_FOUND` when absent **or owned by another user** (a foreign skill is indistinguishable from a missing one — no existence oracle).
 - `PUT /skills/v1/{skill_id}` → full replace (same body as POST) → the updated skill.

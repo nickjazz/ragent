@@ -51,12 +51,13 @@ CREATE_SKILL_OUTPUT_SCHEMA: dict[str, Any] = {
         "skill": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["skill_id", "name", "description", "enabled"],
+            "required": ["skill_id", "name", "description", "enabled", "readonly"],
             "properties": {
                 "skill_id": {"type": "string"},
                 "name": {"type": "string"},
                 "description": {"type": "string"},
                 "enabled": {"type": "boolean"},
+                "readonly": {"type": "boolean"},
             },
         },
     },

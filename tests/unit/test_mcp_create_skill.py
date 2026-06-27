@@ -20,6 +20,7 @@ def _skill_resp(**over) -> SimpleNamespace:
         "name": "Translator",
         "description": "to English",
         "enabled": True,
+        "readonly": False,
     }
     base.update(over)
     return SimpleNamespace(**base)
@@ -76,7 +77,9 @@ def test_create_skill_uses_authenticated_owner():
         {"name": "Translator", "description": "to English", "instructions": "Translate."},
         headers=ALICE,
     )
-    assert body["result"]["structuredContent"]["skill"]["skill_id"] == "SKILL000000000000000000000"
+    skill = body["result"]["structuredContent"]["skill"]
+    assert skill["skill_id"] == "SKILL000000000000000000000"
+    assert skill["readonly"] is False  # a freshly created user skill is never read-only
     assert body["result"]["isError"] is False
     # owner is the authenticated caller, never a tool argument.
     assert svc.create.call_args.kwargs["user_id"] == "alice"

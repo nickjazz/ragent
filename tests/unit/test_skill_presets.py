@@ -55,6 +55,13 @@ async def test_list_pins_presets_before_user_skills():
     assert [s.skill_id for s in out[1:]] == ["SKILL000000000000000000000"]
 
 
+async def test_preset_is_readonly_user_skill_is_not():
+    repo = _repo(get=AsyncMock(return_value=_row()))
+    svc = SkillService(repo)
+    assert (await svc.get(user_id="alice", skill_id=PRESET_ID)).readonly is True
+    assert (await svc.get(user_id="alice", skill_id="SKILL000000000000000000000")).readonly is False
+
+
 async def test_get_preset_without_touching_repo():
     repo = _repo(get=AsyncMock(return_value=None))
     svc = SkillService(repo)

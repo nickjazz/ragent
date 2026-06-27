@@ -60,6 +60,7 @@ class PresetSkill:
             description=self.description,
             instructions=self.instructions,
             enabled=self.enabled,
+            readonly=True,
             created_at=_PRESET_TS,
             updated_at=_PRESET_TS,
         )

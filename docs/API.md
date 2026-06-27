@@ -755,9 +755,10 @@ Per-user reusable instruction presets (a persona / system instruction the user c
 `description` defaults `""`; `enabled` defaults `true`. Field limits: `name` ≤ 128 chars, `description` ≤ 512, `instructions` ≤ 16,384 (stored as `MEDIUMTEXT`); over-limit input → `422 SKILL_VALIDATION`. **Response:** `201` with the full skill:
 ```json
 { "skill_id": "01J9...", "name": "Pirate", "description": "answer like a pirate",
-  "instructions": "Always answer in pirate slang.", "enabled": true,
+  "instructions": "Always answer in pirate slang.", "enabled": true, "readonly": false,
   "created_at": "2026-06-24T00:00:00+00:00", "updated_at": "2026-06-24T00:00:00+00:00" }
 ```
+`readonly` is `true` for built-in presets (read-only) and `false` for the caller's own skills — the frontend uses it to flag built-ins without hard-coding ids.
 
 ### `GET /skills/v1` — List the caller's skills
 
@@ -821,7 +822,7 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 
 **`tools/call retrieve`** — result `structuredContent.sources` is the machine-readable source list (for the frontend's retrieved-sources panel); `content[0].text` is a `<context>`-wrapped markdown citation table + `### [N]` excerpt blocks for LLM grounding (no internal fields like `document_id`/`score`; cells injection-safe — CR/LF stripped, `\|` escaped; only http(s) `source_url` linkified with markdown-breaking chars percent-encoded; literal `<context>` tags in corpus text neutralised). Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`.
 
-**`tools/call create_skill`** — `arguments: {name, description?, instructions, enabled?}` (`additionalProperties:false`). Creates a skill under the **authenticated caller** (`X-User-Id`/JWT resolved at the endpoint); `user_id` is **not** an argument and a stray one is rejected (`MCP_TOOL_INPUT_INVALID`). No identity → fails closed with `MISSING_USER_ID`. Name collision (incl. a built-in preset name, case-insensitive) → `SKILL_NAME_CONFLICT`. Non-object `arguments` → `MCP_TOOL_INPUT_INVALID`; an unexpected backend failure → `MCP_TOOL_EXECUTION_FAILED` (JSON-RPC envelope, never an HTTP 500). Result: `structuredContent.skill = {skill_id, name, description, enabled}`. Example:
+**`tools/call create_skill`** — `arguments: {name, description?, instructions, enabled?}` (`additionalProperties:false`). Creates a skill under the **authenticated caller** (`X-User-Id`/JWT resolved at the endpoint); `user_id` is **not** an argument and a stray one is rejected (`MCP_TOOL_INPUT_INVALID`). No identity → fails closed with `MISSING_USER_ID`. Name collision (incl. a built-in preset name, case-insensitive) → `SKILL_NAME_CONFLICT`. Non-object `arguments` → `MCP_TOOL_INPUT_INVALID`; an unexpected backend failure → `MCP_TOOL_EXECUTION_FAILED` (JSON-RPC envelope, never an HTTP 500). Result: `structuredContent.skill = {skill_id, name, description, enabled, readonly}`. Example:
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call",
  "params":{"name":"create_skill","arguments":{"name":"Pirate","instructions":"Answer in pirate slang."}}}

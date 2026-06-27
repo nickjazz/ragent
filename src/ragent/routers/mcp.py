@@ -292,6 +292,7 @@ def create_mcp_router(
             "name": resp.name,
             "description": resp.description,
             "enabled": resp.enabled,
+            "readonly": resp.readonly,
         }
         text = (
             f"Created skill '{resp.name}' (skill_id={resp.skill_id}). "
