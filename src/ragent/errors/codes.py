@@ -102,6 +102,7 @@ class HttpErrorCode(StrEnum):
     SKILL_NOT_FOUND = "SKILL_NOT_FOUND"  # 404 — skill_id not owned by caller / absent
     SKILL_NAME_CONFLICT = "SKILL_NAME_CONFLICT"  # 409 — (user_id, name) already exists
     SKILL_VALIDATION = "SKILL_VALIDATION"  # 422 — schema / field-bound violation
+    SKILL_READONLY = "SKILL_READONLY"  # 409 — built-in preset cannot be modified/deleted
 
     # MCP JSON-RPC 2.0 server (§3.8, B47). Surfaces as `data.error_code`
     # inside JSON-RPC error envelopes (NOT as problem+json), but lives in

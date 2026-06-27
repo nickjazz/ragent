@@ -745,6 +745,8 @@ Dual-write: MariaDB `feedback` (truth) → ES `feedback_v1` (serving view). ES f
 
 Per-user reusable instruction presets (a persona / system instruction the user can attach to a `/chatagent/v3` turn). Every skill is **private to its owner**: the owner is the resolved `X-User-Id`, never a body field, and every query filters by it — a foreign `skill_id` is indistinguishable from a missing one (404). **Headers:** `X-User-Id` required.
 
+**Built-in presets:** every user automatically has read-only built-in skills (currently `skill-creator`, `skill_id="skill-creator"`) without creating them — they appear in `GET /skills/v1` pinned ahead of your own skills, are usable via `forwardedProps.skillId`, and reject `PUT`/`DELETE` with `409 SKILL_READONLY`. A user skill may not reuse a preset's name (`409 SKILL_NAME_CONFLICT`). `skill-creator` guides the agent to create a new skill via the `create_skill` MCP tool (see [§MCP](#mcp-phase-2)).
+
 ### `POST /skills/v1` — Create a skill
 
 ```json
@@ -776,7 +778,8 @@ Same body as POST. **Response:** the updated skill (`200`).
 | Status | `error_code` | When |
 |---|---|---|
 | 404 | `SKILL_NOT_FOUND` | `skill_id` absent or owned by another user. |
-| 409 | `SKILL_NAME_CONFLICT` | A skill with this `name` already exists for the caller. |
+| 409 | `SKILL_NAME_CONFLICT` | A skill with this `name` already exists for the caller (or the name is reserved by a built-in preset). |
+| 409 | `SKILL_READONLY` | `PUT`/`DELETE` targeting a built-in preset skill. |
 | 422 | `SKILL_VALIDATION` | Schema / field-bound violation. |
 | 422 | `MISSING_USER_ID` | No `X-User-Id` resolved. |
 
@@ -806,15 +809,23 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 
 ## MCP (Phase 2)
 
-`POST /mcp/v1` — Model Context Protocol server (JSON-RPC 2.0, spec `2025-06-18`; `initialize` echoes a supported older revision — `2025-03-26` / `2024-11-05` — when the client requests one). Exposes the corpus as a single `retrieve` tool. Full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
+`POST /mcp/v1` — Model Context Protocol server (JSON-RPC 2.0, spec `2025-06-18`; `initialize` echoes a supported older revision — `2025-03-26` / `2024-11-05` — when the client requests one). Exposes the corpus as a `retrieve` tool, plus a `create_skill` write tool (T-SK) when skill support is wired. Full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
 
 | Method | Purpose |
 |---|---|
 | `initialize` | Capability negotiation. |
 | `notifications/initialized` | Client signals init complete; server returns 204. |
-| `tools/list` | Returns the `retrieve` tool with Pydantic-derived `inputSchema`, hand-authored `outputSchema` (structured source list), and `annotations: {readOnlyHint: true}`. |
-| `tools/call` | Invokes `retrieve`. Result `structuredContent.sources` is the machine-readable source list (for the frontend's retrieved-sources panel); `content[0].text` is a `<context>`-wrapped markdown citation table + `### [N]` excerpt blocks for LLM grounding (no internal fields like `document_id`/`score`; cells injection-safe — CR/LF stripped, `\|` escaped; only http(s) `source_url` linkified with markdown-breaking chars percent-encoded; literal `<context>` tags in corpus text neutralised). Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`. |
+| `tools/list` | Returns `retrieve` (`readOnlyHint: true`) and, when wired, `create_skill` (`readOnlyHint: false`), each with `inputSchema`/`outputSchema`. |
+| `tools/call` | Invokes `retrieve` (see below) or `create_skill`. |
 | `ping` | Returns `{}`. |
+
+**`tools/call retrieve`** — result `structuredContent.sources` is the machine-readable source list (for the frontend's retrieved-sources panel); `content[0].text` is a `<context>`-wrapped markdown citation table + `### [N]` excerpt blocks for LLM grounding (no internal fields like `document_id`/`score`; cells injection-safe — CR/LF stripped, `\|` escaped; only http(s) `source_url` linkified with markdown-breaking chars percent-encoded; literal `<context>` tags in corpus text neutralised). Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`.
+
+**`tools/call create_skill`** — `arguments: {name, description?, instructions, enabled?}` (`additionalProperties:false`). Creates a skill under the **authenticated caller** (`X-User-Id`/JWT resolved at the endpoint); `user_id` is **not** an argument and a stray one is rejected (`MCP_TOOL_INPUT_INVALID`). No identity → fails closed with `MISSING_USER_ID`. Name collision → `SKILL_NAME_CONFLICT`. Result: `structuredContent.skill = {skill_id, name, description, enabled}`. Example:
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call",
+ "params":{"name":"create_skill","arguments":{"name":"Pirate","instructions":"Answer in pirate slang."}}}
+```
 
 Optional `retrieve` arguments (`source_app`, `source_meta`, `min_score`) must be **omitted** to skip filtering — do not send `null`. The `inputSchema` does not advertise `default: null` for these fields; sending explicit `null` returns `-32602`. For `source_app`, use the exact value returned in a prior `retrieve` result's `source_app` metadata field — omit on the first call to search across all sources.
 

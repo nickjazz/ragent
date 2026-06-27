@@ -307,9 +307,23 @@ The chaos suite asserts the resilience claims of §3.6 (reconciler recovery, ide
 
 ### 3.8 MCP Tool Server (P2.5)
 
-Exposes ragent's retrieval pipeline as an MCP tool (JSON-RPC 2.0, retrieve-only).
+Exposes ragent tools over MCP (JSON-RPC 2.0): the read-only `retrieve` tool, plus
+the **write** `create_skill` tool (T-SK) when `skill_service` is wired (always, in
+production).
 
 > Full spec: [docs/spec/mcp_server.md](spec/mcp_server.md) — protocol, methods, `retrieve` tool schema, error codes, BDD S58–S67.
+
+**`create_skill` (write tool, T-SK):** creates a skill under the **authenticated
+caller** — the owner is resolved via `get_user_id` inside the MCP endpoint and is
+**never** a tool argument (the inputSchema is `additionalProperties:false`, so a
+spoofed `user_id` is rejected as `MCP_TOOL_INPUT_INVALID`). With no resolved
+identity the call **fails closed** (`MISSING_USER_ID`) — a skill is never created
+under an unknown owner. Args mirror `SkillWriteRequest` (`{name, description?,
+instructions, enabled?}`); a name collision → `SKILL_NAME_CONFLICT`. Result:
+`structuredContent.skill = {skill_id, name, description, enabled}`. The tool is
+advertised in `tools/list` only when `skill_service` is wired. `annotations.readOnlyHint=false`.
+Whether an agent actually calls it depends on the upstream ChatAgent's MCP client
+config (or a frontend tool runtime) — that wiring is outside ragent.
 
 **Interface notes (2026-05-27):**
 - `tools/list` response includes `annotations: {readOnlyHint: true}` on the `retrieve` tool — signals to MCP hosts (protocol 2025-03-26+) that the tool is read-only. Clients on earlier pinned version (`"2024-11-05"`) silently ignore the field.
@@ -332,6 +346,18 @@ the owner is the resolved `user_id` (auth/middleware), never a body field, and
 **every** repository statement filters by `user_id`, so one user can never read
 or mutate another's skills (isolation enforced at the SQL layer + the DB
 `(user_id, name)` UNIQUE key, not by an application check alone).
+
+**Built-in preset skills (T-SK):** some skills are **built in** — every user has
+them from the start without creating them. Presets live in code
+(`services/skill_presets.py`), not the DB, are **read-only**, and are merged into
+the owner-scoped `list`/`get`/`resolve` paths (pinned ahead of the user's own
+skills). The first preset is **`skill-creator`** (`skill_id="skill-creator"`),
+whose instructions guide the agent to design a skill and call the `create_skill`
+MCP tool to save it. Adding more presets later = one entry in the registry (no
+migration, no per-user seeding). Constraints: a user skill may not take a
+preset's `name` (→ `409 SKILL_NAME_CONFLICT`); `PUT`/`DELETE` on a preset
+`skill_id` → `409 SKILL_READONLY`; `resolve` of a preset returns its
+instructions (so `forwardedProps.skillId="skill-creator"` works in `/chatagent/v3`).
 
 **CRUD — `/skills/v1`** (always registered; no env gate):
 

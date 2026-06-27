@@ -134,10 +134,12 @@
 > the upstream agent but are stripped from the served session history — respecting
 > the upstream-persona rule and the upstream memory-storage mechanism.
 
-**Counter: 完成 9 / 未完成 1 / descope 0**
+**Counter: 完成 11 / 未完成 1 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
+| T-SK.8 | Red+Green | • **Achieve:** Built-in read-only preset skills (skill-creator first) merged into list/get/resolve; users can't collide a preset name or mutate a preset.<br>• **Deliver:** `services/skill_presets.py`; `services/skill_service.py` (preset merge + `SkillReadOnlyError`); `errors/codes.py` `SKILL_READONLY`; `routers/skill.py` 409 mapping; `tests/unit/test_skill_presets.py`.<br>• **Success criteria:** every user has skill-creator without creating it; PUT/DELETE on a preset → 409 SKILL_READONLY; create with a preset name → 409. | [x] | Dev |
+| T-SK.9 | Red+Green | • **Achieve:** `create_skill` MCP write tool — owner = authenticated caller, fail-closed without identity, stray `user_id` arg rejected.<br>• **Deliver:** `routers/mcp_tools/create_skill.py`; `routers/mcp.py` (get_user_id plumb + per-tool dispatch + create_skill handler); `bootstrap/app.py` (skill_service wired); `tests/unit/test_mcp_create_skill.py`.<br>• **Success criteria:** tools/call create_skill creates under X-User-Id; no identity → MISSING_USER_ID; user_id arg → MCP_TOOL_INPUT_INVALID; conflict → SKILL_NAME_CONFLICT. | [x] | Dev |
 | T-SK.1 | Structural | • **Achieve:** Add the `skills` table + error codes.<br>• **Deliver:** `migrations/013_skills.sql` + `migrations/schema.sql` append; `errors/codes.py` (`SKILL_NOT_FOUND`/`SKILL_NAME_CONFLICT`/`SKILL_VALIDATION`) + `docs/spec/error_codes.md` rows.<br>• **Success criteria:** schema applies under `init_mariadb`; new codes present in the catalog. | [x] | Dev |
 | T-SK.2 | Red+Green | • **Achieve:** Owner-scoped repository — every statement filters by `user_id`.<br>• **Deliver:** `repositories/skill_repository.py`; `tests/unit/test_skill_repository.py` asserts the WHERE clause + bound params carry `user_id` on get/list/update/delete.<br>• **Success criteria:** `pytest tests/unit/test_skill_repository.py` green. | [x] | Dev |
 | T-SK.3 | Red+Green | • **Achieve:** Service CRUD + typed errors + boundary logs + `resolve_instructions`.<br>• **Deliver:** `services/skill_service.py`; `schemas/skill.py`; `tests/unit/test_skill_service.py` + `tests/unit/test_skill_schema.py`.<br>• **Success criteria:** conflict→409, missing→404, disabled-not-resolvable; entry/exit logs carry identity only. | [x] | Dev |

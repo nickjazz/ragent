@@ -19,6 +19,7 @@ from jsonschema import Draft7Validator, ValidationError
 from mcp.types import Tool
 
 from ragent import __version__ as _RAGENT_VERSION
+from ragent.auth.deps import get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.pipelines.retrieve import (
@@ -29,7 +30,9 @@ from ragent.pipelines.retrieve import (
     doc_to_source_entry,
     run_retrieval,
 )
+from ragent.routers.mcp_tools.create_skill import CREATE_SKILL_TOOL
 from ragent.routers.mcp_tools.retrieve import RETRIEVE_TOOL
+from ragent.services.skill_service import SkillNameConflictError
 from ragent.utility.env import int_env
 
 logger = structlog.get_logger(__name__)
@@ -101,33 +104,28 @@ async def _handle_initialize(params: Any) -> dict[str, Any]:
     }
 
 
-# To add a new tool: import its Tool descriptor from mcp_tools/, append here.
-_ALL_TOOLS: list[Tool] = [RETRIEVE_TOOL]
-_ALL_TOOLS_BY_NAME: dict[str, Tool] = {t.name: t for t in _ALL_TOOLS}
-# Precomputed once at module load; tools/list is read-only and the registry
-# never changes at runtime.
-_TOOLS_LIST_PAYLOAD: list[dict[str, Any]] = [t.model_dump(exclude_none=True) for t in _ALL_TOOLS]
-
-
-async def _handle_tools_list(_params: Any) -> dict[str, Any]:
-    return {"tools": _TOOLS_LIST_PAYLOAD}
+def _tools_payload(tools: list[Tool]) -> list[dict[str, Any]]:
+    # tools/list is read-only; the set is fixed per router instance (depends on
+    # whether skill_service is wired), so it is built once in create_mcp_router.
+    return [t.model_dump(exclude_none=True) for t in tools]
 
 
 # Uses the same inputSchema already advertised by tools/list — schema and
 # validation can never drift apart.
 _RETRIEVE_INPUT_VALIDATOR = Draft7Validator(RETRIEVE_TOOL.inputSchema)
+_CREATE_SKILL_INPUT_VALIDATOR = Draft7Validator(CREATE_SKILL_TOOL.inputSchema)
 
 
-def _validate_retrieve_args(args: Any) -> None:
-    """Validate `tools/call retrieve` arguments against the inputSchema.
+def _validate_against(validator: Draft7Validator, args: Any) -> None:
+    """Validate `tools/call` arguments against a tool's inputSchema.
 
     Raises `_McpToolError(-32602, MCP_TOOL_INPUT_INVALID, ...)` on the first
-    failure. Draft7 is used because the schema authored in §3.8.3 uses
-    `default`/`minimum`/`maximum`/`required` — all in scope of Draft7
-    without needing 2020-12-only keywords.
+    failure. `additionalProperties:false` on each schema means stray fields
+    (e.g. a spoofed ``user_id``) are rejected here, not silently ignored. Draft7
+    is used because the schemas use `default`/`minimum`/`maximum`/`required`.
     """
     try:
-        _RETRIEVE_INPUT_VALIDATOR.validate(args)
+        validator.validate(args)
     except ValidationError as exc:
         # `path` is the dotted location inside `args`; the root error has no
         # path so we substitute "arguments" for a readable message.
@@ -137,6 +135,10 @@ def _validate_retrieve_args(args: Any) -> None:
             HttpErrorCode.MCP_TOOL_INPUT_INVALID.value,
             f"{location}: {exc.message}",
         ) from exc
+
+
+def _validate_retrieve_args(args: Any) -> None:
+    _validate_against(_RETRIEVE_INPUT_VALIDATOR, args)
 
 
 # Corpus text containing literal <context>/</context> tags must not close the
@@ -204,43 +206,28 @@ def _render_context_markdown(entries: list[dict]) -> str:
     return f"<context>\n{body}\n</context>"
 
 
-# Stateless handlers — composed before per-router state (the retrieval
-# pipeline) is bound. T-MCP.8 adds the stateful `tools/call` handler as a
-# closure inside `create_mcp_router` that captures the pipeline.
-_STATELESS_METHODS: dict[str, Callable[[Any], Awaitable[dict[str, Any]]]] = {
+# Stateless handlers — no per-router state needed. `tools/list` and `tools/call`
+# are built inside create_mcp_router because the tool set depends on whether
+# skill_service is wired, and `create_skill` needs the per-request caller id.
+_StatelessHandler = Callable[[Any], Awaitable[dict[str, Any]]]
+_STATELESS_METHODS: dict[str, _StatelessHandler] = {
     "ping": _handle_ping,
     "initialize": _handle_initialize,
-    "tools/list": _handle_tools_list,
 }
+
+# A tool handler receives (validated-shape params arguments, caller user_id).
+_ToolHandler = Callable[[dict[str, Any], "str | None"], Awaitable[dict[str, Any]]]
 
 
 def create_mcp_router(
     retrieval_pipeline: Any,
     *,
+    skill_service: Any | None = None,
     excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
 ) -> APIRouter:
     router = APIRouter(prefix="/mcp/v1")
 
-    async def _handle_tools_call(params: Any) -> dict[str, Any]:
-        # JSON-RPC 2.0 allows `params` to be omitted, an object, or an array.
-        # We only accept the object form (named arguments); array/positional
-        # surfaces as -32602 rather than a 500 AttributeError on `.get()`.
-        if params is None:
-            params = {}
-        elif not isinstance(params, dict):
-            raise _McpToolError(
-                _INVALID_PARAMS,
-                HttpErrorCode.MCP_TOOL_INPUT_INVALID.value,
-                "`params` must be an object (named arguments)",
-            )
-        name = params.get("name")
-        if name not in _ALL_TOOLS_BY_NAME:
-            raise _McpToolError(
-                _INVALID_PARAMS,
-                HttpErrorCode.MCP_TOOL_NOT_FOUND.value,
-                f"unknown tool: {name!r}",
-            )
-        arguments = params.get("arguments") or {}
+    async def _run_retrieve(arguments: dict[str, Any], _user_id: str | None) -> dict[str, Any]:
         _validate_retrieve_args(arguments)
         try:
             docs = await run_in_threadpool(
@@ -252,7 +239,7 @@ def create_mcp_router(
                 min_score=arguments.get("min_score"),
             )
         except Exception as exc:
-            logger.exception("mcp.tool.error", tool=name, error_type=type(exc).__name__)
+            logger.exception("mcp.tool.error", tool="retrieve", error_type=type(exc).__name__)
             raise _McpToolError(
                 _TOOL_EXECUTION_FAILED,
                 HttpErrorCode.MCP_TOOL_EXECUTION_FAILED.value,
@@ -268,9 +255,86 @@ def create_mcp_router(
             "isError": False,
         }
 
-    methods: dict[str, Callable[[Any], Awaitable[dict[str, Any]]]] = {
+    async def _run_create_skill(arguments: dict[str, Any], user_id: str | None) -> dict[str, Any]:
+        # Owner is the authenticated caller — NEVER a tool argument. Fail closed
+        # when no identity reached the MCP endpoint so a skill can never be
+        # created under an unknown or attacker-chosen owner.
+        if not user_id:
+            raise _McpToolError(
+                _INVALID_PARAMS,
+                HttpErrorCode.MISSING_USER_ID.value,
+                "user identity required to create a skill",
+            )
+        _validate_against(_CREATE_SKILL_INPUT_VALIDATOR, arguments)
+        try:
+            resp = await skill_service.create(
+                user_id=user_id,
+                name=arguments["name"],
+                description=arguments.get("description", ""),
+                instructions=arguments["instructions"],
+                enabled=arguments.get("enabled", True),
+            )
+        except SkillNameConflictError as exc:
+            raise _McpToolError(
+                _INVALID_PARAMS, HttpErrorCode.SKILL_NAME_CONFLICT.value, str(exc)
+            ) from exc
+        skill = {
+            "skill_id": resp.skill_id,
+            "name": resp.name,
+            "description": resp.description,
+            "enabled": resp.enabled,
+        }
+        text = (
+            f"Created skill '{resp.name}' (skill_id={resp.skill_id}). "
+            "The user can select it for a future chat turn."
+        )
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {"skill": skill},
+            "isError": False,
+        }
+
+    tools: list[Tool] = [RETRIEVE_TOOL]
+    tool_handlers: dict[str, _ToolHandler] = {"retrieve": _run_retrieve}
+    if skill_service is not None:
+        tools.append(CREATE_SKILL_TOOL)
+        tool_handlers["create_skill"] = _run_create_skill
+    tools_list_payload = _tools_payload(tools)
+
+    async def _handle_tools_list(_params: Any) -> dict[str, Any]:
+        return {"tools": tools_list_payload}
+
+    async def _handle_tools_call(params: Any, user_id: str | None) -> dict[str, Any]:
+        # JSON-RPC 2.0 allows `params` to be omitted, an object, or an array.
+        # We only accept the object form (named arguments); array/positional
+        # surfaces as -32602 rather than a 500 AttributeError on `.get()`.
+        if params is None:
+            params = {}
+        elif not isinstance(params, dict):
+            raise _McpToolError(
+                _INVALID_PARAMS,
+                HttpErrorCode.MCP_TOOL_INPUT_INVALID.value,
+                "`params` must be an object (named arguments)",
+            )
+        handler = tool_handlers.get(params.get("name"))
+        if handler is None:
+            raise _McpToolError(
+                _INVALID_PARAMS,
+                HttpErrorCode.MCP_TOOL_NOT_FOUND.value,
+                f"unknown tool: {params.get('name')!r}",
+            )
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise _McpToolError(
+                _INVALID_PARAMS,
+                HttpErrorCode.MCP_TOOL_INPUT_INVALID.value,
+                "`arguments` must be an object",
+            )
+        return await handler(arguments, user_id)
+
+    methods: dict[str, _StatelessHandler] = {
         **_STATELESS_METHODS,
-        "tools/call": _handle_tools_call,
+        "tools/list": _handle_tools_list,
     }
 
     @router.post("")
@@ -339,8 +403,11 @@ def create_mcp_router(
             # transport mapping.
             return Response(status_code=204)
 
+        # tools/call is dispatched separately because it needs the per-request
+        # caller identity (owner of any created skill); the other methods do not.
+        is_tools_call = method == "tools/call"
         handler = methods.get(method)
-        if handler is None:
+        if handler is None and not is_tools_call:
             return JSONResponse(
                 _jsonrpc_error(
                     req_id,
@@ -351,7 +418,11 @@ def create_mcp_router(
             )
 
         try:
-            result = await handler(envelope.get("params"))
+            if is_tools_call:
+                user_id = await get_user_id(request)
+                result = await _handle_tools_call(envelope.get("params"), user_id)
+            else:
+                result = await handler(envelope.get("params"))
         except _McpToolError as exc:
             return JSONResponse(
                 _jsonrpc_error(
