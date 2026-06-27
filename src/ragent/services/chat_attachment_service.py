@@ -86,7 +86,9 @@ class ChatAttachmentService:
             FileTooLarge: when len(file_bytes) exceeds the configured cap.
         """
         if len(file_bytes) > self._max_size_bytes:
-            raise FileTooLarge(f"Attachment {len(file_bytes)}B exceeds limit {self._max_size_bytes}B")
+            raise FileTooLarge(
+                f"Attachment {len(file_bytes)}B exceeds limit {self._max_size_bytes}B"
+            )
 
         attachment_id = new_id()
         logger.info(
