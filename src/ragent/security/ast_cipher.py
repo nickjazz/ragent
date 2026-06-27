@@ -46,6 +46,6 @@ class ASTCipher:
             nonce = bytes.fromhex(envelope["nonce"])
             ciphertext = bytes.fromhex(envelope["ciphertext"])
             plaintext = self._aesgcm.decrypt(nonce, ciphertext, None)
-        except (InvalidTag, ValueError) as exc:
+        except (KeyError, InvalidTag, ValueError) as exc:
             raise ASTDecryptionError(f"failed to decrypt AST: {exc}") from exc
         return plaintext.decode("utf-8")

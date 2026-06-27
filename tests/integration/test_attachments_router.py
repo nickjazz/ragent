@@ -271,6 +271,43 @@ def test_post_attachments_upload_logs_rejected_mime() -> None:
     assert rejected["log_level"] == "warning"
 
 
+def test_post_attachments_upload_rejected_mime_returns_problem_details() -> None:
+    """The 415 body is an RFC 9457 problem-details response, not a bare FastAPI detail."""
+    app, _ = _build_test_app_with_mocked_attachments()
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chatagent/v3/attachments/upload",
+            files={"file": ("test.exe", b"x", "application/x-msdownload")},
+            data={"threadId": "thread-1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 415
+    assert resp.headers["content-type"] == "application/problem+json"
+    body = resp.json()
+    assert body["error_code"] == "ATTACHMENT_MIME_UNSUPPORTED"
+
+
+def test_post_attachments_upload_falls_back_to_extension_when_content_type_generic() -> None:
+    """A generic/wrong browser Content-Type (e.g. application/octet-stream) for a
+    recognized extension (e.g. .pdf) resolves via filename extension instead of 415."""
+    app, mocks = _build_test_app_with_mocked_attachments()
+    mocks["service"].upload = AsyncMock(return_value="att_test_123")
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chatagent/v3/attachments/upload",
+            files={"file": ("report.pdf", b"%PDF-1.4", "application/octet-stream")},
+            data={"threadId": "thread-1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 202
+    mocks["service"].upload.assert_awaited_once()
+    assert mocks["service"].upload.await_args.kwargs["mime_type"].value == "application/pdf"
+
+
 def test_post_attachments_upload_rejects_oversized_file() -> None:
     """POST upload returns 413 ATTACHMENT_TOO_LARGE via the router's early
     file.size check; service.upload is never reached (TestClient's multipart

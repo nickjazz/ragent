@@ -64,6 +64,20 @@ gadget,19.99"""
         atoms = result["documents"]
         assert len(atoms) == 2, "Should skip empty row"
 
+    def test_csv_row_with_extra_columns_ignores_none_key(self):
+        """A row with more fields than the header stores overflow under DictReader's
+        None key; that overflow must not appear in the formatted output."""
+        csv_content = "a,b\n1,2,3,4"
+        doc = Document(content=csv_content, meta={"mime_type": "text/csv"})
+
+        splitter = _CsvASTSplitter()
+        result = splitter.run([doc])
+
+        atoms = result["documents"]
+        assert len(atoms) == 1
+        assert atoms[0].content == "a: 1, b: 2"
+        assert "None" not in atoms[0].content
+
     def test_csv_with_quoted_fields(self):
         """Handle quoted fields with embedded delimiters/newlines (RFC 4180)."""
         csv_content = '''name,description

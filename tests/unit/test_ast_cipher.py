@@ -71,6 +71,13 @@ def test_decrypt_ast_wrong_key_fails():
         cipher_b.decrypt_ast(envelope)
 
 
+def test_decrypt_ast_malformed_envelope_raises_decryption_error(cipher: ASTCipher):
+    """A malformed envelope missing required keys must raise ASTDecryptionError,
+    not a raw KeyError, so callers can catch one consistent failure type."""
+    with pytest.raises(ASTDecryptionError):
+        cipher.decrypt_ast({"version": "1.0", "algorithm": "AES-256-GCM"})
+
+
 def test_cipher_depends_only_on_dek_attribute():
     """ASTCipher must work with any object exposing `.dek` (ISP boundary)."""
     key_manager = _FakeKeyManager(dek=os.urandom(32))

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from typing import TYPE_CHECKING
 
+import anyio
 import structlog
 
 from ragent.errors.codes import TaskErrorCode
@@ -102,10 +104,13 @@ class ChatAttachmentService:
 
         stage = "store_raw"
         try:
-            self._doc_store.put(
-                object_key=f"attachments/{thread_id}/{attachment_id}/raw",
-                data=file_bytes,
-                content_type=mime_type.value,
+            await anyio.to_thread.run_sync(
+                partial(
+                    self._doc_store.put,
+                    object_key=f"attachments/{thread_id}/{attachment_id}/raw",
+                    data=file_bytes,
+                    content_type=mime_type.value,
+                )
             )
 
             stage = "repo_create"
@@ -153,7 +158,9 @@ class ChatAttachmentService:
         thread_id = claimed.thread_id
         stage = "fetch_raw"
         try:
-            file_bytes = self._doc_store.get(f"attachments/{thread_id}/{attachment_id}/raw")
+            file_bytes = await anyio.to_thread.run_sync(
+                self._doc_store.get, f"attachments/{thread_id}/{attachment_id}/raw"
+            )
 
             mime = AttachmentMime(claimed.mime_type)
 
@@ -179,10 +186,13 @@ class ChatAttachmentService:
             stage = "store_artifacts"
             for variant, encrypted in ast_variants.items():
                 key = f"attachments/{thread_id}/{attachment_id}/ast-{variant}"
-                self._doc_store.put(
-                    object_key=key,
-                    data=json.dumps(encrypted).encode("utf-8"),
-                    content_type="application/json",
+                await anyio.to_thread.run_sync(
+                    partial(
+                        self._doc_store.put,
+                        object_key=key,
+                        data=json.dumps(encrypted).encode("utf-8"),
+                        content_type="application/json",
+                    )
                 )
 
             stage = "repo_add_artifact"

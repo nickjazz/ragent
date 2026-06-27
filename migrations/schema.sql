@@ -1,5 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
--- Latest migration folded in: 014_chat_attachment_artifacts_content_type.sql
+-- Latest migration folded in: 015_drop_chat_attachment_artifacts_fk.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS chat_attachments (
   INDEX idx_create_user_attachment (create_user, attachment_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 015_drop_chat_attachment_artifacts_fk.sql: dropped the physical FK on
+-- attachment_id (docs/00_rule.md "No Physical Foreign Keys" — relationships
+-- belong only in application-level ORM models). uq_attachment_variant's
+-- leftmost prefix already covers attachment_id lookups.
 CREATE TABLE IF NOT EXISTS chat_attachment_artifacts (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   attachment_id CHAR(26)     NOT NULL,
@@ -116,7 +120,5 @@ CREATE TABLE IF NOT EXISTS chat_attachment_artifacts (
   content_type  VARCHAR(64)  NOT NULL DEFAULT 'text/markdown',
   created_at    DATETIME(6)  NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_attachment_variant (attachment_id, variant),
-  CONSTRAINT fk_artifact_attachment FOREIGN KEY (attachment_id)
-    REFERENCES chat_attachments (attachment_id) ON DELETE CASCADE
+  UNIQUE KEY uq_attachment_variant (attachment_id, variant)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

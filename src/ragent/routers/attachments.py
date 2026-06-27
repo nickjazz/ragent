@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 
 from ragent.auth.deps import get_user_id
@@ -111,14 +111,24 @@ def create_attachments_router(
         mime_str = file.content_type or "text/plain"
         try:
             mime_type = AttachmentMime(mime_str)
-        except ValueError as e:
+        except ValueError:
+            mime_type = None
+            if file.filename and "." in file.filename:
+                mime_type = AttachmentMime.resolve_from_extension(file.filename.rsplit(".", 1)[-1])
+
+        if mime_type is None:
             logger.warning(
                 "attachments.upload_rejected_mime",
                 thread_id=threadId,
                 mime_type=mime_str,
                 user_id=user_id,
             )
-            raise HTTPException(status_code=415, detail=f"Unsupported MIME type: {mime_str}") from e
+            return problem(
+                415,
+                HttpErrorCode.ATTACHMENT_MIME_UNSUPPORTED,
+                "Unsupported MIME type",
+                detail=f"Unsupported MIME type: {mime_str}",
+            )
 
         logger.info(
             "attachments.upload_request",

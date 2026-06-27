@@ -135,6 +135,11 @@ class TaskErrorCode(StrEnum):
         "PIPELINE_MAX_ATTEMPTS_EXCEEDED"  # reconciler swept stuck PENDING
     )
 
+    # chat_attachments.error_code (T-CAT.W2/§9). Worker picked up a task for a
+    # process whose RAGENT_KEK_BASE64 is unset — the row would otherwise stay
+    # UPLOADED forever with no client-visible signal.
+    ATTACHMENT_FEATURE_DISABLED = "ATTACHMENT_FEATURE_DISABLED"
+
 
 class ProbeErrorCode(StrEnum):
     """Codes inside /readyz per-component JSON (NOT problem-details)."""

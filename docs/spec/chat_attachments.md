@@ -225,6 +225,14 @@ request thread never blocks on PDF/DOCX/PPTX processing.
    iteration adds one, same limitation `ingest` had before its reconciler
    existed).
 
+If the task is picked up by a worker process where `RAGENT_KEK_BASE64` is
+unset (`container.chat_attachment_service is None`), `attachment_process_task`
+marks the row `FAILED` with `error_code=ATTACHMENT_FEATURE_DISABLED` directly
+via `container.attachment_repository` (built unconditionally — it only
+depends on `engine` — unlike the rest of the attachment stack, which stays
+gated on the KEK) instead of acking silently; otherwise the row would stay
+`UPLOADED` forever with no client-visible signal.
+
 Clients poll `GET /chatagent/v3/attachments/{attachmentId}` (mirrors
 `GET /ingest/v1/{id}`) until `status` is `READY` or `FAILED`; `404` via
 `ATTACHMENT_NOT_FOUND` problem-details for an unknown id. The existing
@@ -289,13 +297,15 @@ needed in the router.
 | `ATTACHMENT_TOO_LARGE` | 413 | size exceeds cap |
 | `ATTACHMENT_PARSE_FAILED` | 422 | `chat_attachment` pipeline raised during AST build |
 | `ATTACHMENT_NOT_FOUND` | 404 | `GET /chatagent/v3/attachments/{id}` on unknown id (T-CAT.W2) |
+| `ATTACHMENT_FEATURE_DISABLED` | n/a — `TaskErrorCode`, persisted to `chat_attachments.error_code` | worker picked up `attachment.process` on a process with `RAGENT_KEK_BASE64` unset (§7) |
 
-## 10. DB schema (`014_chat_attachment_artifacts_content_type.sql`)
+## 10. DB schema (`015_drop_chat_attachment_artifacts_fk.sql`)
 
 `chat_attachments` (id, thread_id, create_user, filename, mime_type,
 size_bytes, `status ENUM('UPLOADED','PROCESSING','READY','FAILED')`,
 `error_code VARCHAR(64) NULL`, `error_reason VARCHAR(255) NULL`,
-created_at) + `chat_attachment_artifacts` (attachment_id FK, variant,
+created_at) + `chat_attachment_artifacts` (attachment_id — application-level
+relationship only, no physical FK per `docs/00_rule.md`, variant,
 storage_key, `content_type VARCHAR(64)`, created_at). No `introduced_run_id`
 column — the `<hidden>` block already binds the attachment to its turn.
 `error_code`/`error_reason` mirror `documents.error_code`/`error_reason`

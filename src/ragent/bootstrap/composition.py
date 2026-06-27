@@ -75,7 +75,10 @@ class Container:
     # T-CAv3.DIP — (user_id, user_token) -> twp_ai.agent.Agent. None when v3 is
     # disabled (chatagent_api_url unset); set whenever v3 is enabled.
     chatagent_agent_factory: AgentFactory | None = None
-    # T-CAT.W1 — in-conversation file attachments. All three are None unless
+    # T-CAT.W1 — in-conversation file attachments. attachment_repository needs
+    # only `engine` (always present) so it is built unconditionally — the
+    # worker uses it to mark a row FAILED even when the feature is disabled.
+    # chat_attachment_service/document_artifact_resolver stay None unless
     # RAGENT_KEK_BASE64 is set (optional feature, like unprotect_client); the
     # attachments router only registers and /chatagent/v3 only resolves
     # attachment_ids when chat_attachment_service is not None.
@@ -384,18 +387,23 @@ def build_container() -> Container:
             timeout=_float_env("UNPROTECT_TIMEOUT_SECONDS", 30.0),
         )
 
-    # T-CAT.W1 — in-conversation file attachments. Gated on RAGENT_KEK_BASE64:
-    # KeyManager.from_env() raises KeyManagerError on an empty/missing KEK, so
-    # constructing it unconditionally would break every existing deployment
-    # that hasn't provisioned the attachment subsystem's keys yet.
-    attachment_repository: AttachmentRepository | None = None
+    # T-CAT.W1 — in-conversation file attachments. attachment_repository only
+    # needs `engine` (always present, MARIADB_DSN is a hard _require()), so it
+    # is built unconditionally — the worker uses it to mark a row FAILED even
+    # when the rest of the feature is disabled (no RAGENT_KEK_BASE64). The
+    # crypto/service stack below stays gated: KeyManager.from_env() raises
+    # KeyManagerError on an empty/missing KEK, so constructing it
+    # unconditionally would break every existing deployment that hasn't
+    # provisioned the attachment subsystem's keys yet.
+    from ragent.repositories.attachment_repository import AttachmentRepository
+
+    attachment_repository = AttachmentRepository(engine=engine)
     chat_attachment_service: ChatAttachmentService | None = None
     document_artifact_resolver: DocumentArtifactResolver | None = None
     if os.environ.get("RAGENT_KEK_BASE64"):
         from ragent.bootstrap.broker import broker as taskiq_broker
         from ragent.bootstrap.dispatcher import TaskiqDispatcher
         from ragent.pipelines.chat_attachment.pipeline import ChatAttachmentPipeline
-        from ragent.repositories.attachment_repository import AttachmentRepository
         from ragent.security.ast_cipher import ASTCipher
         from ragent.security.key_manager import KeyManager
         from ragent.services.chat_attachment_service import ChatAttachmentService
@@ -405,7 +413,6 @@ def build_container() -> Container:
         key_manager = KeyManager.from_env()
         ast_cipher = ASTCipher(key_manager)
         attachment_document_store = MinIODocumentStore(registry=minio_registry)
-        attachment_repository = AttachmentRepository(engine=engine)
         document_artifact_resolver = DocumentArtifactResolver(
             document_store=attachment_document_store,
             ast_cipher=ast_cipher,

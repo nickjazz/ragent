@@ -117,6 +117,34 @@ class TestChatAttachmentService:
         service_dependencies["ast_cipher"].encrypt_ast.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_upload_runs_document_store_put_off_the_event_loop(
+        self, service_dependencies, monkeypatch
+    ):
+        """DocumentStore.put is blocking sync I/O; upload() must offload it via
+        anyio.to_thread.run_sync instead of calling it directly on the event loop."""
+        import ragent.services.chat_attachment_service as cas_module
+
+        run_sync_calls = []
+
+        async def fake_run_sync(fn, *args, **kwargs):
+            run_sync_calls.append(fn)
+            return fn(*args, **kwargs)
+
+        monkeypatch.setattr(cas_module.anyio.to_thread, "run_sync", fake_run_sync)
+        service = ChatAttachmentService(**service_dependencies)
+
+        await service.upload(
+            file_bytes=b"test",
+            filename="test.txt",
+            thread_id="thread-1",
+            create_user="alice",
+            mime_type=AttachmentMime.TEXT_PLAIN,
+        )
+
+        assert len(run_sync_calls) == 1
+        service_dependencies["document_store"].put.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_upload_writes_repository_and_dispatches_processing(self, service_dependencies):
         """Upload writes the UPLOADED row and enqueues attachment.process."""
         service = ChatAttachmentService(**service_dependencies)
@@ -231,6 +259,29 @@ class TestChatAttachmentService:
         service_dependencies["document_store"].put.assert_called()
         service_dependencies["attachment_repository"].add_artifact.assert_called()
         assert service_dependencies["attachment_repository"].add_artifact.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_runs_document_store_io_off_the_event_loop(
+        self, service_dependencies, monkeypatch
+    ):
+        """DocumentStore.get/put are blocking sync I/O; process() must offload every
+        call (1 raw-bytes fetch + 2 artifact stores) via anyio.to_thread.run_sync."""
+        import ragent.services.chat_attachment_service as cas_module
+
+        run_sync_calls = []
+
+        async def fake_run_sync(fn, *args, **kwargs):
+            run_sync_calls.append(fn)
+            return fn(*args, **kwargs)
+
+        monkeypatch.setattr(cas_module.anyio.to_thread, "run_sync", fake_run_sync)
+        service = ChatAttachmentService(**service_dependencies)
+
+        await service.process("ATT001")
+
+        assert len(run_sync_calls) == 3
+        service_dependencies["document_store"].get.assert_called_once()
+        assert service_dependencies["document_store"].put.call_count == 2
 
     @pytest.mark.asyncio
     async def test_process_passes_artifact_content_type_to_repository(self, service_dependencies):

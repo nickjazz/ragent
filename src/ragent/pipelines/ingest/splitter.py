@@ -384,7 +384,7 @@ class _CsvASTSplitter:
             if reader.fieldnames is None:
                 continue
             for row in reader:
-                parts = [f"{k}: {v}" for k, v in row.items() if v]
+                parts = [f"{k}: {v}" for k, v in row.items() if k is not None and v]
                 if not parts:
                     continue
                 row_str = ", ".join(parts)
