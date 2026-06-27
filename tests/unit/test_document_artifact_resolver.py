@@ -36,7 +36,11 @@ def _attachment_row(
 
 def _artifact_row(attachment_id: str, variant: str, storage_key: str) -> ArtifactRow:
     return ArtifactRow(
-        attachment_id=attachment_id, variant=variant, storage_key=storage_key, created_at=_NOW
+        attachment_id=attachment_id,
+        variant=variant,
+        storage_key=storage_key,
+        content_type="text/markdown",
+        created_at=_NOW,
     )
 
 

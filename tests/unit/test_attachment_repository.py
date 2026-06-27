@@ -39,6 +39,7 @@ def _artifact_row(**kwargs) -> dict:
         attachment_id="ATTAAAAAAAAAAAAAAAAAAAAAA",
         variant="complete",
         storage_key="chat_attachments/ATT.../complete.json",
+        content_type="text/markdown",
         created_at=_dt("2026-01-01T00:00:00"),
     )
     base.update(kwargs)
@@ -271,12 +272,15 @@ async def test_claim_for_processing_returns_none_for_missing_row():
 async def test_add_artifact_executes_insert():
     engine, conn = _mock_engine()
     repo = AttachmentRepository(engine)
-    await repo.add_artifact("ATT001", "complete", "chat_attachments/ATT001/complete.json")
+    await repo.add_artifact(
+        "ATT001", "complete", "chat_attachments/ATT001/complete.json", "text/markdown"
+    )
     conn.execute.assert_called_once()
     params = conn.execute.call_args[0][1]
     assert params["attachment_id"] == "ATT001"
     assert params["variant"] == "complete"
     assert params["storage_key"] == "chat_attachments/ATT001/complete.json"
+    assert params["content_type"] == "text/markdown"
 
 
 # ---------------------------------------------------------------------------

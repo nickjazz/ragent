@@ -52,6 +52,7 @@ class ArtifactRow:
     attachment_id: str
     variant: str
     storage_key: str
+    content_type: str
     created_at: datetime.datetime
 
     @classmethod
@@ -60,6 +61,7 @@ class ArtifactRow:
             attachment_id=m["attachment_id"],
             variant=m["variant"],
             storage_key=m["storage_key"],
+            content_type=m["content_type"],
             created_at=m["created_at"],
         )
 
@@ -201,17 +203,24 @@ class AttachmentRepository:
     # chat_attachment_artifacts — CRUD
     # ------------------------------------------------------------------
 
-    async def add_artifact(self, attachment_id: str, variant: str, storage_key: str) -> None:
+    async def add_artifact(
+        self, attachment_id: str, variant: str, storage_key: str, content_type: str
+    ) -> None:
         await self._execute(
             text(
                 """
                 INSERT INTO chat_attachment_artifacts
-                    (attachment_id, variant, storage_key, created_at)
+                    (attachment_id, variant, storage_key, content_type, created_at)
                 VALUES
-                    (:attachment_id, :variant, :storage_key, NOW(6))
+                    (:attachment_id, :variant, :storage_key, :content_type, NOW(6))
                 """
             ),
-            {"attachment_id": attachment_id, "variant": variant, "storage_key": storage_key},
+            {
+                "attachment_id": attachment_id,
+                "variant": variant,
+                "storage_key": storage_key,
+                "content_type": content_type,
+            },
         )
 
     async def get_artifacts(self, attachment_id: str) -> list[ArtifactRow]:

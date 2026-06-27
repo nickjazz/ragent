@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from ragent.errors.codes import TaskErrorCode
-from ragent.schemas.attachments import AttachmentMime
+from ragent.schemas.attachments import ARTIFACT_CONTENT_TYPE, AttachmentMime
 
 if TYPE_CHECKING:
     from ragent.bootstrap.dispatcher import TaskiqDispatcher
@@ -136,10 +136,12 @@ class ChatAttachmentService:
         try:
             file_bytes = self._doc_store.get(f"attachments/{thread_id}/{attachment_id}/raw")
 
+            mime = AttachmentMime(claimed.mime_type)
+
             stage = "pipeline_run"
             result = await self._pipeline.run(
                 file_bytes=file_bytes,
-                mime_type=AttachmentMime(claimed.mime_type),
+                mime_type=mime,
                 user_id=claimed.create_user,
                 filename=claimed.filename,
             )
@@ -165,12 +167,14 @@ class ChatAttachmentService:
                 )
 
             stage = "repo_add_artifact"
+            content_type = ARTIFACT_CONTENT_TYPE[mime]
             for variant in ast_variants:
                 key = f"attachments/{thread_id}/{attachment_id}/ast-{variant}"
                 await self._repo.add_artifact(
                     attachment_id=attachment_id,
                     variant=variant,
                     storage_key=key,
+                    content_type=content_type,
                 )
 
             # Promote to READY only after artifacts are durably persisted.

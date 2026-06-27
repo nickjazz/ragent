@@ -214,6 +214,19 @@ class TestChatAttachmentService:
         assert service_dependencies["attachment_repository"].add_artifact.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_process_passes_artifact_content_type_to_repository(
+        self, service_dependencies
+    ):
+        """content_type is resolved from ARTIFACT_CONTENT_TYPE and passed to add_artifact."""
+        service = ChatAttachmentService(**service_dependencies)
+
+        await service.process("ATT001")
+
+        calls = service_dependencies["attachment_repository"].add_artifact.call_args_list
+        assert len(calls) == 2
+        assert all(call.kwargs["content_type"] == "text/markdown" for call in calls)
+
+    @pytest.mark.asyncio
     async def test_process_no_op_when_claim_returns_none(self, service_dependencies):
         """Process gracefully no-ops (no exception) when the row is already claimed/terminal."""
         service_dependencies["attachment_repository"].claim_for_processing.return_value = None

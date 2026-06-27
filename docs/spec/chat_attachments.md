@@ -28,6 +28,13 @@ Extension fallback applies when the browser-supplied `Content-Type` is
 generic/incorrect (`MIME_EXTENSIONS` mapping, shared util). Rejection →
 `ATTACHMENT_MIME_UNSUPPORTED` (415) / `ATTACHMENT_TOO_LARGE` (413).
 
+`ARTIFACT_CONTENT_TYPE: dict[AttachmentMime, str]` (`schemas/attachments.py`)
+pins which content_type an attachment's rendered AST artifact gets persisted
+under (`chat_attachment_artifacts.content_type`, §10) — a lookup table, not
+branching logic in the service, so adding a format only adds an entry (OCP).
+Every format currently maps to `text/markdown` since the pipeline (§4) only
+ever renders markdown.
+
 ## 3. Unprotect whitelist
 
 Not every MIME needs the external unprotect round-trip. Only binary formats
@@ -272,13 +279,20 @@ authorization check.
 | `ATTACHMENT_PARSE_FAILED` | 422 | `chat_attachment` pipeline raised during AST build |
 | `ATTACHMENT_NOT_FOUND` | 404 | `GET /chatagent/v3/attachments/{id}` on unknown id (T-CAT.W2) |
 
-## 10. DB schema (`013_chat_attachments.sql`)
+## 10. DB schema (`014_chat_attachment_artifacts_content_type.sql`)
 
 `chat_attachments` (id, thread_id, create_user, filename, mime_type,
 size_bytes, `status ENUM('UPLOADED','PROCESSING','READY','FAILED')`,
 `error_code VARCHAR(64) NULL`, `error_reason VARCHAR(255) NULL`,
 created_at) + `chat_attachment_artifacts` (attachment_id FK, variant,
-storage_key, created_at). No `introduced_run_id` column — the `<hidden>`
-block already binds the attachment to its turn. `error_code`/`error_reason`
-mirror `documents.error_code`/`error_reason` (`006_documents_error_code.sql`)
-— populated only when `process()` terminalizes to `FAILED` (§7).
+storage_key, `content_type VARCHAR(64)`, created_at). No `introduced_run_id`
+column — the `<hidden>` block already binds the attachment to its turn.
+`error_code`/`error_reason` mirror `documents.error_code`/`error_reason`
+(`006_documents_error_code.sql`) — populated only when `process()`
+terminalizes to `FAILED` (§7).
+
+`content_type` records the rendered MIME of an artifact's plaintext content
+(currently always `text/markdown` — see `ARTIFACT_CONTENT_TYPE` in §2) as a
+real, queryable DB column, set once at artifact-creation time. It is **not**
+duplicated inside the encrypted envelope (§5) — `ASTCipher.decrypt_ast()`
+never reads envelope metadata back, so storing it there would be write-only.
