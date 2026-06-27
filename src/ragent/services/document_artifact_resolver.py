@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from ragent.security.ast_cipher import ASTDecryptionError
+
 logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
@@ -84,9 +86,9 @@ class DocumentArtifactResolver:
                         encrypted_data = self._doc_store.get(selected.storage_key)
                         encrypted_obj = json.loads(encrypted_data.decode("utf-8"))
                         decrypted = self._ast_cipher.decrypt_ast(encrypted_obj)
-                        if decrypted and "content" in decrypted:
-                            att_info["ast"] = decrypted["content"]
-                    except (ValueError, KeyError, json.JSONDecodeError) as e:
+                        if decrypted is not None:
+                            att_info["ast"] = decrypted
+                    except (ValueError, KeyError, json.JSONDecodeError, ASTDecryptionError) as e:
                         logger.warning(
                             "document_artifact_resolver.decrypt_failed",
                             attachment_id=att_id,

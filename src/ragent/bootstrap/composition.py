@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
+from ragent.services.chat_attachment_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
 
 if TYPE_CHECKING:
     from ragent.repositories.attachment_repository import AttachmentRepository
@@ -81,6 +82,7 @@ class Container:
     attachment_repository: AttachmentRepository | None = None
     chat_attachment_service: ChatAttachmentService | None = None
     document_artifact_resolver: DocumentArtifactResolver | None = None
+    attachment_max_size_bytes: int = ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
 
 
 def _build_chatagent_agent_factory(
@@ -490,6 +492,9 @@ def build_container() -> Container:
         attachment_repository=attachment_repository,
         chat_attachment_service=chat_attachment_service,
         document_artifact_resolver=document_artifact_resolver,
+        attachment_max_size_bytes=_int_env(
+            "ATTACHMENT_MAX_SIZE_BYTES", ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
+        ),
     )
 
 

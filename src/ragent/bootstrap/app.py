@@ -486,6 +486,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
             create_attachments_router(
                 service=container.chat_attachment_service,
                 repository=container.attachment_repository,
+                max_size_bytes=container.attachment_max_size_bytes,
             )
         )
     if container.feedback_hmac_secret is not None:

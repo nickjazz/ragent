@@ -97,7 +97,7 @@ class TestChatAttachmentService:
         )
 
         assert attachment_id is not None
-        assert len(attachment_id) > 0
+        assert len(attachment_id) == 26
         service_dependencies["document_store"].put.assert_called_once()
 
     @pytest.mark.asyncio
@@ -214,9 +214,7 @@ class TestChatAttachmentService:
         assert service_dependencies["attachment_repository"].add_artifact.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_process_passes_artifact_content_type_to_repository(
-        self, service_dependencies
-    ):
+    async def test_process_passes_artifact_content_type_to_repository(self, service_dependencies):
         """content_type is resolved from ARTIFACT_CONTENT_TYPE and passed to add_artifact."""
         service = ChatAttachmentService(**service_dependencies)
 

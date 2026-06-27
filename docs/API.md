@@ -815,7 +815,7 @@ Fast intake only (T-CAT.W2): stores the raw file and an `UPLOADED` row, then enq
 **Response (202 Accepted):**
 ```json
 {
-  "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ"
+  "attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ"
 }
 ```
 
@@ -841,14 +841,14 @@ Polls a single attachment's processing status. Clients poll this after upload wi
 `status` is one of `UPLOADED` (raw bytes stored, processing pending), `PROCESSING` (worker claimed, pipeline+encryption running), `READY` (artifacts persisted, resolvable in chat), `FAILED`.
 
 ```bash
-curl "http://localhost:8000/chatagent/v3/attachments/att_01J9ABCDEFGHJKMNPQRSTVWXYZ" \
+curl "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNPQRSTVWXYZ" \
   -H "X-User-Id: alice"
 ```
 
 ```json
 // 200 OK
 {
-  "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ",
+  "attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ",
   "filename": "Q3_OKRs.pdf",
   "mimeType": "application/pdf",
   "sizeBytes": 125432,
@@ -877,7 +877,7 @@ Lists all attachments for a conversation thread, scoped to the requesting user (
 {
   "attachments": [
     {
-      "attachmentId": "att_01J9ABCDEFGHJKMNPQRSTVWXYZ",
+      "attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ",
       "filename": "Q3_OKRs.pdf",
       "mimeType": "application/pdf",
       "sizeBytes": 125432,

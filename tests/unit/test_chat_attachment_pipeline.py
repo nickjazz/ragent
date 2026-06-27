@@ -215,3 +215,47 @@ class TestChatAttachmentPipeline:
         assert failed["filename"] == "report.docx"
         assert failed["error_type"] == "RuntimeError"
         assert failed["log_level"] == "warning"
+
+    @pytest.mark.parametrize(
+        "mime_type", [AttachmentMime.PDF, AttachmentMime.DOCX, AttachmentMime.PPTX]
+    )
+    @pytest.mark.asyncio
+    async def test_pipeline_passes_raw_bytes_for_binary_mimes(self, mime_type: AttachmentMime):
+        """Binary MIME types skip UTF-8 decode and pass raw bytes via meta['raw_bytes']."""
+        non_utf8_bytes = b"\xff\xd8\xff\xe0binary\x00\x01"
+        unprotect_client = MagicMock(spec=UnprotectClient)
+        unprotect_client.unprotect.return_value = non_utf8_bytes
+
+        with patch(
+            "ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter"
+        ) as mock_splitter_class:
+            mock_splitter = MagicMock()
+            mock_splitter_class.return_value = mock_splitter
+            mock_splitter.run.return_value = {"documents": [Document(content="test")]}
+
+            pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
+
+            await pipeline.run(file_bytes=non_utf8_bytes, mime_type=mime_type)
+
+            passed_doc = mock_splitter.run.call_args[0][0][0]
+            assert passed_doc.content is None
+            assert passed_doc.meta["raw_bytes"] == non_utf8_bytes
+            assert passed_doc.meta["mime_type"] == mime_type.value
+
+    @pytest.mark.asyncio
+    async def test_pipeline_decodes_content_for_text_mimes(self):
+        """Text MIME types still decode to str content, no raw_bytes meta."""
+        with patch(
+            "ragent.pipelines.chat_attachment.pipeline._MimeAwareSplitter"
+        ) as mock_splitter_class:
+            mock_splitter = MagicMock()
+            mock_splitter_class.return_value = mock_splitter
+            mock_splitter.run.return_value = {"documents": [Document(content="test")]}
+
+            pipeline = ChatAttachmentPipeline(unprotect_client=None)
+
+            await pipeline.run(file_bytes=b"hello world", mime_type=AttachmentMime.TEXT_PLAIN)
+
+            passed_doc = mock_splitter.run.call_args[0][0][0]
+            assert passed_doc.content == "hello world"
+            assert "raw_bytes" not in passed_doc.meta

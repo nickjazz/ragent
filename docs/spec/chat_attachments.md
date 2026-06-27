@@ -74,6 +74,12 @@ The pipeline's only responsibility is producing plaintext AST JSON. It does
 layer's) responsibility (see §5, §6) per SRP: a unit test can assert the
 pipeline's output without touching a key manager or MinIO.
 
+Content for `BINARY_MIMES` (DOCX/PPTX/PDF) is passed to the AST splitter as
+raw bytes (`meta["raw_bytes"]`), never decoded as UTF-8 text — those formats
+are binary containers, and decoding them as text would raise before the
+splitter ever runs. Text formats (`text/plain`, `text/markdown`, `text/html`)
+are decoded to `str` as before.
+
 ## 5. AST encryption (KEK/DEK)
 
 Both AST variants are encrypted before being written to storage.
@@ -235,7 +241,7 @@ the same way `<hidden>` already is):
 
 ```
 <hidden>
-<attachments>[{"attachmentId": "att_xxx", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345}]</attachments>
+<attachments>[{"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345}]</attachments>
 <context>...</context>
 </hidden>
 

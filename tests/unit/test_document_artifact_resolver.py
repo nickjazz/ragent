@@ -11,7 +11,7 @@ from ragent.repositories.attachment_repository import (
     AttachmentRepository,
     AttachmentRow,
 )
-from ragent.security.ast_cipher import ASTCipher
+from ragent.security.ast_cipher import ASTCipher, ASTDecryptionError
 from ragent.services.document_artifact_resolver import DocumentArtifactResolver
 from ragent.storage.document_store import DocumentStore
 
@@ -54,9 +54,9 @@ class TestDocumentArtifactResolver:
         ast_cipher = MagicMock(spec=ASTCipher)
         attachment_repository = AsyncMock(spec=AttachmentRepository)
 
-        ast_cipher.decrypt_ast.side_effect = lambda ciphertext_obj, **kwargs: {
-            "content": f"Decrypted: {ciphertext_obj.get('ciphertext', '')[:20]}..."
-        }
+        ast_cipher.decrypt_ast.side_effect = lambda ciphertext_obj, **kwargs: (
+            f"Decrypted: {ciphertext_obj.get('ciphertext', '')[:20]}..."
+        )
 
         return {
             "document_store": document_store,
@@ -215,3 +215,34 @@ class TestDocumentArtifactResolver:
         assert failed["attachment_id"] == "att_1"
         assert failed["log_level"] == "warning"
         assert "error_type" in failed
+
+    @pytest.mark.asyncio
+    async def test_resolve_handles_ast_decryption_error(self, resolver_dependencies):
+        """Resolve catches ASTDecryptionError (tampered/wrong-key ciphertext) without raising."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key")
+        ]
+        resolver_dependencies[
+            "document_store"
+        ].get.return_value = b'{"ciphertext":"xyz","nonce":"abc"}'
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = ASTDecryptionError(
+            "failed to decrypt AST: bad tag"
+        )
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies)
+
+        with structlog.testing.capture_logs() as logs:
+            result = await resolver.resolve(["att_1"])
+
+        assert result is not None
+        import json
+
+        parsed = json.loads(result)
+        assert "ast" not in parsed[0]
+        failed = next(e for e in logs if e["event"] == "document_artifact_resolver.decrypt_failed")
+        assert failed["attachment_id"] == "att_1"
+        assert failed["log_level"] == "warning"
+        assert failed["error_type"] == "ASTDecryptionError"

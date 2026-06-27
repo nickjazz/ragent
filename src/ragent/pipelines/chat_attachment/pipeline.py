@@ -9,7 +9,7 @@ import structlog
 from haystack.dataclasses import Document
 
 from ragent.pipelines.ingest.splitter import _MimeAwareSplitter
-from ragent.schemas.attachments import UNPROTECT_MIMES, AttachmentMime
+from ragent.schemas.attachments import BINARY_MIMES, UNPROTECT_MIMES, AttachmentMime
 
 if TYPE_CHECKING:
     from ragent.clients.unprotect import UnprotectClient
@@ -67,8 +67,14 @@ class ChatAttachmentPipeline:
                     error=str(exc),
                 )
 
-        content_str = content_bytes.decode("utf-8")
-        doc = Document(content=content_str, meta={"mime_type": mime_type.value})
+        if mime_type in BINARY_MIMES:
+            doc = Document(
+                content=None,
+                meta={"mime_type": mime_type.value, "raw_bytes": content_bytes},
+            )
+        else:
+            content_str = content_bytes.decode("utf-8")
+            doc = Document(content=content_str, meta={"mime_type": mime_type.value})
 
         atoms = self._splitter.run([doc])["documents"]
 

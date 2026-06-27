@@ -55,6 +55,18 @@ UNPROTECT_MIMES: frozenset[AttachmentMime] = frozenset(
     }
 )
 
+# MIMEs whose pipeline AST splitter expects raw bytes (meta["raw_bytes"]) instead
+# of a UTF-8 str. Currently the same 3 MIMEs as UNPROTECT_MIMES, but the two
+# concepts are independent ("needs unprotect" vs. "isn't UTF-8 text") and aren't
+# guaranteed to stay in lockstep as new MIME types are added.
+BINARY_MIMES: frozenset[AttachmentMime] = frozenset(
+    {
+        AttachmentMime.DOCX,
+        AttachmentMime.PPTX,
+        AttachmentMime.PDF,
+    }
+)
+
 # Pins the relationship between an uploaded attachment's MIME and the
 # content_type its pipeline's AST artifact is rendered as (docs/spec/
 # chat_attachments.md §2.1). A dict, not branching in the service — adding a

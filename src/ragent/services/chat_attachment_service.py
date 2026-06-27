@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import TYPE_CHECKING
 
 import structlog
 
 from ragent.errors.codes import TaskErrorCode
 from ragent.schemas.attachments import ARTIFACT_CONTENT_TYPE, AttachmentMime
+from ragent.utility.id_gen import new_id
 
 if TYPE_CHECKING:
     from ragent.bootstrap.dispatcher import TaskiqDispatcher
@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from ragent.storage.document_store import DocumentStore
 
 logger = structlog.get_logger(__name__)
+
+# Spec default; composition.py reads ATTACHMENT_MAX_SIZE_BYTES env and passes
+# the runtime value via create_attachments_router(max_size_bytes=...).
+ATTACHMENT_MAX_SIZE_BYTES_DEFAULT = 50 * 1024 * 1024
 
 
 class ChatAttachmentService:
@@ -71,7 +75,7 @@ class ChatAttachmentService:
         Returns:
             attachment_id of the UPLOADED row (processing happens async)
         """
-        attachment_id = str(uuid.uuid4())
+        attachment_id = new_id()
         logger.info(
             "chat_attachment.upload_started",
             attachment_id=attachment_id,

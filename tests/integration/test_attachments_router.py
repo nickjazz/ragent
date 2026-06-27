@@ -16,13 +16,16 @@ from ragent.services.chat_attachment_service import ChatAttachmentService
 _NOW = datetime.datetime(2026, 1, 1)
 
 
-def _build_test_app_with_mocked_attachments() -> tuple[FastAPI, dict]:
+def _build_test_app_with_mocked_attachments(
+    *, max_size_bytes: int | None = None
+) -> tuple[FastAPI, dict]:
     """Build app with mocked attachment service and repository."""
     service = AsyncMock(spec=ChatAttachmentService)
     repository = AsyncMock(spec=AttachmentRepository)
 
     app = FastAPI()
-    app.include_router(create_attachments_router(service=service, repository=repository))
+    kwargs = {} if max_size_bytes is None else {"max_size_bytes": max_size_bytes}
+    app.include_router(create_attachments_router(service=service, repository=repository, **kwargs))
 
     return app, {"service": service, "repository": repository}
 
@@ -265,6 +268,42 @@ def test_post_attachments_upload_logs_rejected_mime() -> None:
     rejected = next(e for e in logs if e["event"] == "attachments.upload_rejected_mime")
     assert rejected["thread_id"] == "thread-1"
     assert rejected["mime_type"] == "application/x-msdownload"
+    assert rejected["log_level"] == "warning"
+
+
+def test_post_attachments_upload_rejects_oversized_file() -> None:
+    """POST upload returns 413 ATTACHMENT_TOO_LARGE when the file exceeds max_size_bytes."""
+    app, mocks = _build_test_app_with_mocked_attachments(max_size_bytes=10)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/chatagent/v3/attachments/upload",
+            files={"file": ("test.txt", b"this file is way over ten bytes")},
+            data={"threadId": "thread-1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 413
+    body = resp.json()
+    assert body["error_code"] == "ATTACHMENT_TOO_LARGE"
+    mocks["service"].upload.assert_not_called()
+
+
+def test_post_attachments_upload_logs_rejected_size() -> None:
+    """POST upload with an oversized file logs a warning before the 413."""
+    app, _ = _build_test_app_with_mocked_attachments(max_size_bytes=10)
+
+    with TestClient(app) as client, structlog.testing.capture_logs() as logs:
+        resp = client.post(
+            "/chatagent/v3/attachments/upload",
+            files={"file": ("test.txt", b"this file is way over ten bytes")},
+            data={"threadId": "thread-1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 413
+    rejected = next(e for e in logs if e["event"] == "attachments.upload_rejected_size")
+    assert rejected["thread_id"] == "thread-1"
     assert rejected["log_level"] == "warning"
 
 

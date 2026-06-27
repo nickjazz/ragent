@@ -12,6 +12,7 @@ from ragent.auth.deps import get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.schemas.attachments import AttachmentMime
+from ragent.services.chat_attachment_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
 
 if TYPE_CHECKING:
     from ragent.repositories.attachment_repository import AttachmentRepository
@@ -59,12 +60,14 @@ def _to_attachment_info(att) -> AttachmentInfo:
 def create_attachments_router(
     service: ChatAttachmentService,
     repository: AttachmentRepository,
+    max_size_bytes: int = ATTACHMENT_MAX_SIZE_BYTES_DEFAULT,
 ) -> APIRouter:
     """Create attachments router with injected dependencies.
 
     Args:
         service: ChatAttachmentService instance
         repository: AttachmentRepository instance
+        max_size_bytes: Upload size cap; oversized files are rejected with 413
 
     Returns:
         APIRouter with POST/GET attachment endpoints
@@ -80,7 +83,31 @@ def create_attachments_router(
         """Upload a file to a conversation thread."""
         user_id = user_id or "anonymous"
 
+        def reject_if_too_large(size_bytes: int):
+            if size_bytes <= max_size_bytes:
+                return None
+            logger.warning(
+                "attachments.upload_rejected_size",
+                thread_id=threadId,
+                filename=file.filename or "unknown",
+                user_id=user_id,
+                size_bytes=size_bytes,
+                max_size_bytes=max_size_bytes,
+            )
+            return problem(413, HttpErrorCode.ATTACHMENT_TOO_LARGE, "Attachment too large")
+
+        # Early rejection when the client provides Content-Length for the part,
+        # avoiding a full read into memory before the post-read fallback below
+        # (which catches transfers, e.g. chunked, that omit Content-Length).
+        if file.size is not None and (rejected := reject_if_too_large(file.size)) is not None:
+            await file.close()
+            return rejected
+
         file_bytes = await file.read()
+        await file.close()
+
+        if (rejected := reject_if_too_large(len(file_bytes))) is not None:
+            return rejected
 
         mime_str = file.content_type or "text/plain"
         try:
