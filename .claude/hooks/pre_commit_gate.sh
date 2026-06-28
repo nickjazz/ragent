@@ -216,8 +216,12 @@ _classify_risk() {
     # Dependency manifest
     if printf '%s\n' "$staged" | grep -qE '^pyproject\.toml$'; then
         RISK_REASONS+=" dependency(pyproject.toml);"; hr=1; fi
-    # Auth / Security (path or filename contains the keyword)
-    if printf '%s\n' "$staged" | grep -qiE '(auth|security)'; then
+    # Auth / Security — "auth"/"security" as a whole path segment or
+    # underscore/dot-joined token (matches src/ragent/auth/, .../security/,
+    # auth_mode.py, test_oidc_auth.py, etc). Anchored on [/_.] or string
+    # boundaries so substring hits like AUTHORS.md or author.py don't
+    # falsely escalate to the high-risk full-review path.
+    if printf '%s\n' "$staged" | grep -qiE '(^|[/_.])(auth|security)([/_.]|$)'; then
         RISK_REASONS+=" auth/security;"; hr=1; fi
     # Lifecycle (composition root / bootstrap)
     if printf '%s\n' "$staged" | grep -qE '^src/ragent/bootstrap/'; then
