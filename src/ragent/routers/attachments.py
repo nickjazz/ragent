@@ -199,9 +199,7 @@ def create_attachments_router(
         user_id = user_id or "anonymous"
         deleted = await service.delete(attachmentId, create_user=user_id)
         if not deleted:
-            logger.info(
-                "attachments.delete_not_found", attachment_id=attachmentId, user_id=user_id
-            )
+            logger.info("attachments.delete_not_found", attachment_id=attachmentId, user_id=user_id)
             return problem(404, HttpErrorCode.ATTACHMENT_NOT_FOUND, "Attachment not found")
 
         return Response(status_code=204)

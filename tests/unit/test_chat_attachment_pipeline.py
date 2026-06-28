@@ -158,8 +158,7 @@ class TestChatAttachmentPipeline:
         pipeline = ChatAttachmentPipeline(unprotect_client=unprotect_client)
 
         file_bytes = (
-            b"# Heading One\nLine A1\nLine A2\nLine A3\n\n"
-            b"# Heading Two\nLine B1\nLine B2\n"
+            b"# Heading One\nLine A1\nLine A2\nLine A3\n\n# Heading Two\nLine B1\nLine B2\n"
         )
         result = await pipeline.run(file_bytes=file_bytes, mime_type=AttachmentMime.TEXT_MARKDOWN)
 

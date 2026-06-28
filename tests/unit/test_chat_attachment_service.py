@@ -417,9 +417,7 @@ class TestChatAttachmentService:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_delete_by_thread_deletes_every_attachment_in_thread(
-        self, service_dependencies
-    ):
+    async def test_delete_by_thread_deletes_every_attachment_in_thread(self, service_dependencies):
         """delete_by_thread lists (no create_user filter) then deletes each row
         without re-fetching it via repo.get (avoids an N+1 SELECT per row)."""
         rows = [_claimed_row(attachment_id="ATT001"), _claimed_row(attachment_id="ATT002")]

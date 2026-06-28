@@ -139,5 +139,7 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
         # render per-message create/update times (null when upstream omits them).
         "createTime": raw.get("createTime"),
         "updateTime": raw.get("updateTime"),
-        "attachments": _extract_attachments_from_hidden(unwrapped) if unwrapped is not None else None,
+        "attachments": _extract_attachments_from_hidden(unwrapped)
+        if unwrapped is not None
+        else None,
     }
