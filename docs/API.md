@@ -25,8 +25,7 @@ Supported MIME types (`mime_type`):
 | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | DOCX | One atom per paragraph/table |
 | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | PPTX | One atom per slide |
 | `application/pdf` | PDF | Per-page markdown via pymupdf4llm; RapidOCR for image-bearing pages |
-
-CSV is not accepted.
+| `text/csv` | CSV | One atom per data row, stdlib `csv` module (T-CAT.9) |
 
 
 ### `POST /ingest/v1` — `ingest_type=inline` (content in body)
