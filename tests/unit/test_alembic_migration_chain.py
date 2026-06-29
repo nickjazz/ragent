@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import types
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -22,20 +23,13 @@ ENV_PY = Path(__file__).resolve().parents[2] / "alembic" / "env.py"
 def _load_env_module(monkeypatch):
     import alembic
 
-    class _NullCM:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
     noop = lambda *a, **kw: None  # noqa: E731
     stub = types.SimpleNamespace(
         config=types.SimpleNamespace(config_file_name=None),
         is_offline_mode=lambda: True,
         configure=noop,
         run_migrations=noop,
-        begin_transaction=_NullCM,
+        begin_transaction=nullcontext,
     )
     monkeypatch.setattr(alembic, "context", stub)
     monkeypatch.setenv("MARIADB_DSN", "mysql+aiomysql://u:p@h:3306/db")
