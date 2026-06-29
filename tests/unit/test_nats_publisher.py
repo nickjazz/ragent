@@ -80,6 +80,25 @@ async def test_connect_opens_connection_via_nats(monkeypatch) -> None:
     assert opened["opts"]["token"] == "tok"
 
 
+async def test_connect_passes_user_password(monkeypatch) -> None:
+    opened: dict[str, object] = {}
+
+    class _NC:
+        async def publish(self, subject: str, data: bytes) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _NC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    pub = NatsSessionPublisher(servers="nats://x", user="alice", password="s3cret")
+
+    await pub.connect(asyncio.get_running_loop())
+
+    assert opened["opts"]["user"] == "alice"
+    assert opened["opts"]["password"] == "s3cret"
+
+
 async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
     async def _boom(servers, **opts):  # noqa: ANN001
         raise ConnectionError("nats down")

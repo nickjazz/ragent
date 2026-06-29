@@ -415,6 +415,8 @@ def build_container() -> Container:
         nats_publisher = NatsSessionPublisher(
             servers=os.environ.get("NATS_SERVERS") or None,
             subject_prefix=os.environ.get("NATS_SESSION_SUBJECT_PREFIX", "session"),
+            user=os.environ.get("NATS_USER") or None,
+            password=os.environ.get("NATS_PASSWORD") or None,
             token=os.environ.get("NATS_TOKEN") or None,
             creds=os.environ.get("NATS_CREDS") or None,
         )

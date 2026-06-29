@@ -40,11 +40,15 @@ class NatsSessionPublisher:
         *,
         servers: str | None,
         subject_prefix: str = "session",
+        user: str | None = None,
+        password: str | None = None,
         token: str | None = None,
         creds: str | None = None,
     ) -> None:
         self._servers = servers
         self._prefix = subject_prefix
+        self._user = user
+        self._password = password
         self._token = token
         self._creds = creds
         self._nc: Any = None
@@ -68,6 +72,10 @@ class NatsSessionPublisher:
             import nats
 
             opts: dict[str, Any] = {}
+            if self._user:
+                opts["user"] = self._user
+            if self._password:
+                opts["password"] = self._password
             if self._token:
                 opts["token"] = self._token
             if self._creds:

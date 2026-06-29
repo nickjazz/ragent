@@ -63,6 +63,8 @@
 | `REDIS_UNREAD_TTL_SECONDS`            | `2592000`        | TTL (default 30d) of the per-session new-reply flag backing the sessionList dot; survives well past a run buffer so the dot persists until the user opens the session. |
 | `NATS_SERVERS`                        | (unset)          | Comma-separated NATS URLs. When set, ragent publishes live session-list status (`running`/`hasNewReply`) to `<prefix>.<user_id>.status`; unset → the list is snapshot-only (no realtime push). |
 | `NATS_SESSION_SUBJECT_PREFIX`         | `session`        | Subject prefix for the per-user session-status channel (`<prefix>.<user_id>.status`). |
+| `NATS_USER`                           | (unset)          | Optional NATS username (user/password auth). |
+| `NATS_PASSWORD`                       | (unset)          | Optional NATS password (user/password auth). |
 | `NATS_TOKEN`                          | (unset)          | Optional NATS auth token. |
 | `NATS_CREDS`                          | (unset)          | Optional path to a NATS `.creds` file (JWT auth). |
 
