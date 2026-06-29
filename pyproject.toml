@@ -33,6 +33,7 @@ dependencies = [
     "fastmcp==3.3.1",
     "pyyaml==6.0.3",
     "joserfc==1.6.5",
+    "cryptography==48.0.1",
     "rapidocr-onnxruntime==1.4.4",
     # opencv-python-headless replaces opencv-python (pulled by rapidocr) so that
     # libGL / libX11 are not required in slim containers.

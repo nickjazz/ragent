@@ -36,7 +36,7 @@ def _build(skill_service):
             http_client=MagicMock(spec=httpx.Client),
             chatagent_ap_name="TestAP",
             chatagent_api_url="http://upstream",
-            agent_factory=lambda user_id, token: agent,
+            agent_factory=lambda user_id, token, attachments_block: agent,
             skill_service=skill_service,
         )
     )

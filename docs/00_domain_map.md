@@ -97,6 +97,7 @@
 | `mcp_tools/` | —(tool 描述子)| 每個 sub-module 定義一個 MCP tool 的 input model / inputSchema / Tool descriptor |
 | `admin_embedding.py` | `/embedding/v1` | embedding model 生命週期管理（B50；promote/cutover/rollback/commit/abort/state）|
 | `admin_ingest.py` | `/ingest/v1/upload` | multipart 上傳路由（direct route；no `APIRouter` prefix）|
+| `attachments.py` | `/chatagent/v3/attachments` | `POST /upload`(MIME/size 驗證 → `service.upload()` 快速 intake，202)/ `GET ?threadId=`(列出該對話的 attachments，含 `errorCode`/`errorReason`)/ `GET /{attachmentId}`(輪詢單筆狀態；不存在回 404 `ATTACHMENT_NOT_FOUND`，T-CAT.W2)；獨立檔案但與 `chatagent_v3.py` 共用 `/chatagent/v3` 路徑空間（同 `admin_ingest.py` 與 `ingest.py` 共用 `/ingest/v1` 的既有模式），滿足 `tests/unit/test_api_versioning.py` 的版本前綴規則 |
 | `admin_ops.py` | `/ops/v1` | 維運操作(retry)|
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
@@ -125,6 +126,8 @@
 | `embedding/lifecycle.py` | embedding model 狀態機：draft → staging → active → retired（B50）|
 | `embedding/backfill.py` | backfill 長跑背景 op（enqueue 給 worker）|
 | `embedding/preflight.py` | embedding cutover 前置檢查：warmup + similarity gate |
+| `chat_attachment_service.py` | `upload()`(快速 intake，同步)：`DocumentStore.put`(raw bytes) → `attachment_repository.create()`(UPLOADED) → `dispatcher.enqueue("attachment.process", ...)`。`process()`(worker 呼叫，異步，T-CAT.W2)：`attachment_repository.claim_for_processing()`(UPLOADED→PROCESSING)→ 取回 raw bytes → `ChatAttachmentPipeline.run()` → `ASTCipher.encrypt_ast()` → `DocumentStore.put`(每個 artifact)→ `add_artifact` → `update_status(READY)`；例外時 terminalize 為 FAILED（`error_code`/`error_reason`），不 re-raise |
+| `document_artifact_resolver.py` | `attachment_ids` → `ContextItems`：`DocumentStore.get` → `ASTCipher.decrypt_ast` → 組裝給 `/chatagent/v3` 的 `<attachments>` 區塊 |
 
 ---
 ### 2.4 Repositories（資料持久層）
@@ -143,6 +146,7 @@
 | `document_repository.py` | `documents` 表 — CRUD、status 轉換、選舉（supersede）|
 | `feedback_repository.py` | `feedback` 表 — 投票記錄寫入 |
 | `system_settings_repository.py` | `system_settings` 表 — embedding model config 讀寫 |
+| `attachment_repository.py` | `chat_attachments` + `chat_attachment_artifacts` 表 — CRUD、依 `thread_id`/`create_user` 查詢；`claim_for_processing()` 原子 claim(UPLOADED→PROCESSING，鏡像 `DocumentRepository._atomic_claim`)；`update_status()` 可選寫入 `error_code`/`error_reason`(T-CAT.W2) |
 | `skill_repository.py` | `skills` 表 — owner-scoped CRUD（每條語句都以 `user_id` 過濾；T-SK）|
 
 ---
@@ -161,9 +165,11 @@
 |---|---|
 | `ingest/__init__.py` | `build_ingest_pipeline()` — 公用介面；re-exports 所有 sub-module 符號 |
 | `ingest/loader.py` | `_TextLoader`、`ALLOWED_MIMES` |
-| `ingest/splitter.py` | `_MimeAwareSplitter`、`_MarkdownASTSplitter`、`_HtmlASTSplitter`、`_DocxASTSplitter`、`_PptxASTSplitter`、`_PdfASTSplitter`、`INGEST_PDF_MARGIN_PTS` |
+| `ingest/splitter.py` | `_MimeAwareSplitter`、`_MarkdownASTSplitter`、`_HtmlASTSplitter`、`_DocxASTSplitter`、`_PptxASTSplitter`、`_PdfASTSplitter`、`_CsvASTSplitter`、`INGEST_PDF_MARGIN_PTS` |
 | `ingest/chunker.py` | `_BudgetChunker`、`_pack_atoms`、`validate_chunk_config`、`CHUNK_TARGET_CHARS`、`CHUNK_MAX_CHARS`、`CHUNK_OVERLAP_CHARS`、`CHUNK_MAX_PIECES_PER_ATOM` |
 | `ingest/embedder.py` | `_DocumentEmbedder` |
+| `chat_attachment/pipeline.py` | `ChatAttachmentPipeline` — load → optional unprotect(白名單見 §2.7) → AST build；**不**加密、**不**持久化（SRP：留給 service 層）|
+| `chat_attachment/ast_builder.py` | `CompleteAST`、`SimplifiedAST` — 複用 `ingest/splitter.py` 的 `_MimeAwareSplitter` 家族，不重寫格式解析 |
 | `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — 公用介面；re-exports 所有 sub-module 符號 |
 | `retrieve/_constants.py` | `DEFAULT_TOP_K`、`DEFAULT_MIN_SCORE`、`MAX_TOP_K`、`EXCERPT_MAX_CHARS_DEFAULT`、`_VALID_MODES` |
 | `retrieve/joiner.py` | `build_es_filters`、`dedupe_by_document`、`doc_to_source_entry` |
@@ -231,6 +237,7 @@
 - `embedding.py`（PromoteRequest / CutoverRequest）
 - `chat.py`（ChatRequest / ChatResponse / Source / StreamDelta/Done/Error）
 - `chatagent.py`(SessionRenameRequest / SessionDeleteRequest)
+- `attachments.py`(`AttachmentMime` enum、`UNPROTECT_MIMES` frozenset、AttachmentUploadResponse / AttachmentListResponse)
 - `feedback.py`（FeedbackRequest / vote / reason enum）
 - `skill.py`（SkillWriteRequest / SkillResponse / SkillListResponse；T-SK）
 - `_common.py`(source_app / source_meta 共用 filter 欄位驗證)
@@ -245,7 +252,7 @@
 | **允許依賴** | `errors/`、`utility/`。 |
 | **禁止事項** | ❌ MinIO 物件在 READY / DELETE 後不得刪除（audit/replay 保留）— 規則在 `00_spec.md §3.1`。❌ 不得讀取 `os.environ`（site config 由 bootstrap 注入）。 |
 
-主要檔案：`minio_client.py`（MinioClient — S3 操作封裝）、`minio_registry.py`（MinioSiteRegistry — 多 site 查詢）。
+主要檔案：`minio_client.py`（`MinIOClient` — 舊版 S3 操作封裝，未被 composition root 接線，與本計畫無關，保留供既有單元測試）、`minio_registry.py`（`MinioSiteRegistry` — 多 site 查詢，ingest 與 chat-attachment 共用的唯一生產路徑；`get_object`/`delete_object`/`stat_object` 已接受呼叫端自訂 key，`put_object_default` 才是 ingest 專屬鍵格式）、`document_store.py`（`DocumentStore` Protocol — `put`/`get`/`delete`/`exists`；DIP 邊界，service 層只依賴此介面，不直接 import `minio_registry.py`）、`minio_document_store.py`（`MinIODocumentStore` — `DocumentStore` 的唯一實作，建構時注入既有的 `MinioSiteRegistry`，使用 `default()` site；`get`/`delete`/`exists` 直接呼叫 registry 既有方法，`put` 呼叫 registry 新增的通用 `put_object(site, key, ...)` — 與 `put_object_default` 共用同一段 S3 呼叫邏輯，差異只在 key 由呼叫端提供）。
 
 ---
 ### 2.10 Auth（認證）
@@ -315,14 +322,16 @@
 | 項目 | 說明 |
 |---|---|
 | **路徑** | `src/ragent/security/` |
-| **責任** | 檔案安全校驗（zip bomb / path traversal）。 |
-| **允許依賴** | Python stdlib 只。 |
+| **責任** | 檔案安全校驗（zip bomb / path traversal）；金鑰管理與對稱加密（KEK/DEK、AES-256-GCM）。 |
+| **允許依賴** | Python stdlib；`cryptography`（業界標準加密函式庫，僅此 domain 可引用）。 |
 
 **模組清單：**
 
 | 檔案 | 職責 |
 |---|---|
 | `archive_guard.py` | DOCX / PPTX zip preflight — members、ratio、expanded bytes 檢查（`INGEST_MAX_ARCHIVE_MEMBERS` / `_RATIO` / `_EXPANDED_BYTES`）|
+| `key_manager.py` | `KeyManager` — 啟動時用 `RAGENT_KEK_BASE64` 解開 `RAGENT_ENCRYPTED_DEK_BASE64`，process 生命週期持有單一 DEK（ISP：對外只曝露 `.dek`，不洩漏 KEK/wrap 細節）|
+| `ast_cipher.py` | `ASTCipher` — AES-256-GCM，依賴 `KeyManager.dek`；`encrypt_ast()` / `decrypt_ast()` |
 
 ---
 ### 2.15 Workers（TaskIQ Task Entrypoints）
@@ -341,6 +350,7 @@
 | `ingest.py` | `ingest.pipeline` task — TX-A claim → pipeline body（pipelines/ingest）→ TX-B 終態；`ingest.supersede` 選舉（呼叫 `services/ingest_service.IngestService`） |
 | `backfill.py` | `ingest.backfill_candidate` task（T-EM-R.9）— scroll stable_index、補嵌入到 candidate_index |
 | `heartbeat.py` | PENDING row 30s heartbeat 背景迴圈 |
+| `attachment.py` | `attachment.process` task（T-CAT.W2）— 呼叫 `services/chat_attachment_service.ChatAttachmentService.process()`；`RAGENT_KEK_BASE64` 未設定時 no-op + log |
 
 ---
 ### 2.16 Reconciler（獨立 Process）
@@ -380,7 +390,7 @@ Middleware  → Errors, Utility
 Schemas     → (stdlib + Pydantic only)
 Errors      → (stdlib only)
 Utility     → (stdlib only)
-Security    → (stdlib only)
+Security    → stdlib, cryptography（唯一允許的第三方依賴；其餘 domain 不得直接 import cryptography）
 Bootstrap   → 全部（唯一可以組裝所有層的地方）
 Workers     → Bootstrap(broker/metrics/Container), Pipelines, Repositories, Services, Schemas, Errors, Utility
 Reconciler  → Repositories, Bootstrap(Container), Errors, Utility
@@ -523,4 +533,6 @@ log.error("ingest.failed", document_id=doc_id, error_code="EMBEDDER_ERROR")
 | `errors/codes.py` | 所有 Domain + `docs/00_spec.md §4.1.2` |
 | `pipelines/retrieve/__init__.py` | Routers（chat、retrieve）、integration tests |
 | `bootstrap/metrics.py` | 所有有 metric emit 的 Domain |
+| `security/key_manager.py` | Bootstrap（建構順序）、`security/ast_cipher.py`、`services/chat_attachment_service.py`、`services/document_artifact_resolver.py` |
+| `storage/document_store.py` | Bootstrap、`services/chat_attachment_service.py`、`services/document_artifact_resolver.py`（DIP：兩者只 import Protocol，不 import `minio_document_store.py`）|
 

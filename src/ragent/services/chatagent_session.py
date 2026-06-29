@@ -31,11 +31,14 @@ both together, not just one.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from twp_ai.roles import node_to_role
 
 from ragent.utility.hidden import strip_machine_context
+
+_ATTACHMENTS_PATTERN = re.compile(r"<attachments>(.*?)</attachments>", re.DOTALL)
 
 
 def _clean_text(value: str) -> str:
@@ -50,6 +53,31 @@ def _unwrap_json_string(value: str) -> str:
     except (ValueError, TypeError):
         return value
     return decoded if isinstance(decoded, str) else value
+
+
+def _extract_attachments_from_hidden(hidden_block: str) -> list[dict[str, Any]] | None:
+    """Extract attachments from <hidden> preamble before stripping.
+
+    Searches for <attachments>…</attachments> block within the hidden preamble
+    and parses it as JSON. Returns the parsed list, or None if the block is
+    absent or empty.
+    """
+    match = _ATTACHMENTS_PATTERN.search(hidden_block)
+    if not match:
+        return None
+
+    content = match.group(1).strip()
+    if not content:
+        return None
+
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, list) and len(parsed) > 0:
+            return parsed
+    except (ValueError, TypeError):
+        pass
+
+    return None
 
 
 def map_session_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -97,14 +125,21 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
     meta = raw.get("messageMeta")
     langgraph_node = meta.get("langgraph_node") if isinstance(meta, dict) else None
     content = raw.get("content")
+    # Unwrap once and reuse for both attachment extraction and the content
+    # strip below — extraction must run on the un-stripped block (it reads
+    # the <attachments> tag strip_machine_context removes).
+    unwrapped = _unwrap_json_string(content) if isinstance(content, str) else None
     # `or "assistant"`: a present-but-null `role` must fall back too, not just a
     # missing key — keeps a non-empty string for node_to_role.
     return {
         "id": raw.get("messageId") or "",
         "role": node_to_role(raw.get("role") or "assistant", langgraph_node),
-        "content": _clean_text(content) if isinstance(content, str) else content,
+        "content": strip_machine_context(unwrapped) if unwrapped is not None else content,
         # Pass the upstream persistence timestamps through so the client can
         # render per-message create/update times (null when upstream omits them).
         "createTime": raw.get("createTime"),
         "updateTime": raw.get("updateTime"),
+        "attachments": _extract_attachments_from_hidden(unwrapped)
+        if unwrapped is not None
+        else None,
     }

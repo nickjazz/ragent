@@ -128,6 +128,22 @@ def test_put_object_routes_through_default_site():
     stub.put_object.assert_called_once()
 
 
+def test_put_object_routes_through_named_site_with_caller_supplied_key():
+    """T-CAT.6 — generic put_object(site, object_key, ...), unlike put_object_default
+    which only ever targets __default__ and synthesises its own key."""
+    raw = json.dumps([_site(), _site(name="tenant-eu-1", bucket="eu")])
+    stub = MagicMock()
+    reg = MinioSiteRegistry.from_json(raw, minio_factory=_factory(stub))
+    import io
+
+    payload = io.BytesIO(b"x")
+    reg.put_object("tenant-eu-1", "custom-key", payload, 1, "text/plain")
+
+    stub.put_object.assert_called_once_with(
+        "eu", "custom-key", payload, 1, content_type="text/plain"
+    )
+
+
 def test_delete_object_skips_read_only_site():
     raw = json.dumps([_site(), _site(name="caller", read_only=True)])
     stub = MagicMock()

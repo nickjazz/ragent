@@ -1,5 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
--- Latest migration folded in: 012_documents_status_created_index.sql
+-- Latest migration folded in: 014_chat_attachments.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -84,13 +84,57 @@ CREATE TABLE IF NOT EXISTS feedback (
   CONSTRAINT ck_vote_unit CHECK (vote IN (-1, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 014_chat_attachments.sql: chat-attachment metadata + per-AST-variant
+-- storage pointers, including PROCESSING (async worker hand-off) and
+-- error_code/error_reason failure diagnostics (T-CAT.7/T-CAT.W2). No
+-- `introduced_run_id` — the `<hidden><attachments>` block already binds
+-- the attachment to its turn. Squashes the former 015 (content_type
+-- column) and 016 (FK removal) revisions into this one file.
+CREATE TABLE IF NOT EXISTS chat_attachments (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  attachment_id CHAR(26)     NOT NULL,
+  thread_id     VARCHAR(64)  NOT NULL,
+  create_user   VARCHAR(64)  NOT NULL,
+  filename      VARCHAR(256) NOT NULL,
+  mime_type     VARCHAR(128) NOT NULL,
+  size_bytes    BIGINT UNSIGNED NOT NULL,
+  status        ENUM('UPLOADED','PROCESSING','READY','FAILED') NOT NULL DEFAULT 'UPLOADED',
+  created_at    DATETIME(6)  NOT NULL,
+  updated_at    DATETIME(6)  NOT NULL,
+  error_code    VARCHAR(64)  NULL,
+  error_reason  VARCHAR(255) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_attachment_id (attachment_id),
+  INDEX idx_thread_created (thread_id, created_at),
+  INDEX idx_create_user_attachment (create_user, attachment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- No physical FK on attachment_id (docs/00_rule.md "No Physical Foreign
+-- Keys" — relationships belong only in application-level ORM models).
+-- uq_attachment_variant's leftmost prefix already covers attachment_id
+-- lookups. content_type folded in from the former 015 revision. char_count
+-- (rendered markdown length, computed at creation time) gates
+-- complete-vs-simplified selection in DocumentArtifactResolver against
+-- ATTACHMENT_ARTIFACT_MAX_CHARS without decrypting the artifact first.
+CREATE TABLE IF NOT EXISTS chat_attachment_artifacts (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  attachment_id CHAR(26)     NOT NULL,
+  variant       ENUM('complete','simplified') NOT NULL,
+  storage_key   VARCHAR(256) NOT NULL,
+  content_type  VARCHAR(64)  NOT NULL DEFAULT 'text/markdown',
+  char_count    INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at    DATETIME(6)  NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_attachment_variant (attachment_id, variant)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 013_skills.sql: per-user reusable instruction/prompt presets ("skills").
--- Every skill is private to its owner; every query filters by user_id.
--- Surrogate id PK; skill_id is the CHAR(26) business key (UNIQUE);
+-- Every skill is private to its owner, every query filters by user_id.
+-- Surrogate id PK, skill_id is the CHAR(26) business key (UNIQUE).
 -- (user_id, name) UNIQUE so the DB refuses duplicate names per owner.
 -- instructions is MEDIUMTEXT (not TEXT): 16,384 chars * 4 bytes/utf8mb4 char
 -- = 65,536 B exceeds TEXT's 65,535 B limit. (user_id, created_at, id) backs the
--- newest-first list without a filesort; point lookups use uq_skill_id.
+-- newest-first list without a filesort, point lookups use uq_skill_id.
 CREATE TABLE IF NOT EXISTS skills (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   skill_id     CHAR(26)      NOT NULL,
