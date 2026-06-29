@@ -358,12 +358,37 @@ the same way `<hidden>` already is):
 
 ```
 <hidden>
-<attachments>[{"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345}]</attachments>
+<attachments>[{"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345, "variant": "complete", "ast": "# Report\n..."}]</attachments>
 <context>...</context>
 </hidden>
 
 {user message}
 ```
+
+### 8.0 `<attachments>` element field reference
+
+Each element of the `<attachments>` array is assembled once per
+`attachment_id`, per turn, by `DocumentArtifactResolver.resolve()`
+(`src/ragent/services/document_artifact_resolver.py`). It is **not** a
+persisted schema/Pydantic model — it's a plain `dict[str, Any]` built
+field-by-field, then `json.dumps()`'d into the string that
+`adk_caller.py::_context_preamble()` wraps in `<attachments>...</attachments>`.
+
+| Field | Always present? | Source file / class | Notes |
+|---|---|---|---|
+| `attachmentId` | yes | `DocumentArtifactResolver.resolve()`, from `AttachmentRow.attachment_id` (`repositories/attachment_repository.py`) | ULID, matches `chat_attachments.attachment_id` |
+| `filename` | yes | same — `AttachmentRow.filename` | original upload filename |
+| `mimeType` | yes | same — `AttachmentRow.mime_type` | one of `AttachmentMime` (`schemas/attachments.py`) |
+| `sizeBytes` | yes | same — `AttachmentRow.size_bytes` | raw file size at upload time |
+| `variant` | only when the attachment has at least one `READY` artifact | `DocumentArtifactResolver.resolve()`, set from the selected `ArtifactRow.variant` (`repositories/attachment_repository.py`) | `"complete"` or `"simplified"` — records *which* AST variant was picked by the `char_count` budget check (§4), independent of whether decryption then succeeds |
+| `ast` | only when `variant` is set **and** decrypt succeeds | `DocumentArtifactResolver.resolve()`, via `ASTCipher.decrypt_ast()` (`security/ast_cipher.py`) | decrypted plaintext markdown AST; omitted (logged as `document_artifact_resolver.decrypt_failed`) on `ValueError`/`KeyError`/`json.JSONDecodeError`/`ASTDecryptionError` |
+
+`attachment_id` values themselves originate from `body.attachmentIds` on the
+live-POST request (`RunAgentInput.attachment_ids`,
+`packages/twp-ai/src/twp_ai/schemas.py`), read by
+`routers/chatagent_v3.py` and passed straight into
+`DocumentArtifactResolver.resolve()` (line ~181) — the router never builds
+the JSON itself.
 
 ### Reconstruction Flow Diagram
 
@@ -578,3 +603,88 @@ indistinguishable: both yield `404 ATTACHMENT_NOT_FOUND` (or an empty list)
 
 Full inventory of every other timeout/threshold the process reads:
 [`docs/spec/env_vars.md`](env_vars.md).
+
+## 13. End-to-end curl walkthrough
+
+Full request/response shapes for every endpoint below live in
+[`docs/API.md`](../API.md#attachments-chatagentv3attachments); this section
+chains them into one bootstrap → upload → chat → inspect flow.
+
+### 13.1 Bootstrap the KEK/DEK pair (one-time, offline)
+
+The attachment routes (§11) only register when both env vars below are set.
+Mint a pair with `scripts/gen_attachment_keys.py` (never an HTTP endpoint —
+secret material must never enter a request/response body, §5):
+
+```bash
+uv run python scripts/gen_attachment_keys.py generate
+# RAGENT_KEK_BASE64=...
+# RAGENT_ENCRYPTED_DEK_BASE64=...
+```
+
+Paste both lines into `.env` (or your secret manager) and restart the API +
+worker processes — `KeyManager` unwraps the DEK once at boot
+(`security/key_manager.py`).
+
+### 13.2 Upload a file
+
+```bash
+curl -X POST "http://localhost:8000/chatagent/v3/attachments/upload" \
+  -H "X-User-Id: alice" \
+  -F "file=@report.pdf" \
+  -F "threadId=thread_1"
+# 202 {"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ"}
+```
+
+### 13.3 Poll until `READY`
+
+```bash
+curl "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNPQRSTVWXYZ" \
+  -H "X-User-Id: alice"
+# 200 {"attachmentId": "...", "status": "UPLOADED" | "PROCESSING" | "READY" | "FAILED", ...}
+```
+
+Repeat with backoff (1s → 2s → 4s → cap 10s, §7) until `status` is `READY`
+(pipeline + AES-256-GCM encryption finished) or `FAILED` (`errorCode`/
+`errorReason` populated).
+
+### 13.4 Reference it in a chat turn
+
+Pass the `attachmentId` from 13.2 in `attachmentIds` on the next
+`/chatagent/v3` POST (`RunAgentInput.attachment_ids`,
+`packages/twp-ai/src/twp_ai/schemas.py`); the router resolves it via
+`DocumentArtifactResolver` into the `<attachments>` block (§8) before the
+turn reaches the upstream agent:
+
+```bash
+curl -X POST http://localhost:8000/chatagent/v3 \
+  -H "X-Auth-Token: <jwt>" -H "Content-Type: application/json" \
+  -d '{"threadId":"thread_1","runId":"run_1","messages":[{"id":"m1","role":"user","content":"Summarise the attached report."}],"tools":[],"state":null,"context":[],"forwardedProps":null,"attachmentIds":["01J9ABCDEFGHJKMNPQRSTVWXYZ"]}' \
+  --no-buffer
+```
+
+### 13.5 Manually inspect an encrypted artifact (incident response)
+
+Every artifact is stored as an AES-256-GCM envelope
+(`{"version", "algorithm", "nonce", "ciphertext"}`, §5) at
+`chat_attachment_artifacts.storage_key`. To read one outside the running
+app, fetch the object from MinIO/S3 and decrypt it offline with
+`scripts/decrypt_artifact.py` (requires the same `RAGENT_KEK_BASE64` /
+`RAGENT_ENCRYPTED_DEK_BASE64` pair from 13.1):
+
+```bash
+uv run python scripts/decrypt_artifact.py path/to/envelope.json
+# or, piped from wherever the envelope bytes came from:
+cat envelope.json | uv run python scripts/decrypt_artifact.py -
+# prints the decrypted plaintext markdown AST to stdout
+```
+
+If the pair is rotated later, use the same script's sibling subcommand on
+`gen_attachment_keys.py` — `rotate` re-wraps the existing DEK under a fresh
+KEK without touching already-stored artifacts (§5):
+
+```bash
+uv run python scripts/gen_attachment_keys.py rotate \
+  --old-kek "$RAGENT_KEK_BASE64" \
+  --old-encrypted-dek "$RAGENT_ENCRYPTED_DEK_BASE64"
+```

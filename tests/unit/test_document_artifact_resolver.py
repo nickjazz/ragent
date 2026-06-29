@@ -128,6 +128,67 @@ class TestDocumentArtifactResolver:
         resolver_dependencies["document_store"].get.assert_called_once_with("key-complete")
 
     @pytest.mark.asyncio
+    async def test_resolve_includes_selected_variant_in_att_info(self, resolver_dependencies):
+        """att_info records which variant ("complete"/"simplified") was selected."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key-complete", char_count=500),
+            _artifact_row("att_1", "simplified", "key-simplified", char_count=50),
+        ]
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=1_000)
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed[0]["variant"] == "complete"
+
+    @pytest.mark.asyncio
+    async def test_resolve_includes_simplified_variant_when_fallback_selected(
+        self, resolver_dependencies
+    ):
+        """att_info records "simplified" when complete exceeds the char budget."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key-complete", char_count=5_000),
+            _artifact_row("att_1", "simplified", "key-simplified", char_count=50),
+        ]
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=1_000)
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed[0]["variant"] == "simplified"
+
+    @pytest.mark.asyncio
+    async def test_resolve_omits_variant_when_no_artifacts(self, resolver_dependencies):
+        """att_info has no "variant" key when the attachment has no artifacts yet."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = []
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies)
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert "variant" not in parsed[0]
+
+    @pytest.mark.asyncio
     async def test_resolve_falls_back_to_simplified_when_complete_exceeds_char_limit(
         self, resolver_dependencies
     ):
@@ -313,6 +374,7 @@ class TestDocumentArtifactResolver:
 
         parsed = json.loads(result)
         assert "ast" not in parsed[0]
+        assert parsed[0]["variant"] == "complete"
         failed = next(e for e in logs if e["event"] == "document_artifact_resolver.decrypt_failed")
         assert failed["attachment_id"] == "att_1"
         assert failed["log_level"] == "warning"

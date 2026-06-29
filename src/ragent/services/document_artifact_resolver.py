@@ -97,6 +97,7 @@ class DocumentArtifactResolver:
                 )
 
                 if selected:
+                    att_info["variant"] = selected.variant
                     try:
                         encrypted_data = await anyio.to_thread.run_sync(
                             self._doc_store.get, selected.storage_key
