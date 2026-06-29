@@ -53,6 +53,7 @@
 | `SKILL_NOT_FOUND`                    | 404 (also `RUN_ERROR` code on `/chatagent/v3`) | `skill_id` absent, owned by another user, or (on resolve) disabled (T-SK) | Skills router / chatagent_v3 |
 | `SKILL_NAME_CONFLICT`                | 409             | Duplicate `(user_id, name)` on create/update (T-SK) | Skills router |
 | `SKILL_VALIDATION`                   | 422             | Skill request fails schema / field bounds (T-SK) | Skills router |
+| `SKILL_READONLY`                     | 409             | `PUT`/`DELETE` targeting a built-in preset skill (T-SK) | Skills router |
 | `ES_PLUGIN_MISSING`                  | 503 (`/readyz`) | ES cluster missing `analysis-icu` plugin (B26, T0.8g) | Bootstrap / readyz |
 | `ES_INDEX_MISSING`                   | 503 (`/readyz`) | A `resources/es/*.json` index is absent at boot | Bootstrap / readyz |
 | `SCHEMA_DRIFT`                       | 503 (`/readyz`) + log `event=schema.drift` | Live schema differs from `schema.sql` / `resources/es/` | Bootstrap |

@@ -504,6 +504,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     app.include_router(
         create_mcp_router(
             retrieval_pipeline=container.retrieval_pipeline,
+            skill_service=container.skill_service,
             excerpt_max_chars=container.excerpt_max_chars,
         )
     )

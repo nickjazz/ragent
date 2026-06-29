@@ -307,9 +307,28 @@ The chaos suite asserts the resilience claims of §3.6 (reconciler recovery, ide
 
 ### 3.8 MCP Tool Server (P2.5)
 
-Exposes ragent's retrieval pipeline as an MCP tool (JSON-RPC 2.0, retrieve-only).
+Exposes ragent tools over MCP (JSON-RPC 2.0): the read-only `retrieve` tool, plus
+the **write** `create_skill` tool (T-SK) when `skill_service` is wired (always, in
+production).
 
 > Full spec: [docs/spec/mcp_server.md](spec/mcp_server.md) — protocol, methods, `retrieve` tool schema, error codes, BDD S58–S67.
+
+**`create_skill` (write tool, T-SK):** creates a skill under the **authenticated
+caller** — the owner is resolved via `get_user_id` inside the MCP endpoint and is
+**never** a tool argument (the inputSchema is `additionalProperties:false`, so a
+spoofed `user_id` is rejected as `MCP_TOOL_INPUT_INVALID`). With no resolved
+identity the call **fails closed** (`MISSING_USER_ID`) — a skill is never created
+under an unknown owner. Args mirror `SkillWriteRequest` (`{name, description?,
+instructions, enabled?}`); a name collision → `SKILL_NAME_CONFLICT`. Result:
+`structuredContent.skill = {skill_id, name, description, enabled, readonly}`. The tool is
+advertised in `tools/list` only when `skill_service` is wired. `annotations.readOnlyHint=false`.
+Whether an agent actually calls it depends on the upstream ChatAgent's MCP client
+config (or a frontend tool runtime) — that wiring is outside ragent.
+
+**`create_skill` error handling:** non-object `arguments` (e.g. `[]`/`""`/`false`)
+→ `MCP_TOOL_INPUT_INVALID` (not silently coerced to `{}`); any unexpected backend
+failure (DB outage, write error) is wrapped as a JSON-RPC `MCP_TOOL_EXECUTION_FAILED`
+envelope — never an HTTP 500 — matching the `retrieve` tool.
 
 **Interface notes (2026-05-27):**
 - `tools/list` response includes `annotations: {readOnlyHint: true}` on the `retrieve` tool — signals to MCP hosts (protocol 2025-03-26+) that the tool is read-only. Clients on earlier pinned version (`"2024-11-05"`) silently ignore the field.
@@ -333,10 +352,30 @@ the owner is the resolved `user_id` (auth/middleware), never a body field, and
 or mutate another's skills (isolation enforced at the SQL layer + the DB
 `(user_id, name)` UNIQUE key, not by an application check alone).
 
+**Built-in preset skills (T-SK):** some skills are **built in** — every user has
+them from the start without creating them. Presets live in code
+(`services/skill_presets.py`), not the DB, are **read-only**, and are merged into
+the owner-scoped `list`/`get`/`resolve` paths (pinned ahead of the user's own
+skills). The first preset is **`skill-creator`** (`skill_id="skill-creator"`),
+whose instructions guide the agent to **draft** a complete skill (name /
+description / instructions) from the user's intent — proposing a first version
+rather than interrogating field by field — and, on confirmation, call the
+`create_skill` MCP tool to save it. Adding more presets later =
+one entry in the registry (no migration, no per-user seeding). Constraints: a user skill may not take a
+preset's `name` (case-insensitive, matching the DB's utf8mb4 collation → `409
+SKILL_NAME_CONFLICT`) — on `PUT` this is reported only **after** the target row
+is confirmed owned, so a foreign/missing id stays `404` (foreign and missing are
+indistinguishable); `PUT`/`DELETE` on a preset `skill_id` → `409 SKILL_READONLY`;
+`resolve` of a preset returns its instructions (so
+`forwardedProps.skillId="skill-creator"` works in `/chatagent/v3`).
+
 **CRUD — `/skills/v1`** (always registered; no env gate):
 
-- `POST /skills/v1` → `201` `{skill_id, name, description, instructions, enabled, created_at, updated_at}`.
+- `POST /skills/v1` → `201` `{skill_id, name, description, instructions, enabled, readonly, created_at, updated_at}`.
   Body `{name, description?, instructions, enabled?}` (`enabled` defaults `true`).
+  `readonly` is a server-derived response field (not a DB column): `true` for
+  built-in presets, `false` for the user's own skills — so the frontend can
+  flag built-ins without hard-coding preset ids.
 - `GET /skills/v1` → `{ "skills": [ … ] }` (owner's skills, newest first; empty array, never `null`).
 - `GET /skills/v1/{skill_id}` → the skill, or `404 SKILL_NOT_FOUND` when absent **or owned by another user** (a foreign skill is indistinguishable from a missing one — no existence oracle).
 - `PUT /skills/v1/{skill_id}` → full replace (same body as POST) → the updated skill.
