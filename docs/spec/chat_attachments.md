@@ -192,6 +192,17 @@ Both AST variants are encrypted before being written to storage.
   lines to stdout only. Paste them into `.env` or a secret manager directly;
   update both env vars together and restart — partial rotation (only one var
   updated) breaks `KeyManager` construction on next boot.
+- **Manual decrypt** — `scripts/decrypt_artifact.py` (offline CLI) reads a
+  storage envelope (file path, or stdin via `-`) and prints the decrypted
+  plaintext markdown to stdout, for incident response / support cases where
+  an artifact's content must be inspected outside the running app:
+  ```bash
+  uv run python scripts/decrypt_artifact.py path/to/envelope.json
+  cat envelope.json | uv run python scripts/decrypt_artifact.py -
+  ```
+  Requires `RAGENT_KEK_BASE64` and `RAGENT_ENCRYPTED_DEK_BASE64` set to the
+  same pair the artifact was encrypted under. Reuses `KeyManager`/`ASTCipher`
+  directly — no separate decrypt path.
 
 **Cipher** — AES-256-GCM, one random 12-byte nonce per artifact
 (`security/ast_cipher.py`). Storage envelope:
