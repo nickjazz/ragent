@@ -121,9 +121,7 @@ class TestDocumentArtifactResolver:
         ]
         resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
 
-        resolver = DocumentArtifactResolver(
-            **resolver_dependencies, artifact_max_chars=1_000
-        )
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=1_000)
 
         await resolver.resolve(["att_1"])
 
@@ -143,9 +141,7 @@ class TestDocumentArtifactResolver:
         ]
         resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
 
-        resolver = DocumentArtifactResolver(
-            **resolver_dependencies, artifact_max_chars=1_000
-        )
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=1_000)
 
         await resolver.resolve(["att_1"])
 

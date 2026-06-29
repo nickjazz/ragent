@@ -302,7 +302,9 @@ class TestChatAttachmentService:
         await service.process("ATT001")
 
         calls = service_dependencies["attachment_repository"].add_artifact.call_args_list
-        char_counts_by_variant = {call.kwargs["variant"]: call.kwargs["char_count"] for call in calls}
+        char_counts_by_variant = {
+            call.kwargs["variant"]: call.kwargs["char_count"] for call in calls
+        }
         assert char_counts_by_variant == {"complete": len("[1] ast"), "simplified": len("[1] ast")}
 
     @pytest.mark.asyncio
