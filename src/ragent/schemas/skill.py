@@ -36,6 +36,10 @@ class SkillResponse(BaseModel):
     description: str
     instructions: str
     enabled: bool
+    # True for built-in presets (read-only: PUT/DELETE → 409 SKILL_READONLY);
+    # False for the user's own skills. Lets the frontend distinguish them
+    # without hard-coding preset ids.
+    readonly: bool = False
     created_at: str  # ISO 8601 UTC
     updated_at: str  # ISO 8601 UTC
 

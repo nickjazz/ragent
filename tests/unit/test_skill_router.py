@@ -91,6 +91,7 @@ def test_get_item_passes_owner_and_returns_200():
     client = _client(svc)
     r = client.get("/skills/v1/SKILL000000000000000000000", headers=ALICE)
     assert r.status_code == 200
+    assert r.json()["readonly"] is False  # field is serialized for the frontend
     assert svc.get.call_args.kwargs == {
         "user_id": "alice",
         "skill_id": "SKILL000000000000000000000",

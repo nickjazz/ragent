@@ -27,6 +27,7 @@ from ragent.schemas.skill import SkillListResponse, SkillResponse, SkillWriteReq
 from ragent.services.skill_service import (
     SkillNameConflictError,
     SkillNotFoundError,
+    SkillReadOnlyError,
     SkillService,
 )
 
@@ -134,6 +135,8 @@ def create_skill_router(*, skill_service: SkillService) -> APIRouter:
             return problem(exc.http_status, exc.error_code, "skill not found", str(exc))
         except SkillNameConflictError as exc:
             return problem(exc.http_status, exc.error_code, "skill name already exists", str(exc))
+        except SkillReadOnlyError as exc:
+            return problem(exc.http_status, exc.error_code, "skill is read-only", str(exc))
 
     @router.delete("/{skill_id}", status_code=204)
     async def delete_skill(
@@ -146,6 +149,8 @@ def create_skill_router(*, skill_service: SkillService) -> APIRouter:
             await skill_service.delete(user_id=user_id, skill_id=skill_id)
         except SkillNotFoundError as exc:
             return problem(exc.http_status, exc.error_code, "skill not found", str(exc))
+        except SkillReadOnlyError as exc:
+            return problem(exc.http_status, exc.error_code, "skill is read-only", str(exc))
         return Response(status_code=204)
 
     return router
