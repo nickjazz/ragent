@@ -156,7 +156,9 @@ def test_get_current_db_version_no_row_but_schema_exists_resolves_to_head(env, s
     ("destination_rev", "expected"),
     [("head", "head"), ("base", "base"), (None, None)],
 )
-def test_raw_destination_rev_distinguishes_head_and_base(env, monkeypatch, destination_rev, expected):
+def test_raw_destination_rev_distinguishes_head_and_base(
+    env, monkeypatch, destination_rev, expected
+):
     proxy = types.SimpleNamespace(context_opts={"destination_rev": destination_rev})
     monkeypatch.setattr(env.context, "_proxy", proxy, raising=False)
     assert env._raw_destination_rev() == expected
