@@ -358,7 +358,7 @@ the same way `<hidden>` already is):
 
 ```
 <hidden>
-<attachments>[{"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345, "variant": "complete", "ast": "# Report\n..."}]</attachments>
+<attachments>[{"attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ", "filename": "report.pdf", "mimeType": "application/pdf", "sizeBytes": 12345, "variant": "complete", "content": "# Report\n..."}]</attachments>
 <context>...</context>
 </hidden>
 
@@ -381,7 +381,7 @@ field-by-field, then `json.dumps()`'d into the string that
 | `mimeType` | yes | same — `AttachmentRow.mime_type` | one of `AttachmentMime` (`schemas/attachments.py`) |
 | `sizeBytes` | yes | same — `AttachmentRow.size_bytes` | raw file size at upload time |
 | `variant` | only when the attachment has at least one `READY` artifact | `DocumentArtifactResolver.resolve()`, set from the selected `ArtifactRow.variant` (`repositories/attachment_repository.py`) | `"complete"` or `"simplified"` — records *which* AST variant was picked by the `char_count` budget check (§4), independent of whether decryption then succeeds |
-| `ast` | only when `variant` is set **and** decrypt succeeds | `DocumentArtifactResolver.resolve()`, via `ASTCipher.decrypt_ast()` (`security/ast_cipher.py`) | decrypted plaintext markdown AST; omitted (logged as `document_artifact_resolver.decrypt_failed`) on `ValueError`/`KeyError`/`json.JSONDecodeError`/`ASTDecryptionError` |
+| `content` | only when `variant` is set **and** decrypt succeeds | `DocumentArtifactResolver.resolve()`, via `ASTCipher.decrypt_ast()` (`security/ast_cipher.py`) | decrypted plaintext markdown content; omitted (logged as `document_artifact_resolver.decrypt_failed`) on `ValueError`/`KeyError`/`json.JSONDecodeError`/`ASTDecryptionError`. May also be **shorter than `char_count` implies, or entirely absent**, when the per-attachment cap (`ATTACHMENT_ARTIFACT_MAX_CHARS`) or the per-turn aggregate cap (`ATTACHMENT_TOTAL_MAX_CHARS`) trims it — see §12; a truncation logs `document_artifact_resolver.attachment_content_truncated` |
 
 `attachment_id` values themselves originate from `body.attachmentIds` on the
 live-POST request (`RunAgentInput.attachment_ids`,
@@ -598,7 +598,8 @@ indistinguishable: both yield `404 ATTACHMENT_NOT_FOUND` (or an empty list)
 | `RAGENT_KEK_BASE64` | *(unset → feature disabled)* | Base64 KEK (32 bytes). Set together with the var below to register the attachment routes and construct `KeyManager`/`ASTCipher` (§5). Documented in `docs/spec/env_vars.md` §4.6.4. |
 | `RAGENT_ENCRYPTED_DEK_BASE64` | *(required when `RAGENT_KEK_BASE64` set)* | Base64 DEK, AES-Key-Wrapped under the KEK; unwrapped once at boot (§5). Documented in `docs/spec/env_vars.md` §4.6.4. |
 | `ATTACHMENT_MAX_SIZE_BYTES` | `52428800` (50 MB) | Upload size cap — `ChatAttachmentService.upload()` raises `FileTooLarge` over this, surfaced as `413 ATTACHMENT_TOO_LARGE`. Read via `_int_env()` in `composition.py` (DIP — no other module reads this var). Documented in `docs/spec/env_vars.md` §4.6.6. |
-| `ATTACHMENT_ARTIFACT_MAX_CHARS` | `10000` | Context-window budget — `DocumentArtifactResolver` selects the `complete` artifact only when its `char_count` is at or under this; otherwise falls back to `simplified` (§10, T-CAT.W16). Read via `_int_env()` in `composition.py`. Documented in `docs/spec/env_vars.md` §4.6.6. |
+| `ATTACHMENT_ARTIFACT_MAX_CHARS` | `10000` | Context-window budget — `DocumentArtifactResolver` selects the `complete` artifact only when its `char_count` is at or under this; otherwise falls back to `simplified` (§10, T-CAT.W16). Also enforced as a hard per-attachment truncation cap on whichever variant (`complete` or `simplified`) is selected — content past this length is cut and marked with a `…[truncated]` suffix. Read via `_int_env()` in `composition.py`. Documented in `docs/spec/env_vars.md` §4.6.6. |
+| `ATTACHMENT_TOTAL_MAX_CHARS` | `50000` | Per-turn aggregate budget across **all** resolved attachments — `DocumentArtifactResolver` tracks running chars used (in `attachmentIds` order) and truncates/omits `content` once the budget is spent, bounding worst case from `ATTACHMENT_MAX_FILES × ATTACHMENT_ARTIFACT_MAX_CHARS` down to this ceiling. A truncation logs `document_artifact_resolver.attachment_content_truncated`. Read via `_int_env()` in `composition.py`. |
 | `ATTACHMENT_MAX_FILES` | `10` | Cap on `body.attachmentIds` length per `POST /chatagent/v3` turn — over this is a `RUN_ERROR ATTACHMENT_TOO_MANY_FILES` (§9, T-CAT.W16). Read via `_int_env()` in `composition.py`. Documented in `docs/spec/env_vars.md` §4.6.6. |
 
 Full inventory of every other timeout/threshold the process reads:

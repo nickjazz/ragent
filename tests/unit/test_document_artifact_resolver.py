@@ -373,9 +373,233 @@ class TestDocumentArtifactResolver:
         import json
 
         parsed = json.loads(result)
-        assert "ast" not in parsed[0]
+        assert "content" not in parsed[0]
         assert parsed[0]["variant"] == "complete"
         failed = next(e for e in logs if e["event"] == "document_artifact_resolver.decrypt_failed")
         assert failed["attachment_id"] == "att_1"
         assert failed["log_level"] == "warning"
         assert failed["error_type"] == "ASTDecryptionError"
+
+    @pytest.mark.asyncio
+    async def test_resolve_includes_decrypted_content_field(self, resolver_dependencies):
+        """att_info["content"] carries the decrypted text on the success path."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key")
+        ]
+        resolver_dependencies[
+            "document_store"
+        ].get.return_value = b'{"ciphertext":"xyz","nonce":"abc"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies)
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed[0]["content"] == "Decrypted: xyz..."
+
+    @pytest.mark.asyncio
+    async def test_resolve_does_not_escape_non_ascii_content(self, resolver_dependencies):
+        """json.dumps uses ensure_ascii=False — CJK stays literal, no \\uXXXX escapes."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "報告.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key")
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "中文內容測試"
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"xyz"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies)
+
+        result = await resolver.resolve(["att_1"])
+
+        assert "\\u" not in result
+        assert "報告.pdf" in result
+        assert "中文內容測試" in result
+
+    @pytest.mark.asyncio
+    async def test_resolve_truncates_simplified_variant_exceeding_artifact_max_chars(
+        self, resolver_dependencies
+    ):
+        """The simplified fallback is now capped too — previously unbounded."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "simplified", "key-simplified", char_count=50)
+        ]
+        big_text = "x" * 200
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: big_text
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=100)
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert len(parsed[0]["content"]) <= 100 + len(resolver_module._TRUNCATION_MARKER)
+        assert parsed[0]["content"].endswith(resolver_module._TRUNCATION_MARKER)
+
+    @pytest.mark.asyncio
+    async def test_resolve_omits_content_when_total_budget_is_zero(
+        self, resolver_dependencies
+    ):
+        """A single attachment against a zero total budget gets no content at all."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "doc1.txt", "text/plain", 100
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key1", char_count=80)
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "y" * 80
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(
+            **resolver_dependencies, artifact_max_chars=1_000, total_max_chars=0
+        )
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert "content" not in parsed[0]
+        assert parsed[0]["variant"] == "complete"
+
+    @pytest.mark.asyncio
+    async def test_resolve_truncates_complete_variant_under_total_budget(
+        self, resolver_dependencies
+    ):
+        """`complete` passes the per-attachment cap but still gets clipped by the
+        per-turn aggregate budget."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "doc1.txt", "text/plain", 100
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key1", char_count=50)
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "z" * 80
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(
+            **resolver_dependencies, artifact_max_chars=1_000, total_max_chars=30
+        )
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed[0]["content"] == "z" * 30 + resolver_module._TRUNCATION_MARKER
+        assert parsed[0]["variant"] == "complete"
+
+    @pytest.mark.asyncio
+    async def test_resolve_omits_content_once_total_budget_exhausted(
+        self, resolver_dependencies
+    ):
+        """2nd attachment loses content once the per-turn total budget is spent;
+        both still carry full metadata + variant."""
+        resolver_dependencies["attachment_repository"].get.side_effect = [
+            _attachment_row("att_1", "doc1.txt", "text/plain", 100),
+            _attachment_row("att_2", "doc2.txt", "text/plain", 200),
+        ]
+        resolver_dependencies["attachment_repository"].get_artifacts.side_effect = [
+            [_artifact_row("att_1", "complete", "key1", char_count=80)],
+            [_artifact_row("att_2", "complete", "key2", char_count=80)],
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "y" * 80
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(
+            **resolver_dependencies, artifact_max_chars=1_000, total_max_chars=80
+        )
+
+        result = await resolver.resolve(["att_1", "att_2"])
+
+        import json
+
+        parsed = json.loads(result)
+        assert parsed[0]["content"] == "y" * 80
+        assert "content" not in parsed[1]
+        assert parsed[0]["variant"] == "complete"
+        assert parsed[1]["variant"] == "complete"
+        assert parsed[1]["attachmentId"] == "att_2"
+
+    @pytest.mark.asyncio
+    async def test_resolve_logs_truncation_warning(self, resolver_dependencies):
+        """A truncation (per-attachment or per-turn) emits attachment_content_truncated."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key", char_count=50)
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "x" * 200
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies, artifact_max_chars=100)
+
+        with structlog.testing.capture_logs() as logs:
+            await resolver.resolve(["att_1"])
+
+        truncated = next(
+            e
+            for e in logs
+            if e["event"] == "document_artifact_resolver.attachment_content_truncated"
+        )
+        assert truncated["attachment_id"] == "att_1"
+        assert truncated["original_chars"] == 200
+        assert truncated["kept_chars"] == 100 + len(resolver_module._TRUNCATION_MARKER)
+        assert truncated["log_level"] == "warning"
+
+    @pytest.mark.asyncio
+    async def test_resolve_logs_attachment_referenced_audit_fields(self, resolver_dependencies):
+        """attachment_referenced carries thread/attachment id, size, variant, char_count,
+        artifact_id — and never filename/content/ast."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "secret-name.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "attachments/thread-1/att_1/ast-complete", 42)
+        ]
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(**resolver_dependencies)
+
+        with structlog.testing.capture_logs() as logs:
+            await resolver.resolve(["att_1"])
+
+        referenced = next(
+            e for e in logs if e["event"] == "document_artifact_resolver.attachment_referenced"
+        )
+        assert referenced["thread_id"] == "thread-1"
+        assert referenced["attachment_id"] == "att_1"
+        assert referenced["size_bytes"] == 1024
+        assert referenced["variant"] == "complete"
+        assert referenced["char_count"] == 42
+        assert referenced["artifact_id"] == "attachments/thread-1/att_1/ast-complete"
+
+        for event in logs:
+            if event["event"] == "document_artifact_resolver.attachment_referenced":
+                assert "filename" not in event
+                assert "content" not in event
+                assert "ast" not in event
