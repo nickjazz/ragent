@@ -452,9 +452,37 @@ class TestDocumentArtifactResolver:
         assert parsed[0]["content"].endswith(resolver_module._TRUNCATION_MARKER)
 
     @pytest.mark.asyncio
-    async def test_resolve_omits_content_when_total_budget_is_zero(
+    async def test_resolve_appends_marker_once_when_both_caps_trigger(
         self, resolver_dependencies
     ):
+        """When the per-attachment cap and the per-turn budget both bind on the
+        same attachment, only one truncation marker is ever appended."""
+        resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
+            "att_1", "test.pdf", "application/pdf", 1024
+        )
+        resolver_dependencies["attachment_repository"].get_artifacts.return_value = [
+            _artifact_row("att_1", "complete", "key-complete", char_count=50)
+        ]
+        resolver_dependencies["ast_cipher"].decrypt_ast.side_effect = (
+            lambda ciphertext_obj, **kwargs: "x" * 200
+        )
+        resolver_dependencies["document_store"].get.return_value = b'{"ciphertext":"data"}'
+
+        resolver = DocumentArtifactResolver(
+            **resolver_dependencies, artifact_max_chars=100, total_max_chars=30
+        )
+
+        result = await resolver.resolve(["att_1"])
+
+        import json
+
+        parsed = json.loads(result)
+        content = parsed[0]["content"]
+        assert content == "x" * 30 + resolver_module._TRUNCATION_MARKER
+        assert content.count(resolver_module._TRUNCATION_MARKER.strip()) == 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_omits_content_when_total_budget_is_zero(self, resolver_dependencies):
         """A single attachment against a zero total budget gets no content at all."""
         resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
             "att_1", "doc1.txt", "text/plain", 100
@@ -509,9 +537,7 @@ class TestDocumentArtifactResolver:
         assert parsed[0]["variant"] == "complete"
 
     @pytest.mark.asyncio
-    async def test_resolve_omits_content_once_total_budget_exhausted(
-        self, resolver_dependencies
-    ):
+    async def test_resolve_omits_content_once_total_budget_exhausted(self, resolver_dependencies):
         """2nd attachment loses content once the per-turn total budget is spent;
         both still carry full metadata + variant."""
         resolver_dependencies["attachment_repository"].get.side_effect = [

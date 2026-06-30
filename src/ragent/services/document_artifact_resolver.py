@@ -132,15 +132,17 @@ class DocumentArtifactResolver:
                         decrypted = self._ast_cipher.decrypt_ast(encrypted_obj)
                         original_chars = len(decrypted)
 
-                        # Per-attachment hard cap — closes the gap where the
+                        # Per-attachment hard cap (closes the gap where the
                         # simplified fallback previously had no ceiling at all
-                        # (only complete's char_count was ever checked) — then
-                        # the per-turn aggregate cap, where earlier-referenced
-                        # attachments get budget priority (simple order
-                        # tie-break, not proportional allocation).
-                        decrypted = _truncate(decrypted, self._artifact_max_chars)
-                        if decrypted is not None:
-                            decrypted = _truncate(decrypted, self._total_max_chars - chars_used)
+                        # — only complete's char_count was ever checked)
+                        # combined with the per-turn aggregate cap in one pass,
+                        # so a single truncation marker is ever appended.
+                        # Earlier-referenced attachments get budget priority
+                        # (simple order tie-break, not proportional allocation).
+                        effective_max_chars = min(
+                            self._artifact_max_chars, self._total_max_chars - chars_used
+                        )
+                        decrypted = _truncate(decrypted, effective_max_chars)
 
                         kept_chars = len(decrypted) if decrypted is not None else 0
                         if decrypted is not None:
