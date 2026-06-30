@@ -34,7 +34,7 @@ def _truncate(text: str, max_chars: int) -> str | None:
     """
     if max_chars <= 0:
         return None
-    if len(text) <= max_chars:
+    if len(text) <= max_chars + len(_TRUNCATION_MARKER):
         return text
     return text[:max_chars] + _TRUNCATION_MARKER
 

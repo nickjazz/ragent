@@ -48,6 +48,35 @@ def _artifact_row(
     )
 
 
+class TestTruncate:
+    """Direct unit tests for the `_truncate` helper (PR #208 review)."""
+
+    def test_returns_text_unchanged_when_under_cap(self):
+        assert resolver_module._truncate("hello", 10) == "hello"
+
+    def test_returns_none_when_budget_already_exhausted(self):
+        assert resolver_module._truncate("hello", 0) is None
+
+    def test_returns_original_when_marker_would_not_shrink_output(self):
+        """When text is only slightly over max_chars (within marker length), slicing
+        and appending the marker yields output >= original length while still losing
+        the tail — strictly worse than returning the original untouched."""
+        marker_len = len(resolver_module._TRUNCATION_MARKER)
+        text = "x" * (50 + marker_len)  # exactly at the boundary
+
+        result = resolver_module._truncate(text, 50)
+
+        assert result == text
+
+    def test_truncates_and_appends_marker_once_genuinely_over_budget(self):
+        marker_len = len(resolver_module._TRUNCATION_MARKER)
+        text = "x" * (50 + marker_len + 1)  # one char past the boundary
+
+        result = resolver_module._truncate(text, 50)
+
+        assert result == "x" * 50 + resolver_module._TRUNCATION_MARKER
+
+
 class TestDocumentArtifactResolver:
     """Resolve and decrypt attachment artifacts for chat context."""
 
@@ -452,9 +481,7 @@ class TestDocumentArtifactResolver:
         assert parsed[0]["content"].endswith(resolver_module._TRUNCATION_MARKER)
 
     @pytest.mark.asyncio
-    async def test_resolve_appends_marker_once_when_both_caps_trigger(
-        self, resolver_dependencies
-    ):
+    async def test_resolve_appends_marker_once_when_both_caps_trigger(self, resolver_dependencies):
         """When the per-attachment cap and the per-turn budget both bind on the
         same attachment, only one truncation marker is ever appended."""
         resolver_dependencies["attachment_repository"].get.return_value = _attachment_row(
