@@ -382,9 +382,7 @@ def build_container() -> Container:
     # turn (attachment_artifact_max_chars above only bounds a single
     # attachment); the direct countermeasure to upstream "unterminated
     # json" truncation reports.
-    attachment_total_max_chars = _int_env(
-        "ATTACHMENT_TOTAL_MAX_CHARS", TOTAL_MAX_CHARS_DEFAULT
-    )
+    attachment_total_max_chars = _int_env("ATTACHMENT_TOTAL_MAX_CHARS", TOTAL_MAX_CHARS_DEFAULT)
     # T-CAT.W16 — cap on attachment_ids per /chatagent/v3 turn (each id costs
     # one DB + storage round-trip in DocumentArtifactResolver.resolve()).
     attachment_max_files = _int_env("ATTACHMENT_MAX_FILES", 10)
