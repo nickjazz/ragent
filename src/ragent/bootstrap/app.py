@@ -31,6 +31,7 @@ from ragent.middleware.logging import SCOPE_USER_ID_KEY, RequestLoggingMiddlewar
 from ragent.routers.admin_embedding import create_router as create_admin_embedding_router
 from ragent.routers.admin_ingest import create_router as create_upload_ingest_router
 from ragent.routers.admin_ops import create_admin_ops_router
+from ragent.routers.attachments import create_attachments_router
 from ragent.routers.chat import create_chat_router
 from ragent.routers.chatagent import create_chatagent_router
 from ragent.routers.chatagent_v2 import create_chatagent_v2_router
@@ -340,6 +341,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     # Importing the workers module triggers `@broker.task` decorator
     # registration so that `dispatcher.enqueue(label, ...)` can resolve
     # task labels at producer side (B25).
+    import ragent.workers.attachment  # noqa: F401
     import ragent.workers.backfill  # noqa: F401
     import ragent.workers.ingest  # noqa: F401
     from ragent.bootstrap.broker import broker as taskiq_broker
@@ -489,6 +491,17 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 chat_stream_store=container.chat_stream_store,
                 nats_publisher=container.nats_publisher,
                 stream_idle_timeout=_float_env("CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS", 30.0),
+                document_artifact_resolver=container.document_artifact_resolver,
+                chat_attachment_service=container.chat_attachment_service,
+                attachment_max_files=container.attachment_max_files,
+            )
+        )
+    if container.chat_attachment_service is not None:
+        app.include_router(
+            create_attachments_router(
+                service=container.chat_attachment_service,
+                repository=container.attachment_repository,
+                max_size_bytes=container.attachment_max_size_bytes,
             )
         )
     if container.feedback_hmac_secret is not None:
