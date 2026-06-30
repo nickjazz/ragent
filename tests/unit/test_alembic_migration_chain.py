@@ -16,6 +16,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, text
 
 ENV_PY = Path(__file__).resolve().parents[2] / "alembic" / "env.py"
 
@@ -42,6 +43,13 @@ def _load_env_module(monkeypatch):
 @pytest.fixture
 def env(monkeypatch):
     return _load_env_module(monkeypatch)
+
+
+@pytest.fixture
+def sqlite_conn():
+    engine = create_engine("sqlite://")
+    with engine.connect() as conn:
+        yield conn
 
 
 def test_verify_and_get_chain_matches_disk(env):
@@ -112,15 +120,56 @@ def test_downgrade_target_version(env, target, current_v, expected):
     assert env._downgrade_target_version(target, current_v) == expected
 
 
-def test_get_and_update_db_version_round_trip(env):
-    from sqlalchemy import create_engine
+def test_get_and_update_db_version_round_trip(env, sqlite_conn):
+    conn = sqlite_conn
+    assert env.get_current_db_version(conn) == 0
 
-    engine = create_engine("sqlite://")
-    with engine.connect() as conn:
-        assert env.get_current_db_version(conn) == 0
+    env.update_db_version(conn, 7)
+    assert env.get_current_db_version(conn) == 7
 
-        env.update_db_version(conn, 7)
-        assert env.get_current_db_version(conn) == 7
+    env.update_db_version(conn, 0)
+    assert env.get_current_db_version(conn) == 0
 
-        env.update_db_version(conn, 0)
-        assert env.get_current_db_version(conn) == 0
+
+def test_get_current_db_version_squash_marker_resolves_to_head(env, sqlite_conn):
+    conn = sqlite_conn
+    conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
+    conn.execute(text("INSERT INTO alembic_version VALUES ('squash')"))
+    assert env.get_current_db_version(conn) == len(env.MIGRATION_CHAIN)
+
+
+def test_get_current_db_version_garbage_value_raises(env, sqlite_conn):
+    conn = sqlite_conn
+    conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
+    conn.execute(text("INSERT INTO alembic_version VALUES ('garbage')"))
+    with pytest.raises(ValueError, match="unexpected value"):
+        env.get_current_db_version(conn)
+
+
+def test_get_current_db_version_no_row_but_schema_exists_resolves_to_head(env, sqlite_conn):
+    conn = sqlite_conn
+    conn.execute(text("CREATE TABLE documents (id INTEGER PRIMARY KEY)"))
+    assert env.get_current_db_version(conn) == len(env.MIGRATION_CHAIN)
+
+
+@pytest.mark.parametrize(
+    ("destination_rev", "expected"),
+    [("head", "head"), ("base", "base"), (None, None)],
+)
+def test_raw_destination_rev_distinguishes_head_and_base(env, monkeypatch, destination_rev, expected):
+    proxy = types.SimpleNamespace(context_opts={"destination_rev": destination_rev})
+    monkeypatch.setattr(env.context, "_proxy", proxy, raising=False)
+    assert env._raw_destination_rev() == expected
+
+
+def test_run_migrations_online_noop_for_non_string_target(env, monkeypatch):
+    """`alembic current`/`stamp` pass a non-string destination_rev; this chain
+    only knows how to replay upgrade/downgrade SQL, so it must no-op without
+    ever opening a DB connection."""
+    monkeypatch.setattr(env, "_raw_destination_rev", lambda: None)
+
+    def _fail_if_called(*_a, **_kw):
+        raise AssertionError("create_engine must not be called on the no-op path")
+
+    monkeypatch.setattr(env, "create_engine", _fail_if_called)
+    env.run_migrations_online()

@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import create_engine, pool, text
+from sqlalchemy import create_engine, inspect, pool, text
 
 from ragent.bootstrap.init_schema import iter_statements
 
@@ -71,12 +71,29 @@ def _sync_dsn() -> str:
 
 
 def get_current_db_version(connection) -> int:
-    """從資料庫取得目前版號，若無 tracking 表則自動建立。"""
+    """從資料庫取得目前版號，若無 tracking 表則自動建立。
+
+    Two pre-chain legacy states must resolve to "already at head" instead of
+    "version 0", or a later `upgrade head` would replay DDL against tables
+    that already exist:
+    - a `version_num = 'squash'` row left by the deleted single-revision
+      `alembic/versions/000_squash.py`;
+    - no tracking row at all because the DB was bootstrapped directly from
+      `migrations/schema.sql` (boot auto-init, B3), which never wrote one.
+    """
     connection.execute(
         text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) PRIMARY KEY)")
     )
     result = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    return int(result) if result else 0
+    if result is not None:
+        if result.isdigit():
+            return int(result)
+        if result == "squash":
+            return len(MIGRATION_CHAIN)
+        raise ValueError(f"alembic_version.version_num has unexpected value: {result!r}")
+
+    has_schema = inspect(connection).has_table("documents")
+    return len(MIGRATION_CHAIN) if has_schema else 0
 
 
 def update_db_version(connection, version: int) -> None:
@@ -156,6 +173,10 @@ def _run_chain(connection, target: str | None) -> None:
     chain = verify_and_get_chain()
     max_available_v = len(chain)
     current_v = get_current_db_version(connection)
+    # get_current_db_version() autobegins a transaction on first execute;
+    # commit it so the explicit connection.begin() below doesn't collide
+    # with SQLAlchemy's implicit one.
+    connection.commit()
 
     with connection.begin():
         if _is_upgrade_target(target):
@@ -183,10 +204,29 @@ def _run_chain(connection, target: str | None) -> None:
                     current_v = v - 1
 
 
+def _raw_destination_rev() -> str | None:
+    """Raw ``upgrade``/``downgrade`` destination argument, e.g. "head",
+    "base", "+2", "-1" — unlike ``context.get_revision_argument()``, this is
+    NOT run through Alembic's revision-script resolution, which collapses
+    both "head" and "base" to ``None`` when there are no revision scripts
+    (this project's chain lives in alembic/sql/, not alembic/versions/) and
+    would make upgrade/downgrade indistinguishable.
+    """
+    return context._proxy.context_opts.get("destination_rev")
+
+
 def run_migrations_online() -> None:
+    target = _raw_destination_rev()
+    if not isinstance(target, str):
+        # Commands other than upgrade/downgrade (e.g. `alembic current`,
+        # `alembic stamp`) don't pass a plain string destination — this
+        # hand-rolled chain only knows how to replay upgrade/downgrade SQL,
+        # so it no-ops rather than misapplying DDL or crashing.
+        return
+
     connectable = create_engine(_sync_dsn(), poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        _run_chain(connection, context.get_revision_argument())
+        _run_chain(connection, target)
 
 
 if context.is_offline_mode():
