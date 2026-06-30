@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
 from ragent.services.chat_attachment_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
-from ragent.services.document_artifact_resolver import ARTIFACT_MAX_CHARS_DEFAULT
+from ragent.services.document_artifact_resolver import (
+    ARTIFACT_MAX_CHARS_DEFAULT,
+    TOTAL_MAX_CHARS_DEFAULT,
+)
 
 if TYPE_CHECKING:
     from ragent.repositories.attachment_repository import AttachmentRepository
@@ -375,6 +378,11 @@ def build_container() -> Container:
     attachment_artifact_max_chars = _int_env(
         "ATTACHMENT_ARTIFACT_MAX_CHARS", ARTIFACT_MAX_CHARS_DEFAULT
     )
+    # T-CAT.W16 — caps the sum of injected attachment content across one
+    # turn (attachment_artifact_max_chars above only bounds a single
+    # attachment); the direct countermeasure to upstream "unterminated
+    # json" truncation reports.
+    attachment_total_max_chars = _int_env("ATTACHMENT_TOTAL_MAX_CHARS", TOTAL_MAX_CHARS_DEFAULT)
     # T-CAT.W16 — cap on attachment_ids per /chatagent/v3 turn (each id costs
     # one DB + storage round-trip in DocumentArtifactResolver.resolve()).
     attachment_max_files = _int_env("ATTACHMENT_MAX_FILES", 10)
@@ -445,6 +453,7 @@ def build_container() -> Container:
             ast_cipher=ast_cipher,
             attachment_repository=attachment_repository,
             artifact_max_chars=attachment_artifact_max_chars,
+            total_max_chars=attachment_total_max_chars,
         )
         chat_attachment_service = ChatAttachmentService(
             document_store=attachment_document_store,
