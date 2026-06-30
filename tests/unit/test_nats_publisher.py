@@ -1,4 +1,11 @@
-"""T-CAv3N — NatsSessionPublisher: per-user live session-list status over NATS."""
+"""T-CAv3N — NatsSessionPublisher: per-user live session-list status over NATS.
+
+Auth is the backend **app flow** (mirrors mco-clean): an ephemeral Ed25519 nkey
+is minted, POSTed to the NATS auth service with the app's `client_secret` +
+`namespace`, exchanged for a NATS user JWT, then presented on connect with a
+nonce-signing callback. Everything degrades to a no-op (snapshot-only) when
+unconfigured or on any auth/connect failure.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +15,42 @@ import threading
 
 from ragent.clients.nats_publisher import NatsSessionPublisher
 
+_APP_KWARGS = dict(
+    auth_service_url="https://auth.example",
+    client_secret="sek",
+    namespace="ragent",
+)
 
-def test_subject_is_per_user() -> None:
-    assert NatsSessionPublisher.subject("session", "alice") == "session.alice.status"
-    assert NatsSessionPublisher.subject("session", "bob") != NatsSessionPublisher.subject(
-        "session", "alice"
-    )
+
+def _publisher(**overrides) -> NatsSessionPublisher:
+    return NatsSessionPublisher(**{"servers": "nats://x", **_APP_KWARGS, **overrides})
+
+
+def test_subject_is_per_user_and_template_configurable() -> None:
+    pub = _publisher(subject_template="session.{user}.status")
+    assert pub.subject("alice") == "session.alice.status"
+    assert pub.subject("bob") != pub.subject("alice")
+
+    custom = _publisher(subject_template="twp.{user}.sess")
+    assert custom.subject("alice") == "twp.alice.sess"
+
+
+def test_auth_payload_is_app_flow_with_camelcase_public_key() -> None:
+    pub = _publisher()
+    payload = pub._auth_payload("UABC")  # noqa: SLF001
+    assert payload == {
+        "token_type": "app",
+        "token": "sek",
+        "namespace": "ragent",
+        "publicKey": "UABC",
+    }
 
 
 def test_publish_is_noop_when_unconnected() -> None:
-    # No servers / before connect → publish must not raise (snapshot-only degrade).
-    pub = NatsSessionPublisher(servers=None)
+    # Before connect (or when unconfigured) → publish must not raise (snapshot-only degrade).
+    pub = NatsSessionPublisher(
+        servers=None, auth_service_url=None, client_secret=None, namespace=None
+    )
     pub.publish("alice", {"session": "t1", "running": True})  # does not raise
 
 
@@ -33,7 +65,7 @@ def test_publish_schedules_event_to_the_connection() -> None:
             received.append((subject, data))
             done.set()
 
-    pub = NatsSessionPublisher(servers="nats://x")
+    pub = _publisher()
     pub._nc = _NC()  # noqa: SLF001 — simulate a live connection
     pub._loop = loop  # noqa: SLF001
 
@@ -48,19 +80,21 @@ def test_publish_schedules_event_to_the_connection() -> None:
 
 def test_publish_fail_soft_on_broken_connection() -> None:
     # A connection without a usable publish (or a closed loop) must be swallowed.
-    pub = NatsSessionPublisher(servers="nats://x")
+    pub = _publisher()
     pub._nc = object()  # noqa: SLF001 — no .publish → AttributeError inside publish()
     pub._loop = asyncio.new_event_loop()  # noqa: SLF001
     pub.publish("alice", {"x": 1})  # does not raise
 
 
-async def test_connect_is_noop_when_servers_unset() -> None:
-    pub = NatsSessionPublisher(servers=None)
+async def test_connect_is_noop_when_unconfigured() -> None:
+    pub = NatsSessionPublisher(
+        servers=None, auth_service_url=None, client_secret=None, namespace=None
+    )
     await pub.connect(asyncio.get_running_loop())
     pub.publish("alice", {"x": 1})  # still a no-op, no connection opened
 
 
-async def test_connect_opens_connection_via_nats(monkeypatch) -> None:
+async def test_connect_exchanges_jwt_then_opens_connection(monkeypatch) -> None:
     opened: dict[str, object] = {}
 
     class _NC:
@@ -71,40 +105,31 @@ async def test_connect_opens_connection_via_nats(monkeypatch) -> None:
         opened["opts"] = opts
         return _NC()
 
+    async def _fake_fetch(self, public_key):  # noqa: ANN001
+        opened["public_key"] = public_key
+        return "the.nats.jwt"
+
     monkeypatch.setattr("nats.connect", _fake_connect)
-    pub = NatsSessionPublisher(servers="nats://a, nats://b , ", token="tok")
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    pub = _publisher(servers="nats://a, nats://b , ")
 
     await pub.connect(asyncio.get_running_loop())
 
     assert opened["servers"] == ["nats://a", "nats://b"]  # comma-split, stripped, empties dropped
-    assert opened["opts"]["token"] == "tok"
-
-
-async def test_connect_passes_user_password(monkeypatch) -> None:
-    opened: dict[str, object] = {}
-
-    class _NC:
-        async def publish(self, subject: str, data: bytes) -> None: ...
-
-    async def _fake_connect(servers, **opts):  # noqa: ANN001
-        opened["opts"] = opts
-        return _NC()
-
-    monkeypatch.setattr("nats.connect", _fake_connect)
-    pub = NatsSessionPublisher(servers="nats://x", user="alice", password="s3cret")
-
-    await pub.connect(asyncio.get_running_loop())
-
-    assert opened["opts"]["user"] == "alice"
-    assert opened["opts"]["password"] == "s3cret"
+    # JWT is presented verbatim; the signature callback returns base64 bytes.
+    assert opened["opts"]["user_jwt_cb"]() == b"the.nats.jwt"
+    sig = opened["opts"]["signature_cb"]("nonce")
+    assert isinstance(sig, bytes) and sig  # signs the nonce → non-empty base64
+    # The ephemeral public key (U…) was sent to the auth service.
+    assert isinstance(opened["public_key"], str) and opened["public_key"].startswith("U")
 
 
 async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
-    async def _boom(servers, **opts):  # noqa: ANN001
-        raise ConnectionError("nats down")
+    async def _boom(self, public_key):  # noqa: ANN001
+        raise ConnectionError("auth down")
 
-    monkeypatch.setattr("nats.connect", _boom)
-    pub = NatsSessionPublisher(servers="nats://x")
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _boom)
+    pub = _publisher()
 
     await pub.connect(asyncio.get_running_loop())  # swallowed
     pub.publish("alice", {"x": 1})  # degraded to no-op, no raise

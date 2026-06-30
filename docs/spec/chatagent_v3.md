@@ -232,9 +232,14 @@ message shape changes, while the upstream wire contract is untouched.
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
 **Realtime status over NATS (not an HTTP route).** Instead of an SSE endpoint, ragent
-publishes live status transitions to a per-user NATS subject `<NATS_SESSION_SUBJECT_PREFIX>.<user_id>.status`
-(default `session.<user_id>.status`); the frontend subscribes over its **own already-open**
-NATS connection and merges the delta onto its `sessionList` snapshot. This keeps the
+publishes live status transitions to a per-user NATS subject derived from
+`NATS_SESSION_SUBJECT_TEMPLATE` (default `session.{user}.status`, `{user}` → the user id);
+the frontend subscribes over its **own already-open** NATS connection and merges the delta
+onto its `sessionList` snapshot. ragent connects to the **shared platform NATS** via the
+backend **app auth flow** (mints an ephemeral Ed25519 nkey, POSTs the auth service
+`<NATS_AUTH_SERVICE_URL>/api/v1/auth` with `{token_type:"app", token:<client_secret>,
+namespace:<namespace>, publicKey}` for a NATS user JWT, then signs the connect nonce with
+the seed — mirroring mco-clean's frontend `tsso` flow with the app payload). This keeps the
 delta off ragent's HTTP/threadpool path entirely and uses NATS's native cross-pod
 fan-out (any API replica's producer reaches every subscriber). Payloads mirror the
 list fields:
@@ -246,7 +251,8 @@ list fields:
 
 Publishing is **best-effort / fire-and-forget** (`run_coroutine_threadsafe` from the
 producer thread); a publish failure costs only one live nudge. NATS is unconfigured
-(`NATS_SERVERS` unset) → no realtime push, list stays snapshot-only.
+(`NATS_SERVERS` / the `NATS_AUTH_*` vars unset) or the auth exchange / connect fails →
+no realtime push, list stays snapshot-only.
 
 - **Snapshot + delta (lossy):** NATS core pub/sub is at-most-once, so the delta is a
   *hint*, never a reliable event log. The durable truth is the `sessionList` snapshot

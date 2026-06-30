@@ -1,87 +1,122 @@
-"""T-CAv3N — NATS publisher for live session-list status (running / new-reply).
+"""T-CAv3N — NATS publisher for live session-list status (app-flow auth).
 
-Server-authoritative delta channel: ragent publishes a run's start/finish (and a
-session-open dot-clear) to a per-user subject; the frontend subscribes over its
-own already-open NATS connection and merges the delta onto its ``sessionList``
-snapshot. Best-effort — a publish failure only costs one live nudge, because the
-durable truth is the Redis run-pointer + unread flag, which the client re-reads
-from ``sessionList`` on its next fetch (NATS core pub/sub is lossy, so the client
-must re-sync the snapshot on (re)connect anyway).
+Mirrors mco-clean's NATS connection (ephemeral Ed25519 nkey → JWT exchange →
+challenge-response on connect), but uses the **backend "app" auth flow** instead
+of the frontend's per-user "tsso" flow:
 
-Why a thread-safe fire-and-forget ``publish``: a run's start/finish events are
-emitted from the decoupled producer **thread** (`_run_producer`), not the event
-loop, so the publish is scheduled onto the app loop via ``run_coroutine_threadsafe``
-and never awaited. The connection is opened in the FastAPI lifespan (async),
-while its config is read once in the composition root (the only env seam).
+  1. Generate an ephemeral Ed25519 user nkey (public key + seed), kept in memory.
+  2. POST the NATS auth service with the app's `client_secret` + `namespace` + the
+     public key → receive a short-lived NATS user JWT (`natsToken`).
+  3. Connect to NATS presenting that JWT and signing the server nonce with the
+     ephemeral seed (`user_jwt_cb` + `signature_cb`, exactly as nats-py signs for
+     `nkeys_seed`: `base64.b64encode(seed.sign(nonce))`).
+
+ragent publishes a run's start/finish (and a session-open dot-clear) to a per-user
+subject the frontend subscribes to. Everything is best-effort / fail-soft: an auth
+or connect failure degrades to "snapshot only" (the durable truth is the Redis
+run-pointer + unread flag the client re-reads from `sessionList`) and never aborts
+boot or fails an HTTP request.
+
+Note: like mco-clean today, the JWT is fetched once at connect and not refreshed —
+a long-lived backend connection inherits the same known token-refresh gap.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 from typing import Any
 
+import httpx
+import nkeys
 import structlog
 
 logger = structlog.get_logger(__name__)
 
+_AUTH_PATH = "/api/v1/auth"
+
+
+def _new_user_keypair() -> Any:
+    """An ephemeral Ed25519 user nkey — public key (`U…`) + seed (`SU…`), in memory."""
+    seed = nkeys.encode_seed(os.urandom(32), nkeys.PREFIX_BYTE_USER)
+    return nkeys.from_seed(seed)
+
 
 class NatsSessionPublisher:
-    """Publishes per-user session-list status events to NATS.
+    """Publishes per-user session-list status events to the shared platform NATS.
 
     Constructed (with config) in the composition root and connected later in the
-    lifespan via :meth:`connect`. When ``servers`` is unset — or before connect,
-    or after a connection drop — :meth:`publish` is a no-op, so the live channel
-    degrades to "snapshot only" rather than failing a request.
+    lifespan via :meth:`connect`. When unconfigured — or before connect, or after a
+    failed exchange/connect — :meth:`publish` is a no-op, so the live channel degrades
+    to "snapshot only" rather than failing a request.
     """
 
     def __init__(
         self,
         *,
         servers: str | None,
-        subject_prefix: str = "session",
-        user: str | None = None,
-        password: str | None = None,
-        token: str | None = None,
-        creds: str | None = None,
+        auth_service_url: str | None,
+        client_secret: str | None,
+        namespace: str | None,
+        subject_template: str = "session.{user}.status",
     ) -> None:
         self._servers = servers
-        self._prefix = subject_prefix
-        self._user = user
-        self._password = password
-        self._token = token
-        self._creds = creds
+        self._auth_url = auth_service_url.rstrip("/") if auth_service_url else None
+        self._client_secret = client_secret
+        self._namespace = namespace
+        self._subject_template = subject_template
         self._nc: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    @staticmethod
-    def subject(prefix: str, user_id: str) -> str:
-        # Per-user subject: session-list status is private, so a user only ever
-        # subscribes to (and receives) their own runs' transitions.
-        return f"{prefix}.{user_id}.status"
+    def _enabled(self) -> bool:
+        return bool(self._servers and self._auth_url and self._client_secret and self._namespace)
+
+    def subject(self, user_id: str) -> str:
+        # Operator-configurable via NATS_SESSION_SUBJECT_TEMPLATE; per-user so a
+        # subscriber only ever receives their own runs' transitions.
+        return self._subject_template.format(user=user_id)
+
+    def _auth_payload(self, public_key: str) -> dict[str, str]:
+        # `publicKey` is camelCase to mirror the frontend's nats-auth.ts payload key.
+        return {
+            "token_type": "app",
+            "token": self._client_secret or "",
+            "namespace": self._namespace or "",
+            "publicKey": public_key,
+        }
+
+    async def _fetch_app_jwt(self, public_key: str) -> str:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self._auth_url}{_AUTH_PATH}",
+                json=self._auth_payload(public_key),
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            return resp.json()["natsToken"]
 
     async def connect(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Open the connection (lifespan startup). No-op when NATS is unconfigured.
+        """Exchange for a NATS JWT and open the connection (lifespan startup).
 
-        A connect failure is logged and swallowed — realtime status is best-effort
-        and must not abort boot (the sessionList snapshot still works without it).
+        No-op when unconfigured. A failure is logged and swallowed — realtime status
+        is best-effort and must not abort boot (the sessionList snapshot still works).
         """
-        if not self._servers:
+        if not self._enabled():
             return
         try:
             import nats
 
-            opts: dict[str, Any] = {}
-            if self._user:
-                opts["user"] = self._user
-            if self._password:
-                opts["password"] = self._password
-            if self._token:
-                opts["token"] = self._token
-            if self._creds:
-                opts["user_credentials"] = self._creds
-            servers = [s.strip() for s in self._servers.split(",") if s.strip()]
-            self._nc = await nats.connect(servers, name="ragent", **opts)
+            keypair = _new_user_keypair()
+            jwt = await self._fetch_app_jwt(keypair.public_key.decode())
+            servers = [s.strip() for s in self._servers.split(",") if s.strip()]  # type: ignore[union-attr]
+            self._nc = await nats.connect(
+                servers,
+                name="ragent",
+                user_jwt_cb=lambda: jwt.encode(),
+                signature_cb=lambda nonce: base64.b64encode(keypair.sign(nonce.encode())),
+            )
             self._loop = loop
             logger.info("nats.connected")
         except Exception as exc:  # noqa: BLE001 — best-effort channel; degrade to snapshot-only
@@ -99,7 +134,7 @@ class NatsSessionPublisher:
             return
         try:
             data = json.dumps(event).encode()
-            subject = self.subject(self._prefix, user_id)
+            subject = self.subject(user_id)
             asyncio.run_coroutine_threadsafe(self._nc.publish(subject, data), self._loop)
         except Exception as exc:  # noqa: BLE001 — best-effort live nudge
             logger.warning("nats.session_publish_failed", error_type=type(exc).__name__)

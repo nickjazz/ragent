@@ -414,11 +414,12 @@ def build_container() -> Container:
         chat_stream_store = ChatStreamStore.from_env()
         nats_publisher = NatsSessionPublisher(
             servers=os.environ.get("NATS_SERVERS") or None,
-            subject_prefix=os.environ.get("NATS_SESSION_SUBJECT_PREFIX", "session"),
-            user=os.environ.get("NATS_USER") or None,
-            password=os.environ.get("NATS_PASSWORD") or None,
-            token=os.environ.get("NATS_TOKEN") or None,
-            creds=os.environ.get("NATS_CREDS") or None,
+            auth_service_url=os.environ.get("NATS_AUTH_SERVICE_URL") or None,
+            client_secret=os.environ.get("NATS_AUTH_CLIENT_SECRET") or None,
+            namespace=os.environ.get("NATS_AUTH_NAMESPACE") or None,
+            subject_template=os.environ.get(
+                "NATS_SESSION_SUBJECT_TEMPLATE", "session.{user}.status"
+            ),
         )
         chatagent_agent_factory = _build_chatagent_agent_factory(
             http,

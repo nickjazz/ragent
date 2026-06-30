@@ -61,12 +61,11 @@
 | `REDIS_STREAM_MAXLEN`                 | `10000`          | Approximate per-run frame cap (`XADD MAXLEN ~`) for the v3 stream buffer. |
 | `CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS` | `30`           | Consumer gives up if the v3 stream buffer sees no new frame for this long. |
 | `REDIS_UNREAD_TTL_SECONDS`            | `2592000`        | TTL (default 30d) of the per-session new-reply flag backing the sessionList dot; survives well past a run buffer so the dot persists until the user opens the session. |
-| `NATS_SERVERS`                        | (unset)          | Comma-separated NATS URLs. When set, ragent publishes live session-list status (`running`/`hasNewReply`) to `<prefix>.<user_id>.status`; unset → the list is snapshot-only (no realtime push). |
-| `NATS_SESSION_SUBJECT_PREFIX`         | `session`        | Subject prefix for the per-user session-status channel (`<prefix>.<user_id>.status`). |
-| `NATS_USER`                           | (unset)          | Optional NATS username (user/password auth). |
-| `NATS_PASSWORD`                       | (unset)          | Optional NATS password (user/password auth). |
-| `NATS_TOKEN`                          | (unset)          | Optional NATS auth token. |
-| `NATS_CREDS`                          | (unset)          | Optional path to a NATS `.creds` file (JWT auth). |
+| `NATS_SERVERS`                        | (unset)          | Comma-separated NATS URLs (the shared platform NATS). When set together with the auth-service vars below, ragent publishes live session-list status (`running`/`hasNewReply`) to the per-user subject; unset → the list is snapshot-only (no realtime push). |
+| `NATS_AUTH_SERVICE_URL`               | (unset)          | Base URL of the NATS auth service. ragent mints an ephemeral Ed25519 nkey and POSTs `<url>/api/v1/auth` (app flow) to exchange it for a NATS user JWT before connecting. |
+| `NATS_AUTH_CLIENT_SECRET`             | (unset)          | The app's `client_secret`, sent as the auth-service `token` in the app-flow exchange. |
+| `NATS_AUTH_NAMESPACE`                 | (unset)          | The app `namespace` sent in the app-flow exchange (identifies this backend to the auth service). |
+| `NATS_SESSION_SUBJECT_TEMPLATE`       | `session.{user}.status` | Operator-configurable per-user status subject; `{user}` is replaced with the user id. |
 
 #### 4.6.4 Third-party API endpoints & credentials
 
