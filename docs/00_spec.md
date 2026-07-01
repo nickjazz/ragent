@@ -341,10 +341,12 @@ is outside ragent.
 - **`get_skill`** (read): `{skill_id}` → `structuredContent.skill` (full: brief +
   `instructions, created_at, updated_at`); a foreign/missing id → `SKILL_NOT_FOUND`.
   `readOnlyHint=true`.
-- **`update_skill`** (write): full replace `{skill_id, name, description?,
-  instructions, enabled?}` → full skill; a preset id → `SKILL_READONLY`, a name
-  collision → `SKILL_NAME_CONFLICT`, a foreign/missing id → `SKILL_NOT_FOUND`.
-  `readOnlyHint=false`.
+- **`update_skill`** (write): full replace `{skill_id, name, description,
+  instructions, enabled}` — **all** write fields required (a full replace, so an
+  omitted field is a schema error, not a partial edit; this prevents an agent
+  from silently blanking `description` or re-enabling a disabled skill) → full
+  skill; a preset id → `SKILL_READONLY`, a name collision → `SKILL_NAME_CONFLICT`,
+  a foreign/missing id → `SKILL_NOT_FOUND`. `readOnlyHint=false`.
 - **`delete_skill`** (write): `{skill_id}` → `structuredContent = {skill_id,
   deleted:true}`; a preset id → `SKILL_READONLY`, a foreign/missing id →
   `SKILL_NOT_FOUND`. `readOnlyHint=false`.

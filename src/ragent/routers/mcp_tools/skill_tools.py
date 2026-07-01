@@ -28,8 +28,10 @@ _SKILL_ID_SCHEMA: dict[str, Any] = {
 
 # Editable write fields (name/description/instructions/enabled), mirroring
 # `schemas.skill.SkillWriteRequest` bounds. Shared by `create_skill` and
-# `update_skill` so the two write tools can never drift apart — `create` marks
-# {name, instructions} required, `update` adds skill_id, both spread this block.
+# `update_skill` so the two write tools can never drift apart — both spread this
+# block but declare their own `required`: `create` requires {name, instructions}
+# (description/enabled default for a new row); `update` is a full replace, so it
+# requires all five (skill_id + every write field) to avoid silent clobbering.
 SKILL_WRITE_PROPERTIES: dict[str, Any] = {
     "name": {
         "type": "string",
@@ -124,15 +126,20 @@ GET_SKILL_TOOL = Tool(
 UPDATE_SKILL_TOOL = Tool(
     name="update_skill",
     description=(
-        "Full-replace one of the current user's skills: provide skill_id plus the new "
-        "name/description/instructions and `enabled` (set enabled=false to hide it). "
-        "Built-in skills cannot be updated; a name collision fails the call."
+        "Full-replace one of the current user's skills. This OVERWRITES every field, so "
+        "you must supply ALL of name, description, instructions, and enabled — omitting a "
+        "field is not a partial edit, it replaces that field. Read the current values with "
+        "get_skill first so you don't blank the description or re-enable a disabled skill. "
+        "Set enabled=false to hide it. Built-in skills cannot be updated; a name collision "
+        "fails the call."
     ),
     annotations=ToolAnnotations(readOnlyHint=False),
     inputSchema={
         "type": "object",
         "additionalProperties": False,
-        "required": ["skill_id", "name", "instructions"],
+        # Full replace → every write field is required, so an omitted field can never
+        # silently default (description→"" / enabled→true) and clobber existing data.
+        "required": ["skill_id", "name", "description", "instructions", "enabled"],
         "properties": {"skill_id": _SKILL_ID_SCHEMA, **SKILL_WRITE_PROPERTIES},
     },
     outputSchema={

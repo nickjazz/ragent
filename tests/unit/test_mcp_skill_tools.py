@@ -167,24 +167,34 @@ def test_get_skill_rejects_stray_arguments():
 # --- update_skill ------------------------------------------------------------
 
 
+# A full-replace update must carry every write field — omitting one is a schema
+# error, not a partial edit (guards against silently clobbering description/enabled).
+_FULL_UPDATE = {
+    "skill_id": "SKILL000000000000000000000",
+    "name": "Renamed",
+    "description": "still described",
+    "instructions": "Do the new thing.",
+    "enabled": False,
+}
+
+
 def test_update_skill_uses_authenticated_owner():
     svc = AsyncMock()
     svc.update = AsyncMock(return_value=_skill_resp(name="Renamed"))
     client = _client(skill_service=svc)
-    body = _call(
-        client,
-        "update_skill",
-        {
-            "skill_id": "SKILL000000000000000000000",
-            "name": "Renamed",
-            "instructions": "Do the new thing.",
-        },
-        headers=ALICE,
-    )
+    body = _call(client, "update_skill", dict(_FULL_UPDATE), headers=ALICE)
     skill = body["result"]["structuredContent"]["skill"]
     assert skill["name"] == "Renamed"
     assert body["result"]["isError"] is False
-    assert svc.update.call_args.kwargs["user_id"] == "alice"
+    # every write field is forwarded verbatim — no defaulted description/enabled.
+    assert svc.update.call_args.kwargs == {
+        "user_id": "alice",
+        "skill_id": "SKILL000000000000000000000",
+        "name": "Renamed",
+        "description": "still described",
+        "instructions": "Do the new thing.",
+        "enabled": False,
+    }
 
 
 def test_update_skill_readonly_preset_maps_to_error_code():
@@ -192,10 +202,7 @@ def test_update_skill_readonly_preset_maps_to_error_code():
     svc.update = AsyncMock(side_effect=SkillReadOnlyError("built-in"))
     client = _client(skill_service=svc)
     body = _call(
-        client,
-        "update_skill",
-        {"skill_id": "skill-manager", "name": "x", "instructions": "y"},
-        headers=ALICE,
+        client, "update_skill", {**_FULL_UPDATE, "skill_id": "skill-manager"}, headers=ALICE
     )
     assert body["error"]["data"]["error_code"] == "SKILL_READONLY"
 
@@ -204,12 +211,7 @@ def test_update_skill_name_conflict_maps_to_error_code():
     svc = AsyncMock()
     svc.update = AsyncMock(side_effect=SkillNameConflictError("dup"))
     client = _client(skill_service=svc)
-    body = _call(
-        client,
-        "update_skill",
-        {"skill_id": "SKILL000000000000000000000", "name": "dup", "instructions": "y"},
-        headers=ALICE,
-    )
+    body = _call(client, "update_skill", {**_FULL_UPDATE, "name": "dup"}, headers=ALICE)
     assert body["error"]["data"]["error_code"] == "SKILL_NAME_CONFLICT"
 
 
@@ -226,28 +228,38 @@ def test_update_skill_missing_required_field_is_invalid():
     svc.update.assert_not_called()
 
 
+def test_update_skill_partial_body_is_invalid_not_a_silent_clobber():
+    # Omitting description/enabled on a full-replace update must be rejected, not
+    # defaulted — otherwise a rename would wipe the description / re-enable the skill.
+    svc = AsyncMock()
+    client = _client(skill_service=svc)
+    body = _call(
+        client,
+        "update_skill",
+        {
+            "skill_id": "SKILL000000000000000000000",
+            "name": "Renamed",
+            "instructions": "Do the new thing.",
+        },  # no description, no enabled
+        headers=ALICE,
+    )
+    assert body["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    svc.update.assert_not_called()
+
+
 def test_update_skill_not_found_maps_to_error_code():
     # A foreign/missing id must surface as SKILL_NOT_FOUND (never leak existence).
     svc = AsyncMock()
     svc.update = AsyncMock(side_effect=SkillNotFoundError("nope"))
     client = _client(skill_service=svc)
-    body = _call(
-        client,
-        "update_skill",
-        {"skill_id": "SKILL000000000000000000000", "name": "x", "instructions": "y"},
-        headers=ALICE,
-    )
+    body = _call(client, "update_skill", dict(_FULL_UPDATE), headers=ALICE)
     assert body["error"]["data"]["error_code"] == "SKILL_NOT_FOUND"
 
 
 def test_update_skill_without_identity_fails_closed():
     svc = AsyncMock()
     client = _client(skill_service=svc)
-    body = _call(
-        client,
-        "update_skill",
-        {"skill_id": "SKILL000000000000000000000", "name": "x", "instructions": "y"},
-    )
+    body = _call(client, "update_skill", dict(_FULL_UPDATE))
     assert body["error"]["data"]["error_code"] == "MISSING_USER_ID"
     svc.update.assert_not_called()
 

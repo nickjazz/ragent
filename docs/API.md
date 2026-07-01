@@ -832,7 +832,7 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 | `create_skill` | `{name, description?, instructions, enabled?}` | `skill = {skill_id, name, description, enabled, readonly}` (brief) | name collision (incl. preset name, case-insensitive) → `SKILL_NAME_CONFLICT` |
 | `list_skills` | `{}` | `skills = [brief]` (presets pinned first; no instructions/timestamps) | — |
 | `get_skill` | `{skill_id}` | `skill = {…brief, instructions, created_at, updated_at}` (full) | foreign/missing id → `SKILL_NOT_FOUND` |
-| `update_skill` | `{skill_id, name, description?, instructions, enabled?}` | full skill | preset id → `SKILL_READONLY`; collision → `SKILL_NAME_CONFLICT`; foreign/missing → `SKILL_NOT_FOUND` |
+| `update_skill` | `{skill_id, name, description, instructions, enabled}` (full replace — all write fields required) | full skill | preset id → `SKILL_READONLY`; collision → `SKILL_NAME_CONFLICT`; foreign/missing → `SKILL_NOT_FOUND` |
 | `delete_skill` | `{skill_id}` | `{skill_id, deleted: true}` | preset id → `SKILL_READONLY`; foreign/missing → `SKILL_NOT_FOUND` |
 
 Example:

@@ -387,13 +387,15 @@ def create_mcp_router(
         _require_mcp_user(user_id)
         _validate_against(_UPDATE_SKILL_INPUT_VALIDATOR, arguments)
         try:
+            # A full replace: the schema requires every write field, so we read
+            # them directly — no `.get` default that could silently overwrite.
             resp = await skill_service.update(
                 user_id=user_id,
                 skill_id=arguments["skill_id"],
                 name=arguments["name"],
-                description=arguments.get("description", ""),
+                description=arguments["description"],
                 instructions=arguments["instructions"],
-                enabled=arguments.get("enabled", True),
+                enabled=arguments["enabled"],
             )
         except Exception as exc:
             _raise_skill_tool_error("update_skill", exc)
