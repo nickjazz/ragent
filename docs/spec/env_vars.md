@@ -65,6 +65,7 @@
 | `NATS_AUTH_SERVICE_URL`               | (unset)          | Base URL of the NATS auth service. ragent mints an ephemeral Ed25519 nkey and POSTs `<url>/api/v1/auth` (app flow) to exchange it for a NATS user JWT before connecting. |
 | `NATS_AUTH_CLIENT_SECRET`             | (unset)          | The app's `client_secret`, sent as the auth-service `token` in the app-flow exchange. |
 | `NATS_AUTH_NAMESPACE`                 | (unset)          | The app `namespace` sent in the app-flow exchange (identifies this backend to the auth service). |
+| `NATS_AUTH_VERIFY_CERTS`              | `true`           | Set `false` to skip TLS certificate verification on the `POST <NATS_AUTH_SERVICE_URL>/api/v1/auth` JWT exchange — dev/self-signed CA or a broken intermediate chain on the auth service only. Same default-secure convention as `ES_VERIFY_CERTS`/`OIDC_VERIFY_SSL`, parsed via `bool_env` (accepts `1`/`true`/`yes`/`on`). |
 | `NATS_SESSION_SUBJECT_TEMPLATE`       | `session.{user}.status` | Operator-configurable per-user status subject; `{user}` is replaced with the user id. |
 
 #### 4.6.4 Third-party API endpoints & credentials

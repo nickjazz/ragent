@@ -51,6 +51,13 @@ class NatsSessionPublisher:
     lifespan via :meth:`connect`. When unconfigured — or before connect, or after a
     failed exchange/connect — :meth:`publish` is a no-op, so the live channel degrades
     to "snapshot only" rather than failing a request.
+
+    ``verify_certs`` (default ``True``, same default-secure convention as
+    ``ES_VERIFY_CERTS``/``OIDC_VERIFY_SSL``) gates TLS verification on the
+    ``_fetch_app_jwt`` POST only — it has no effect on the later NATS connection.
+    Set ``False`` only for a dev/self-signed auth-service CA or a broken
+    intermediate chain; that POST carries ``client_secret``, so this must stay
+    ``True`` anywhere the connection isn't already trusted.
     """
 
     def __init__(
@@ -61,12 +68,14 @@ class NatsSessionPublisher:
         client_secret: str | None,
         namespace: str | None,
         subject_template: str = "session.{user}.status",
+        verify_certs: bool = True,
     ) -> None:
         self._servers = servers
         self._auth_url = auth_service_url.rstrip("/") if auth_service_url else None
         self._client_secret = client_secret
         self._namespace = namespace
         self._subject_template = subject_template
+        self._verify_certs = verify_certs
         self._nc: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -88,7 +97,7 @@ class NatsSessionPublisher:
         }
 
     async def _fetch_app_jwt(self, public_key: str) -> str:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self._verify_certs) as client:
             resp = await client.post(
                 f"{self._auth_url}{_AUTH_PATH}",
                 json=self._auth_payload(public_key),

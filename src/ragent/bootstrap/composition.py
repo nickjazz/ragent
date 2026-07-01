@@ -499,6 +499,7 @@ def build_container() -> Container:
             subject_template=os.environ.get(
                 "NATS_SESSION_SUBJECT_TEMPLATE", "session.{user}.status"
             ),
+            verify_certs=_bool_env("NATS_AUTH_VERIFY_CERTS", True),
         )
         chatagent_agent_factory = _build_chatagent_agent_factory(
             http,

@@ -133,3 +133,35 @@ async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
 
     await pub.connect(asyncio.get_running_loop())  # swallowed
     pub.publish("alice", {"x": 1})  # degraded to no-op, no raise
+
+
+async def test_fetch_app_jwt_verify_certs_defaults_true_and_is_configurable(monkeypatch) -> None:
+    # Default-secure, same convention as ES_VERIFY_CERTS/OIDC_VERIFY_SSL; operator
+    # can opt out for a self-signed/internal auth-service CA or a broken chain.
+    captured: list[dict[str, object]] = []
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None: ...
+        def json(self) -> dict[str, str]:
+            return {"natsToken": "jwt"}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):  # noqa: ANN001
+            captured.append(kwargs)
+
+        async def __aenter__(self) -> _FakeClient:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def post(self, *args, **kwargs):  # noqa: ANN001
+            return _FakeResponse()
+
+    monkeypatch.setattr("ragent.clients.nats_publisher.httpx.AsyncClient", _FakeClient)
+
+    await _publisher()._fetch_app_jwt("UABC")  # noqa: SLF001
+    await _publisher(verify_certs=False)._fetch_app_jwt("UABC")  # noqa: SLF001
+
+    assert captured[0]["verify"] is True  # default
+    assert captured[1]["verify"] is False  # operator override
