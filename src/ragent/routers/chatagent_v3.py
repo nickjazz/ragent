@@ -242,9 +242,6 @@ def create_chatagent_v3_router(
                     "0",
                     stream_idle_timeout,
                     stream_poll_interval,
-                    user_id=user_id,
-                    thread_id=body.thread_id or "",
-                    nats_publisher=nats_publisher,
                 ),
                 media_type="text/event-stream",
             )
@@ -309,12 +306,33 @@ def create_chatagent_v3_router(
                     last_event_id or "0",
                     stream_idle_timeout,
                     stream_poll_interval,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    nats_publisher=nats_publisher,
                 ),
                 media_type="text/event-stream",
             )
+
+        # Registered here (under CHATAGENT_API_URL), NOT under the session-history URL
+        # gate: mark-read operates on the unread stream store, which composition builds
+        # only when CHATAGENT_API_URL is set. Registration-gate == store-build-gate (per
+        # docs/00_journal.md 2026-06-23) — gating on CHATAGENT_SESSION_API_URL would leave
+        # dots unclearable in a chat-without-history deployment.
+        @router.post("/session/read", status_code=204)
+        async def chatagent_v3_session_read(
+            session: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            """Explicit, client-owned mark-read: the frontend calls this when the user
+            has seen the session's latest reply. Clears the unread flag AND publishes
+            the cleared dot over NATS so the user's other tabs/devices update in
+            realtime without a refetch. Idempotent — clearing an already-read session
+            is a harmless no-op. This is the ONLY path that marks a session read; the
+            backend no longer infers it from GET /session or a stream draining to eos.
+            """
+            user_id = x_user_id or "anonymous"
+            if chat_stream_store is not None:
+                chat_stream_store.clear_unread(user_id, session)
+                if nats_publisher is not None:
+                    nats_publisher.publish(user_id, {"session": session, "hasNewReply": False})
+            return Response(status_code=204)
 
     if chatagent_sessionlist_api_url is not None:
 
@@ -354,8 +372,10 @@ def create_chatagent_v3_router(
         ) -> Response:
             user_id = x_user_id or "anonymous"
             params = {"user": user_id, "apName": chatagent_ap_name, "session": session}
-            # v3 reshapes the persisted history: twp-ai roles + <hidden> stripped.
-            response = await proxy_get(
+            # Pure history load: v3 reshapes the persisted history (twp-ai roles +
+            # <hidden> stripped) but does NOT mark the session read — loading history
+            # is decoupled from "read", which is an explicit POST /session/read.
+            return await proxy_get(
                 http_client=http_client,
                 url=chatagent_session_api_url,
                 params=params,
@@ -364,14 +384,6 @@ def create_chatagent_v3_router(
                 log_prefix="v3.session",
                 transform=map_session_payload,
             )
-            # Mark read only after a successful fetch — a 502/504 upstream failure must
-            # not clear the dot for a session the user never actually saw. Publish the
-            # cleared dot over NATS so the user's other tabs update without a refetch.
-            if chat_stream_store is not None and response.status_code < 400:
-                chat_stream_store.clear_unread(user_id, session)
-                if nats_publisher is not None:
-                    nats_publisher.publish(user_id, {"session": session, "hasNewReply": False})
-            return response
 
         @router.put("/session")
         async def chatagent_v3_session_rename(
@@ -525,24 +537,11 @@ def _reconnect_stream(
     last_id: str,
     idle_timeout: float,
     poll_interval: float,
-    *,
-    user_id: str,
-    thread_id: str,
-    nats_publisher: NatsSessionPublisher | None,
 ) -> Generator[str, None, None]:
     """Replay a run for reconnect: the stashed user turn first, then the buffer."""
     if user_text:
         yield to_sse(UserMessageEvent(message_id=f"{run_id}-user", content=user_text))
-    yield from _consume_stream(
-        store,
-        key,
-        last_id,
-        idle_timeout,
-        poll_interval,
-        user_id=user_id,
-        thread_id=thread_id,
-        nats_publisher=nats_publisher,
-    )
+    yield from _consume_stream(store, key, last_id, idle_timeout, poll_interval)
 
 
 def _spawn_producer(
@@ -638,10 +637,6 @@ def _consume_stream(
     last_id: str,
     idle_timeout: float,
     poll_interval: float,
-    *,
-    user_id: str,
-    thread_id: str,
-    nats_publisher: NatsSessionPublisher | None,
 ) -> Generator[str, None, None]:
     """Replay buffered frames after ``last_id``, attaching each entry id as the SSE ``id:``.
 
@@ -651,10 +646,11 @@ def _consume_stream(
     that died without closing). The deadline resets on every batch, so a slow but
     live producer streams to completion.
 
-    Draining to the ``eos`` sentinel means THIS viewer watched the reply to the end,
-    so the thread is marked read (clear the dot + publish the cleared state). A client
-    that disconnects mid-stream never reaches here, so a backgrounded run that finishes
-    unwatched keeps its dot — exactly the active-vs-background distinction we want.
+    Reaching ``eos`` only STOPS the stream — it does not mark the thread read.
+    "Read" is a client-owned signal (an explicit ``POST /session/read``), so the
+    unread dot never depends on this generator's lifecycle (whether a client
+    streamed to the end, disconnected mid-reply, or a short reply drained in one
+    batch before the disconnect was noticed).
     """
     cursor = last_id
     deadline = time.monotonic() + idle_timeout
@@ -666,9 +662,6 @@ def _consume_stream(
         for entry_id, frame in entries:
             cursor = entry_id
             if frame is None:
-                store.clear_unread(user_id, thread_id)
-                if nats_publisher is not None:
-                    nats_publisher.publish(user_id, {"session": thread_id, "hasNewReply": False})
                 return
             yield f"id: {entry_id}\n{frame}"
         deadline = time.monotonic() + idle_timeout

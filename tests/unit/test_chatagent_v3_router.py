@@ -651,8 +651,9 @@ def test_v3_sessionlist_without_store_omits_status_fields() -> None:
     assert "hasNewReply" not in entry
 
 
-def test_v3_get_session_clears_the_unread_flag() -> None:
-    # Opening a session marks it read — the dot drops on the next list fetch.
+def test_v3_get_session_does_not_clear_unread() -> None:
+    # Read is now an explicit client signal (POST /session/read). Loading history
+    # via GET /session is decoupled from "read" and must NOT drop the dot.
     store = _store()
     store.mark_unread("alice", "thread_1")
     app, http_mock = _make_app(chat_stream_store=store, session_url="http://up/session")
@@ -667,31 +668,53 @@ def test_v3_get_session_clears_the_unread_flag() -> None:
             headers={"X-User-Id": "alice"},
         )
 
-    assert store.has_unread("alice", "thread_1") is False
+    assert store.has_unread("alice", "thread_1") is True  # loading history ≠ read
 
 
-def test_v3_get_session_keeps_unread_when_upstream_fails() -> None:
-    # Clear-after-success: a 502/504 upstream failure must NOT clear the dot for a
-    # session the user never actually saw.
+def test_v3_session_read_endpoint_clears_and_publishes() -> None:
+    # The explicit client-owned mark-read: POST /session/read clears the unread flag
+    # and publishes the cleared dot over NATS. This is now the ONLY path to "read".
     store = _store()
     store.mark_unread("alice", "thread_1")
-    app, http_mock = _make_app(chat_stream_store=store, session_url="http://up/session")
-    http_mock.get.side_effect = httpx.RequestError("upstream down")  # proxy_get → 502
+    pub = MagicMock(spec=NatsSessionPublisher)
+    app, _ = _make_app(chat_stream_store=store, nats_publisher=pub)
 
     with TestClient(app) as client:
-        r = client.get(
-            "/chatagent/v3/session",
+        r = client.post(
+            "/chatagent/v3/session/read",
             params={"session": "thread_1"},
             headers={"X-User-Id": "alice"},
         )
 
-    assert r.status_code == 502
-    assert store.has_unread("alice", "thread_1") is True  # not cleared on failure
+    assert r.status_code == 204
+    assert store.has_unread("alice", "thread_1") is False
+    assert any(
+        call.args[1] == {"session": "thread_1", "hasNewReply": False}
+        for call in pub.publish.call_args_list
+    )
 
 
-def test_v3_active_viewer_clears_unread_on_completion() -> None:
-    # Fix #1: the POST consumer drains to eos (the user watched the reply live), so
-    # the thread ends READ — the producer's mark_unread is cleared by the consumer.
+def test_v3_session_read_is_noop_204_without_store() -> None:
+    # No stream store wired (the whole unread feature is off) → the endpoint is a
+    # harmless no-op 204 and never publishes.
+    pub = MagicMock(spec=NatsSessionPublisher)
+    app, _ = _make_app(nats_publisher=pub)  # chat_stream_store defaults to None
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/chatagent/v3/session/read",
+            params={"session": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert r.status_code == 204
+    pub.publish.assert_not_called()
+
+
+def test_v3_active_viewer_keeps_unread_after_completion() -> None:
+    # The consumer no longer clears on eos: watching the reply stream to the end is
+    # NOT "read" (read is an explicit POST /session/read). The producer's dot
+    # persists until the client explicitly marks the session read.
     store = _store()
     app, http_mock = _make_app(chat_stream_store=store)
     http_mock.send.return_value = _resp_mock([_msg_line("hi", message_id="m1"), _done_line()])
@@ -699,7 +722,7 @@ def test_v3_active_viewer_clears_unread_on_completion() -> None:
     with TestClient(app) as client:
         client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
 
-    assert store.has_unread("alice", "thread_1") is False  # watched live → read
+    assert store.has_unread("alice", "thread_1") is True  # eos drain no longer clears
 
 
 class _FinishedAgent:
@@ -785,28 +808,22 @@ def test_run_producer_logs_instead_of_swallowing_a_background_error() -> None:
     assert any(e["event"] == "chatagent_v3.producer_failed" for e in logs)
 
 
-def test_consume_stream_clears_unread_and_publishes_on_eos() -> None:
-    # Draining to eos = this viewer watched the reply → mark read + publish cleared dot.
+def test_consume_stream_does_not_clear_unread_on_eos() -> None:
+    # Reaching eos only STOPS the stream — it no longer marks read. "Read" is a
+    # client-owned signal (POST /session/read), so the dot must not depend on this
+    # generator's lifecycle (whether a client streamed to the end or disconnected).
     from ragent.routers.chatagent_v3 import _consume_stream
 
     store = _store()
-    pub = MagicMock(spec=NatsSessionPublisher)
     key = ChatStreamStore.key("alice", "t", "r")
     store.mark_unread("alice", "t")
     store.append(key, "data: a\n\n")
     store.mark_done(key)  # eos present
 
-    list(
-        _consume_stream(
-            store, key, "0", 1.0, 0.01, user_id="alice", thread_id="t", nats_publisher=pub
-        )
-    )
+    frames = list(_consume_stream(store, key, "0", 1.0, 0.01))
 
-    assert store.has_unread("alice", "t") is False
-    assert any(
-        call.args[1] == {"session": "t", "hasNewReply": False}
-        for call in pub.publish.call_args_list
-    )
+    assert len(frames) == 1  # streamed the one buffered frame, then stopped at eos
+    assert store.has_unread("alice", "t") is True  # eos drain does NOT clear
 
 
 def test_v3_router_does_not_import_concrete_agent_or_caller_classes() -> None:

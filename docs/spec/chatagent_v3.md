@@ -201,11 +201,13 @@ message shape changes, while the upstream wire contract is untouched.
     since; drives the new-reply dot. Backed by a per-`(user, thread)` Redis flag
     (`chatunread:`) set when a run finishes **with a reply** (a successful `RUN_FINISHED`
     terminal — a `RUN_ERROR` run or a control-only cancelled resume persisted no reply, so
-    it sets nothing) and dropped when the user **reads** it —
-    either by opening the session (`GET /session`, after a successful fetch) **or** by
-    watching the live run to its `eos` (the active POST/`reconnect` consumer clears on
-    drain; a client that disconnects before `eos` leaves the dot, so a backgrounded
-    run that finishes unwatched stays unread). `REDIS_UNREAD_TTL_SECONDS` (default 30d).
+    it sets nothing) and dropped only when the client **explicitly marks it read** via
+    `POST /chatagent/v3/session/read` (see below). "Read" is a client-owned signal:
+    the backend does **not** infer it from `GET /session` (loading history is
+    decoupled from reading) nor from a stream draining to `eos` (that coupled the
+    dot to the SSE generator's lifecycle — whether a client streamed to the end,
+    disconnected mid-reply, or a short reply drained in one batch — which the client,
+    not the backend, actually knows). `REDIS_UNREAD_TTL_SECONDS` (default 30d).
     It is a presence flag, not a timestamp — `hasNewReply` is a plain `EXISTS`.
   - With no store wired the list degrades to title-only (the fields are omitted).
 - `GET /chatagent/v3/session?session=<id>` — the upstream session envelope
@@ -231,6 +233,20 @@ message shape changes, while the upstream wire contract is untouched.
     §3.4.7, never carries the block).
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
+- `POST /chatagent/v3/session/read?session=<id>` — **explicit, client-owned
+  mark-read.** The frontend calls this when the user has actually seen the session's
+  latest reply. Clears the `chatunread:` flag **and** publishes `{session,
+  hasNewReply:false}` over NATS so the user's other tabs/devices drop the dot in
+  realtime. Returns `204` and is idempotent (marking an already-read session is a
+  no-op). This is the **only** path that marks a session read. Does not touch the
+  upstream session API — it only manipulates the Redis flag + the NATS delta. It is
+  registered with the **chat POST feature** (`CHATAGENT_API_URL`), *not* under the
+  session-history URL gate, because the unread stream store it operates on is built
+  only when `CHATAGENT_API_URL` is set (registration-gate == store-build-gate, per
+  `docs/00_journal.md` 2026-06-23); gating it on `CHATAGENT_SESSION_API_URL` would
+  leave dots unclearable in a chat-without-history deployment. A no-op `204` when the
+  store itself is down (Redis unreachable); absent in a pure session-only deployment
+  where the whole unread feature is off.
 **Realtime status over NATS (not an HTTP route).** Instead of an SSE endpoint, ragent
 publishes live status transitions to a per-user NATS subject derived from
 `NATS_SESSION_SUBJECT_TEMPLATE` (default `session.{user}.status`, `{user}` → the user id);
@@ -246,8 +262,8 @@ list fields:
 
 - `{session, running:true}` when a run starts,
 - `{session, running:false, hasNewReply:true}` when it finishes,
-- `{session, hasNewReply:false}` when the user reads the session (`GET /session`, or the
-  active consumer draining to `eos`).
+- `{session, hasNewReply:false}` when the client explicitly marks the session read
+  (`POST /session/read`).
 
 Publishing is **best-effort / fire-and-forget** (`run_coroutine_threadsafe` from the
 producer thread); a publish failure costs only one live nudge. NATS is unconfigured
@@ -260,8 +276,10 @@ no realtime push, list stays snapshot-only.
   on mount and **re-fetch it to re-sync** on NATS (re)connect / error (and may poll it
   periodically as a backstop). A run the client is itself streaming already updates from
   that session's chat stream, so the channel mainly carries cross-tab / background
-  transitions a snapshot would otherwise miss; the active session's own dot is cleared
-  server-side on `eos` drain, so a client need not special-case it.
+  transitions a snapshot would otherwise miss. The dot is **never** cleared server-side
+  from a stream draining to `eos` — when the user has seen the reply, the client marks it
+  read via `POST /session/read` (which clears the flag and publishes the cleared dot to
+  the user's other tabs).
 
 `sessionList` / `session` (GET/PUT/DELETE) are JSON proxy routes; timeout / upstream
 failures map to HTTP `504` / `502` as in v1 — the v3 `RUN_ERROR` framing applies only to
