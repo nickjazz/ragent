@@ -193,6 +193,7 @@ def create_chatagent_v3_router(
                     session_id=body.thread_id or "",
                     user_id=user_id,
                     attachment_ids=body.attachment_ids or None,
+                    limit=attachment_max_files,
                 )
             agent = agent_factory(user_id, raw_token, attachment_context)
             logger.info("chatagent_v3.request", user_id=user_id)

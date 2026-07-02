@@ -188,8 +188,17 @@ class AttachmentIngestService:
         """Cascade for DELETE /chatagent/v3/session — unlink every document in
         the session and delete each through the ingest cascade."""
         doc_ids = await self._session_docs.delete_by_session(session_id)
-        for doc_id in doc_ids:
-            await self._ingest.delete(doc_id)
+        results = await asyncio.gather(
+            *[self._ingest.delete(doc_id) for doc_id in doc_ids],
+            return_exceptions=True,
+        )
+        for doc_id, res in zip(doc_ids, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.error(
+                    "attachment.delete_failed",
+                    document_id=doc_id,
+                    error=str(res),
+                )
         logger.info(
             "attachment.session_deleted",
             thread_id=session_id,

@@ -277,3 +277,16 @@ async def test_delete_by_session_cascades_every_linked_document():
     assert ingest.delete.await_count == 2
     deleted = [c.args[0] for c in ingest.delete.await_args_list]
     assert deleted == [_DOC_ID, other_id]
+
+
+@pytest.mark.asyncio
+async def test_delete_by_session_continues_after_one_failure():
+    """Fail-soft: a single delete error must not abort the remaining deletes."""
+    other_id = "DOCBBBBBBBBBBBBBBBBBBBBBB"
+    svc, ingest, session_docs, _ = _service()
+    session_docs.delete_by_session.return_value = [_DOC_ID, other_id]
+    ingest.delete.side_effect = [RuntimeError("es down"), None]
+
+    await svc.delete_by_session("thread-1")  # must not raise
+
+    assert ingest.delete.await_count == 2

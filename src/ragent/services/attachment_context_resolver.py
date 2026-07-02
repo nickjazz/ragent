@@ -71,10 +71,11 @@ class AttachmentContextResolver:
         session_id: str,
         user_id: str,
         attachment_ids: list[str] | None = None,
+        limit: int | None = None,
     ) -> AttachmentContext | None:
         if attachment_ids:
             return await self._resolve_explicit(user_id, attachment_ids)
-        return await self._resolve_session(session_id, user_id)
+        return await self._resolve_session(session_id, user_id, limit=limit)
 
     async def _resolve_explicit(
         self, user_id: str, attachment_ids: list[str]
@@ -104,11 +105,15 @@ class AttachmentContextResolver:
             instruction=EXPLICIT_INSTRUCTION,
         )
 
-    async def _resolve_session(self, session_id: str, user_id: str) -> AttachmentContext | None:
+    async def _resolve_session(
+        self, session_id: str, user_id: str, limit: int | None = None
+    ) -> AttachmentContext | None:
         # list_by_session returns newest-first (DESC); no re-sort needed.
         links = await self._session_docs.list_by_session(session_id, create_user=user_id)
         if not links:
             return None
+        if limit is not None:
+            links = links[:limit]
         files = await self._files_for_links(links)
         if not files:
             return None

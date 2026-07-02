@@ -253,7 +253,7 @@ def test_v3_resolves_attachment_ids_into_hidden_block() -> None:
         client.post("/chatagent/v3", json=body, headers={"X-User-Id": "alice"})
 
     resolver.resolve.assert_called_once_with(
-        session_id="thread_1", user_id="alice", attachment_ids=["doc-1"]
+        session_id="thread_1", user_id="alice", attachment_ids=["doc-1"], limit=None
     )
     message = http_mock.build_request.call_args.kwargs["json"]["inputData"]["message"]
     assert '<attachments>[{"documentId": "doc-1"' in message
@@ -286,7 +286,7 @@ def test_v3_calls_resolver_even_without_attachment_ids() -> None:
         client.post("/chatagent/v3", json=_run_input(), headers={"X-User-Id": "alice"})
 
     resolver.resolve.assert_called_once_with(
-        session_id="thread_1", user_id="alice", attachment_ids=None
+        session_id="thread_1", user_id="alice", attachment_ids=None, limit=None
     )
 
 
@@ -323,7 +323,7 @@ def test_v3_attachment_count_at_limit_is_allowed() -> None:
 
     assert r.status_code == 200
     resolver.resolve.assert_called_once_with(
-        session_id="thread_1", user_id="alice", attachment_ids=["att-1", "att-2"]
+        session_id="thread_1", user_id="alice", attachment_ids=["att-1", "att-2"], limit=2
     )
 
 

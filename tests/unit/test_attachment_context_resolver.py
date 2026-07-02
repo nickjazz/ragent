@@ -164,6 +164,26 @@ async def test_empty_attachment_ids_list_falls_back_to_session():
 
 
 @pytest.mark.asyncio
+async def test_session_fallback_limit_caps_returned_files():
+    """limit parameter caps the number of files from session fallback (newest-first)."""
+    resolver, _, _ = _resolver(
+        session_links=[
+            _link(document_id=_DOC_B, create_date="2026-02-01T00:00:00"),
+            _link(document_id=_DOC_A, create_date="2026-01-01T00:00:00"),
+        ],
+        docs={_DOC_A: _doc(_DOC_A, "old.md"), _DOC_B: _doc(_DOC_B, "new.md")},
+    )
+
+    ctx = await resolver.resolve(
+        session_id="thread-1", user_id="alice", attachment_ids=None, limit=1
+    )
+
+    files = json.loads(ctx.files_json)
+    assert [f["documentId"] for f in files] == [_DOC_B]
+    assert files[0]["latest"] is True
+
+
+@pytest.mark.asyncio
 async def test_instructions_differ_between_explicit_and_fallback():
     resolver_explicit, _, _ = _resolver(links_by_doc={_DOC_A: _link()}, docs={_DOC_A: _doc()})
     resolver_fallback, _, _ = _resolver(session_links=[_link()], docs={_DOC_A: _doc()})
