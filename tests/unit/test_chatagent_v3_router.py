@@ -694,6 +694,25 @@ def test_v3_session_read_endpoint_clears_and_publishes() -> None:
     )
 
 
+def test_v3_session_read_skips_broadcast_when_already_read() -> None:
+    # Repeat mark-reads are silent: the FE calls this on every session view, so an
+    # unconditional publish would spam a no-op cleared-dot delta each time. Only an
+    # actual flag deletion broadcasts.
+    store = _store()  # no unread flag set
+    pub = MagicMock(spec=NatsSessionPublisher)
+    app, _ = _make_app(chat_stream_store=store, nats_publisher=pub)
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/chatagent/v3/session/read",
+            params={"session": "thread_1"},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert r.status_code == 204
+    pub.publish.assert_not_called()
+
+
 def test_v3_session_read_is_noop_204_without_store() -> None:
     # No stream store wired (the whole unread feature is off) → the endpoint is a
     # harmless no-op 204 and never publishes.

@@ -17,8 +17,13 @@ or connect failure degrades to "snapshot only" (the durable truth is the Redis
 run-pointer + unread flag the client re-reads from `sessionList`) and never aborts
 boot or fails an HTTP request.
 
-Note: like mco-clean today, the JWT is fetched once at connect and not refreshed —
-a long-lived backend connection inherits the same known token-refresh gap.
+The platform's app JWTs are short-lived (~1 minute), so a background task re-runs
+the exchange every ``jwt_refresh_seconds`` (same ephemeral keypair, new token) and
+``user_jwt_cb`` always serves the latest one — nats-py re-invokes it on every
+(re)connect handshake, so a reconnect after token expiry self-heals instead of
+re-presenting the dead boot-time JWT forever. Reconnect attempts are unbounded
+(``max_reconnect_attempts=-1``): a backend pod lives for weeks and must ride out
+NATS outages longer than nats-py's ~2-minute default give-up window.
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ class NatsSessionPublisher:
         subject_template: str = "session.{user}.status",
         verify_certs: bool = True,
         connect_timeout_seconds: float = 10.0,
+        jwt_refresh_seconds: float = 30.0,
     ) -> None:
         self._servers = servers
         self._auth_url = auth_service_url.rstrip("/") if auth_service_url else None
@@ -82,8 +88,14 @@ class NatsSessionPublisher:
         # unreachable; bound the initial attempt so a NATS outage can't stall
         # FastAPI lifespan startup.
         self._connect_timeout_seconds = connect_timeout_seconds
+        # Must stay under the platform JWT's TTL (~60s) so a reconnect handshake
+        # never presents an expired token.
+        self._jwt_refresh_seconds = jwt_refresh_seconds
         self._nc: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._keypair: Any = None
+        self._jwt: str | None = None
+        self._refresh_task: asyncio.Task[None] | None = None
 
     def _enabled(self) -> bool:
         return bool(self._servers and self._auth_url and self._client_secret and self._namespace)
@@ -134,22 +146,45 @@ class NatsSessionPublisher:
 
             import nats
 
-            keypair = _new_user_keypair()
-            jwt = await self._fetch_app_jwt(keypair.public_key.decode())
+            self._keypair = _new_user_keypair()
+            self._jwt = await self._fetch_app_jwt(self._keypair.public_key.decode())
             self._nc = await asyncio.wait_for(
                 nats.connect(
                     servers,
                     name="ragent",
-                    user_jwt_cb=lambda: jwt.encode(),
-                    signature_cb=lambda nonce: base64.b64encode(keypair.sign(nonce.encode())),
+                    # Reads the instance attr, not a snapshot: nats-py re-invokes this
+                    # on every (re)connect handshake, so a reconnect after the ~1-min
+                    # token TTL presents the refresh task's latest JWT, not the dead
+                    # boot-time one.
+                    user_jwt_cb=lambda: (self._jwt or "").encode(),
+                    signature_cb=lambda nonce: base64.b64encode(self._keypair.sign(nonce.encode())),
+                    # Unbounded retries: the default gives up permanently after ~2 min,
+                    # which for a weeks-lived pod means snapshot-only until restart.
+                    max_reconnect_attempts=-1,
                 ),
                 timeout=self._connect_timeout_seconds,
             )
             self._loop = loop
+            self._refresh_task = loop.create_task(self._refresh_jwt_forever())
             logger.info("nats.connected")
         except Exception as exc:  # noqa: BLE001 — best-effort channel; degrade to snapshot-only
             logger.warning("nats.connect_failed", error_type=type(exc).__name__)
             self._nc = None
+
+    async def _refresh_jwt_forever(self) -> None:
+        """Keep ``self._jwt`` fresh so any reconnect handshake presents a live token.
+
+        Re-runs the auth exchange with the SAME ephemeral keypair every
+        ``jwt_refresh_seconds`` — only the token rotates, so ``signature_cb`` stays
+        valid. A failed refresh keeps the last good token and retries next tick
+        (fail-soft): one blip only matters if a reconnect lands inside it.
+        """
+        while True:
+            await asyncio.sleep(self._jwt_refresh_seconds)
+            try:
+                self._jwt = await self._fetch_app_jwt(self._keypair.public_key.decode())
+            except Exception as exc:  # noqa: BLE001 — keep last good JWT, retry next tick
+                logger.warning("nats.jwt_refresh_failed", error_type=type(exc).__name__)
 
     def publish(self, user_id: str, event: dict[str, Any]) -> None:
         """Fire-and-forget publish, callable from any thread (incl. the producer pool).
@@ -183,6 +218,9 @@ class NatsSessionPublisher:
 
     async def close(self) -> None:
         """Drain the connection on lifespan shutdown (flushes buffered publishes)."""
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+            self._refresh_task = None
         if self._nc is None:
             return
         try:

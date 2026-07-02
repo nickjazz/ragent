@@ -146,6 +146,7 @@ async def test_connect_exchanges_jwt_then_opens_connection(monkeypatch) -> None:
 
     class _NC:
         async def publish(self, subject: str, data: bytes) -> None: ...
+        async def drain(self) -> None: ...
 
     async def _fake_connect(servers, **opts):  # noqa: ANN001
         opened["servers"] = servers
@@ -169,6 +170,7 @@ async def test_connect_exchanges_jwt_then_opens_connection(monkeypatch) -> None:
     assert isinstance(sig, bytes) and sig  # signs the nonce → non-empty base64
     # The ephemeral public key (U…) was sent to the auth service.
     assert isinstance(opened["public_key"], str) and opened["public_key"].startswith("U")
+    await pub.close()  # stop the refresh task the successful connect spawned
 
 
 async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
@@ -203,6 +205,123 @@ async def test_connect_is_bounded_by_a_timeout_when_nats_hangs(monkeypatch) -> N
     assert elapsed < 1.0  # bounded by connect_timeout_seconds, not nats-py's own retry loop
     assert pub._nc is None  # noqa: SLF001 — degraded to snapshot-only
     pub.publish("alice", {"x": 1})  # still a no-op
+
+
+async def test_reconnect_presents_a_refreshed_jwt(monkeypatch) -> None:
+    # Platform app JWTs expire in ~1 minute. nats-py re-invokes user_jwt_cb on every
+    # (re)connect handshake, so the publisher keeps the stored JWT fresh in a
+    # background task (same ephemeral keypair, new token) — a reconnect after expiry
+    # then self-heals instead of re-presenting the dead boot-time token forever.
+    jwts = iter(["jwt.v1", "jwt.v2", "jwt.v3", "jwt.v4"])
+
+    async def _fake_fetch(self, public_key):  # noqa: ANN001
+        return next(jwts)
+
+    opened: dict[str, object] = {}
+
+    class _NC:
+        async def drain(self) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _NC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    await pub.connect(asyncio.get_running_loop())
+    assert opened["opts"]["user_jwt_cb"]() == b"jwt.v1"  # boot-time token first
+
+    await asyncio.sleep(0.05)  # let the refresh task tick
+    assert opened["opts"]["user_jwt_cb"]() != b"jwt.v1"  # reconnects now get a fresh one
+    await pub.close()
+
+
+async def test_jwt_refresh_failure_keeps_last_good_jwt(monkeypatch) -> None:
+    # A refresh blip (auth service down) must not kill the loop or blank the token:
+    # keep serving the last good JWT and retry next tick, logging the failure.
+    calls = {"n": 0}
+
+    async def _fetch(self, public_key):  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "jwt.v1"
+        raise ConnectionError("auth down")
+
+    opened: dict[str, object] = {}
+
+    class _NC:
+        async def drain(self) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _NC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    with structlog.testing.capture_logs() as logs:
+        await pub.connect(asyncio.get_running_loop())
+        deadline = time.monotonic() + 2.0  # poll, not a fixed sleep — no CI-starvation flake
+        while calls["n"] < 3 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    assert opened["opts"]["user_jwt_cb"]() == b"jwt.v1"  # last good token survives
+    assert calls["n"] >= 3  # kept retrying after the failure
+    assert any(log.get("event") == "nats.jwt_refresh_failed" for log in logs)
+    await pub.close()
+
+
+async def test_close_stops_the_jwt_refresh_task(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    async def _fetch(self, public_key):  # noqa: ANN001
+        calls["n"] += 1
+        return f"jwt.v{calls['n']}"
+
+    class _NC:
+        async def drain(self) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        return _NC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    await pub.connect(asyncio.get_running_loop())
+    await pub.close()
+    settled = calls["n"]
+    await asyncio.sleep(0.05)
+    assert calls["n"] == settled  # no further exchanges after shutdown
+
+
+async def test_connect_never_gives_up_reconnecting(monkeypatch) -> None:
+    # A backend pod lives for weeks; nats-py's default gives up permanently after
+    # ~60 attempts (~2 min). With the JWT kept fresh, infinite retries are safe and
+    # required — otherwise any outage longer than 2 minutes means snapshot-only
+    # until the pod restarts.
+    opened: dict[str, object] = {}
+
+    class _NC:
+        async def drain(self) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _NC()
+
+    async def _fake_fetch(self, public_key):  # noqa: ANN001
+        return "the.nats.jwt"
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    pub = _publisher()
+
+    await pub.connect(asyncio.get_running_loop())
+    assert opened["opts"]["max_reconnect_attempts"] == -1
+    await pub.close()
 
 
 async def test_connect_skips_exchange_when_servers_is_whitespace_only(monkeypatch) -> None:

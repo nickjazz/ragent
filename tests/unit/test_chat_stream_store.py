@@ -221,6 +221,22 @@ def test_has_unread_fail_soft_on_redis_error() -> None:
     assert store.has_unread("a", "t") is False
 
 
+def test_clear_unread_reports_whether_a_flag_was_cleared() -> None:
+    # The DEL count is free change detection: callers broadcast the cleared-dot
+    # delta only when a flag actually existed, so repeat mark-reads stay silent.
+    store = _store()
+    store.mark_unread("alice", "t")
+    assert store.clear_unread("alice", "t") is True  # actually cleared
+    assert store.clear_unread("alice", "t") is False  # already clear → no-op
+
+
+def test_clear_unread_fail_soft_on_redis_error() -> None:
+    redis = MagicMock()
+    redis.delete.side_effect = redis_lib.ConnectionError("down")
+    store = ChatStreamStore(redis)
+    assert store.clear_unread("a", "t") is False  # safe default: no broadcast
+
+
 def test_status_many_batches_running_and_unread() -> None:
     # t1 in-flight (spinner), t2 unread completed (dot), t3 idle/clean.
     store = _store()

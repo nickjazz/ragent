@@ -324,13 +324,15 @@ def create_chatagent_v3_router(
             has seen the session's latest reply. Clears the unread flag AND publishes
             the cleared dot over NATS so the user's other tabs/devices update in
             realtime without a refetch. Idempotent — clearing an already-read session
-            is a harmless no-op. This is the ONLY path that marks a session read; the
-            backend no longer infers it from GET /session or a stream draining to eos.
+            is a harmless (and silent) no-op: the broadcast only fires when a flag was
+            actually cleared, so per-view repeat calls don't spam no-op deltas. This is
+            the ONLY path that marks a session read; the backend no longer infers it
+            from GET /session or a stream draining to eos.
             """
             user_id = x_user_id or "anonymous"
             if chat_stream_store is not None:
-                chat_stream_store.clear_unread(user_id, session)
-                if nats_publisher is not None:
+                cleared = chat_stream_store.clear_unread(user_id, session)
+                if cleared and nats_publisher is not None:
                     nats_publisher.publish(user_id, {"session": session, "hasNewReply": False})
             return Response(status_code=204)
 

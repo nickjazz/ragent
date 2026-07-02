@@ -189,20 +189,28 @@ class ChatStreamStore:
     def mark_unread(self, user_id: str, thread_id: str) -> None:
         """Flag a completed reply the user has not opened yet (fail-soft).
 
-        A plain presence flag, not a timestamp: cleared on the next ``GET /session``,
-        so ``has_unread`` is a simple ``EXISTS`` with no clock comparison.
+        A plain presence flag, not a timestamp — ``has_unread`` is a simple
+        ``EXISTS`` with no clock comparison. Cleared only by the client's explicit
+        mark-read (``POST /session/read``); the backend never infers "read".
         """
         try:
             self._redis.set(self._unread_key(user_id, thread_id), "1", ex=self._unread_ttl)
         except redis_lib.RedisError as exc:
             logger.warning("chat_stream_store.unavailable", op="mark_unread", error=str(exc))
 
-    def clear_unread(self, user_id: str, thread_id: str) -> None:
-        """Drop the new-reply flag once the user opens the session (fail-soft)."""
+    def clear_unread(self, user_id: str, thread_id: str) -> bool:
+        """Drop the new-reply flag on the client's explicit mark-read (fail-soft).
+
+        Returns True only when a flag was actually deleted — the DEL count is free
+        change detection, letting the caller skip broadcasting a no-op cleared-dot
+        delta on repeat mark-reads. False on a Redis blip (safe default: no
+        broadcast; the flag, if any, survives for the next attempt).
+        """
         try:
-            self._redis.delete(self._unread_key(user_id, thread_id))
+            return bool(self._redis.delete(self._unread_key(user_id, thread_id)))
         except redis_lib.RedisError as exc:
             logger.warning("chat_stream_store.unavailable", op="clear_unread", error=str(exc))
+            return False
 
     def has_unread(self, user_id: str, thread_id: str) -> bool:
         try:

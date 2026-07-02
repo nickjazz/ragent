@@ -255,7 +255,13 @@ onto its `sessionList` snapshot. ragent connects to the **shared platform NATS**
 backend **app auth flow** (mints an ephemeral Ed25519 nkey, POSTs the auth service
 `<NATS_AUTH_SERVICE_URL>/api/v1/auth` with `{token_type:"app", token:<client_secret>,
 namespace:<namespace>, publicKey}` for a NATS user JWT, then signs the connect nonce with
-the seed — mirroring mco-clean's frontend `tsso` flow with the app payload). This keeps the
+the seed — mirroring mco-clean's frontend `tsso` flow with the app payload). The platform's
+app JWTs are **short-lived (~1 minute)**, so a background task re-runs the exchange every
+`NATS_JWT_REFRESH_SECONDS` (default 30s, same keypair) and the connect callback always
+presents the latest token — nats-py re-invokes it on every (re)connect handshake, so a
+reconnect after token expiry self-heals. Reconnect attempts are unbounded
+(`max_reconnect_attempts=-1`): a backend pod must ride out NATS outages longer than
+nats-py's ~2-minute default give-up window. This keeps the
 delta off ragent's HTTP/threadpool path entirely and uses NATS's native cross-pod
 fan-out (any API replica's producer reaches every subscriber). Payloads mirror the
 list fields:
@@ -267,7 +273,8 @@ list fields:
   touched the unread flag; an absolute `false` would wipe an earlier still-unread
   reply's dot from live subscribers,
 - `{session, hasNewReply:false}` when the client explicitly marks the session read
-  (`POST /session/read`).
+  (`POST /session/read`) **and a flag was actually cleared** — a repeat mark-read of
+  an already-read session is a silent no-op (no event noise from per-view calls).
 
 Deltas are **partial**: an event only carries the fields that transition actually
 changed, and the client merges per-field over its snapshot state.

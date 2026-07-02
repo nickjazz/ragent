@@ -501,6 +501,7 @@ def build_container() -> Container:
             ),
             verify_certs=_bool_env("NATS_AUTH_VERIFY_CERTS", True),
             connect_timeout_seconds=_float_env("NATS_CONNECT_TIMEOUT_SECONDS", 10.0),
+            jwt_refresh_seconds=_float_env("NATS_JWT_REFRESH_SECONDS", 30.0),
         )
         chatagent_agent_factory = _build_chatagent_agent_factory(
             http,
