@@ -256,10 +256,13 @@ backend **app auth flow** (mints an ephemeral Ed25519 nkey, POSTs the auth servi
 `<NATS_AUTH_SERVICE_URL>/api/v1/auth` with `{token_type:"app", token:<client_secret>,
 namespace:<namespace>, publicKey}` for a NATS user JWT, then signs the connect nonce with
 the seed — mirroring mco-clean's frontend `tsso` flow with the app payload). The platform's
-app JWTs are **short-lived (~1 minute)**, so a background task re-runs the exchange every
-`NATS_JWT_REFRESH_SECONDS` (default 30s, same keypair) and the connect callback always
-presents the latest token — nats-py re-invokes it on every (re)connect handshake, so a
-reconnect after token expiry self-heals. Reconnect attempts are unbounded
+app JWTs are **short-lived (~1 minute)** and each exchange is a **one-time key
+registration** (re-POSTing an already-registered publicKey is rejected), so a background
+task re-runs the exchange every `NATS_JWT_REFRESH_SECONDS` (default 30s) with a **fresh
+ephemeral keypair** — the same per-connection semantics as the frontend — swapping the
+(keypair, token) pair atomically; the connect callbacks always present the latest matched
+pair, and nats-py re-invokes them on every (re)connect handshake, so a reconnect after
+token expiry self-heals. Reconnect attempts are unbounded
 (`max_reconnect_attempts=-1`): a backend pod must ride out NATS outages longer than
 nats-py's ~2-minute default give-up window. This keeps the
 delta off ragent's HTTP/threadpool path entirely and uses NATS's native cross-pod

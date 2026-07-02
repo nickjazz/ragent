@@ -210,8 +210,8 @@ async def test_connect_is_bounded_by_a_timeout_when_nats_hangs(monkeypatch) -> N
 async def test_reconnect_presents_a_refreshed_jwt(monkeypatch) -> None:
     # Platform app JWTs expire in ~1 minute. nats-py re-invokes user_jwt_cb on every
     # (re)connect handshake, so the publisher keeps the stored JWT fresh in a
-    # background task (same ephemeral keypair, new token) — a reconnect after expiry
-    # then self-heals instead of re-presenting the dead boot-time token forever.
+    # background task (fresh ephemeral keypair per exchange) — a reconnect after
+    # expiry then self-heals instead of re-presenting the dead boot-time token.
     jwts = iter(["jwt.v1", "jwt.v2", "jwt.v3", "jwt.v4"])
 
     async def _fake_fetch(self, public_key):  # noqa: ANN001
@@ -238,13 +238,56 @@ async def test_reconnect_presents_a_refreshed_jwt(monkeypatch) -> None:
     await pub.close()
 
 
+async def test_jwt_refresh_mints_a_fresh_keypair_per_exchange(monkeypatch) -> None:
+    # The platform auth flow treats each exchange as a one-time key registration
+    # (mirroring the frontend: a NEW ephemeral keypair per exchange) — re-POSTing an
+    # already-registered publicKey is rejected, which would strand the boot-time JWT
+    # and turn every post-TTL reconnect into an auth failure. Each refresh must mint
+    # a fresh keypair and swap (keypair, jwt) as a matched pair.
+    seen_keys: list[str] = []
+
+    async def _fake_fetch(self, public_key):  # noqa: ANN001
+        seen_keys.append(public_key)
+        return f"jwt.for.{public_key[:8]}"
+
+    opened: dict[str, object] = {}
+
+    class _NC:
+        async def drain(self) -> None: ...
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _NC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    await pub.connect(asyncio.get_running_loop())
+    deadline = time.monotonic() + 2.0
+    while len(seen_keys) < 2 and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+    assert len(set(seen_keys)) == len(seen_keys) >= 2  # every exchange used a new key
+    # The presented credentials stay a matched pair: the served JWT is the one issued
+    # for the keypair that signature_cb currently signs with.
+    current_key = pub._keypair.public_key.decode()  # noqa: SLF001
+    assert current_key == seen_keys[-1]
+    assert opened["opts"]["user_jwt_cb"]() == f"jwt.for.{current_key[:8]}".encode()
+    sig = opened["opts"]["signature_cb"]("nonce")
+    assert isinstance(sig, bytes) and sig
+    await pub.close()
+
+
 async def test_jwt_refresh_failure_keeps_last_good_jwt(monkeypatch) -> None:
     # A refresh blip (auth service down) must not kill the loop or blank the token:
     # keep serving the last good JWT and retry next tick, logging the failure.
     calls = {"n": 0}
+    keys: list[str] = []
 
     async def _fetch(self, public_key):  # noqa: ANN001
         calls["n"] += 1
+        keys.append(public_key)
         if calls["n"] == 1:
             return "jwt.v1"
         raise ConnectionError("auth down")
@@ -269,6 +312,9 @@ async def test_jwt_refresh_failure_keeps_last_good_jwt(monkeypatch) -> None:
             await asyncio.sleep(0.01)
 
     assert opened["opts"]["user_jwt_cb"]() == b"jwt.v1"  # last good token survives
+    # The PAIR survives, not just the token: a failed exchange must not swap in the
+    # newly-minted key (that would present a mismatched (new key, old JWT) handshake).
+    assert pub._keypair.public_key.decode() == keys[0]  # noqa: SLF001
     assert calls["n"] >= 3  # kept retrying after the failure
     assert any(log.get("event") == "nats.jwt_refresh_failed" for log in logs)
     await pub.close()

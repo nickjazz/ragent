@@ -17,11 +17,14 @@ or connect failure degrades to "snapshot only" (the durable truth is the Redis
 run-pointer + unread flag the client re-reads from `sessionList`) and never aborts
 boot or fails an HTTP request.
 
-The platform's app JWTs are short-lived (~1 minute), so a background task re-runs
-the exchange every ``jwt_refresh_seconds`` (same ephemeral keypair, new token) and
-``user_jwt_cb`` always serves the latest one — nats-py re-invokes it on every
-(re)connect handshake, so a reconnect after token expiry self-heals instead of
-re-presenting the dead boot-time JWT forever. Reconnect attempts are unbounded
+The platform's app JWTs are short-lived (~1 minute) and each exchange is a
+one-time key registration (re-POSTing an already-registered publicKey is
+rejected), so a background task re-runs the exchange every ``jwt_refresh_seconds``
+with a FRESH ephemeral keypair — mirroring the frontend's per-connection flow —
+and swaps the (keypair, jwt) pair atomically. ``user_jwt_cb``/``signature_cb``
+read the instance attrs and nats-py re-invokes them on every (re)connect
+handshake, so a reconnect after token expiry self-heals instead of re-presenting
+the dead boot-time credentials forever. Reconnect attempts are unbounded
 (``max_reconnect_attempts=-1``): a backend pod lives for weeks and must ride out
 NATS outages longer than nats-py's ~2-minute default give-up window.
 """
@@ -172,19 +175,27 @@ class NatsSessionPublisher:
             self._nc = None
 
     async def _refresh_jwt_forever(self) -> None:
-        """Keep ``self._jwt`` fresh so any reconnect handshake presents a live token.
+        """Keep the presented credentials fresh so reconnect handshakes stay live.
 
-        Re-runs the auth exchange with the SAME ephemeral keypair every
-        ``jwt_refresh_seconds`` — only the token rotates, so ``signature_cb`` stays
-        valid. A failed refresh keeps the last good token and retries next tick
-        (fail-soft): one blip only matters if a reconnect lands inside it.
+        Every ``jwt_refresh_seconds``, mint a NEW ephemeral keypair and exchange it
+        for its token — the auth service treats each exchange as a one-time key
+        registration (same as the frontend's per-connection flow), so re-POSTing an
+        already-registered publicKey is rejected. The (keypair, jwt) pair is swapped
+        with no await between the two assignments, and nats-py's handshake reads
+        both callbacks synchronously — so a reconnect can never observe a mixed
+        (old key, new token) pair. A failed exchange keeps the last good pair and
+        retries next tick (fail-soft).
         """
         while True:
             await asyncio.sleep(self._jwt_refresh_seconds)
             try:
-                self._jwt = await self._fetch_app_jwt(self._keypair.public_key.decode())
-            except Exception as exc:  # noqa: BLE001 — keep last good JWT, retry next tick
+                keypair = _new_user_keypair()
+                jwt = await self._fetch_app_jwt(keypair.public_key.decode())
+            except Exception as exc:  # noqa: BLE001 — keep last good pair, retry next tick
                 logger.warning("nats.jwt_refresh_failed", error_type=type(exc).__name__)
+                continue
+            self._keypair = keypair
+            self._jwt = jwt
 
     def publish(self, user_id: str, event: dict[str, Any]) -> None:
         """Fire-and-forget publish, callable from any thread (incl. the producer pool).
