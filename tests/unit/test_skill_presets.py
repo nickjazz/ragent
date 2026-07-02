@@ -48,6 +48,11 @@ def test_skill_manager_preset_is_registered():
     # the persona lists the full CRUD tool family so the agent calls them
     for tool in ("create_skill", "list_skills", "get_skill", "update_skill", "delete_skill"):
         assert tool in p.instructions
+    # load-bearing teachings: users identify skills by name (never by id), and
+    # an edit is fetch-first (get_skill) so full-replace never burdens the user.
+    assert "skill_name" in p.instructions
+    assert "get_skill first" in p.instructions
+    assert "NEVER ask the user for a skill_id" in p.instructions
 
 
 async def test_list_pins_presets_before_user_skills():

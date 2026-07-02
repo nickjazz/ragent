@@ -408,8 +408,13 @@ complete skills (name / description / instructions) from the user's intent —
 proposing a first version rather than interrogating field by field — and to
 manage existing skills by calling the MCP tools `create_skill` / `list_skills` /
 `get_skill` / `update_skill` / `delete_skill` (targeting skills by the **name**
-the user said — via `skill_name` — never interrogating the user for a
-`skill_id`; confirming before overwrite/delete, and refusing to mutate
+the user said — via `skill_name`, falling back to a loose match over
+`list_skills` — never interrogating the user for a `skill_id`; **edits are
+fetch-first**: the persona's edit recipe is get_skill → draft the changed
+fields itself (even for vague asks like "make the description shorter") →
+confirm only the changed fields as old → new → update_skill with unchanged
+fields carried over verbatim, so the tool's full-replace contract never
+burdens the user; confirming before overwrite/delete, and refusing to mutate
 read-only built-ins). Adding more presets later =
 one entry in the registry (no migration, no per-user seeding). Constraints: a user skill may not take a
 preset's `name` (case-insensitive, matching the DB's utf8mb4 collation → `409
