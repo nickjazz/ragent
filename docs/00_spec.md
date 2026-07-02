@@ -229,9 +229,9 @@ Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rat
 
 #### 3.4.9 `POST /chatagent/v3/attachments/upload`, `GET/DELETE /chatagent/v3/attachments/{attachmentId}`, `GET /chatagent/v3/attachments`, `GET /chatagent/v3/attachments/mine` — in-conversation file attachments
 
-> Full spec: [docs/spec/chat_attachments.md](spec/chat_attachments.md) — MIME allow-list, unprotect whitelist, encrypted AST storage (KEK/DEK), `chat_attachment` pipeline, async worker processing + polling contract (T-CAT.W2, spec §7), `<attachments>` persistence in `<hidden>`, reconstruction paths (live POST / session history; Redis reconnect needs no attachment-specific code — see spec §8), deletion + cross-thread listing (T-CAT.W11, spec §8.1).
+> Full spec: [docs/spec/chat_attachments.md](spec/chat_attachments.md) — MIME allow-list, `session_documents` link table, ingest pipeline, status mapping, metadata-only `<attachments>` block, Anti-IDOR ownership, deletion cascade (T-CAT.R1/R2).
 
-Lets a user attach a file to a `/chatagent/v3` turn. `POST .../upload` validates MIME + size, stores raw bytes (MinIO), writes a `chat_attachments` row (`UPLOADED`), and enqueues `attachment.process` — returning `202` with `attachmentId` immediately (mirrors `POST /ingest/v1`). The worker (`ragent.worker`) then runs the `chat_attachment` pipeline (load → optional unprotect → AST build), encrypts both AST variants (AES-256-GCM, process-wide DEK unwrapped from `RAGENT_KEK_BASE64`/`RAGENT_ENCRYPTED_DEK_BASE64` at startup), writes artifacts, and promotes the row to `READY`/`FAILED`. Clients poll `GET .../attachments/{attachmentId}` (mirrors `GET /ingest/v1/{id}`) for `status`/`errorCode`/`errorReason`; the list endpoint returns the same fields. `GET .../attachments/mine` lists every attachment the caller has uploaded across all threads. `DELETE .../attachments/{attachmentId}` removes both the storage objects and DB rows (`204`/`404`, ownership-scoped); `DELETE /chatagent/v3/session` cascades the same deletion to every attachment in the session once the upstream session delete succeeds. `POST /chatagent/v3` resolves `attachment_ids` into an `<attachments>` block inside the existing `<hidden>` preamble, folded into the outbound upstream message before the run starts; `GET /chatagent/v3/reconnect` needs no attachment-specific code (it only replays buffered upstream *response* frames, which never carry `<hidden>` content), and session-history replay re-extracts the block from the persisted turn the same way it already does for `<context>`/`<state>`.
+Lets a user attach a file to a `/chatagent/v3` turn. `POST .../upload` validates MIME + size, then delegates to the standard `IngestService` pipeline (`source_app=chat_attachment`, unique `source_id` per upload disabling supersede) and creates a `session_documents` link row — returning `202` with `attachmentId` (= `document_id`) immediately; unauthenticated callers receive `403 AUTH_REQUIRED`. The standard ingest worker processes the file (load → optional unprotect → chunk → embed → ES `chunks_v1`) and promotes the `documents` row to `READY`/`FAILED`. Clients poll `GET .../attachments/{attachmentId}` for `status`/`errorCode`/`errorReason`; `status` maps `PENDING`/`DELETING` → `PROCESSING`, passes `READY`/`FAILED`/`UPLOADED` through. `GET .../attachments/mine` lists every attachment the caller has uploaded across all threads. `DELETE .../attachments/{attachmentId}` removes ES chunks + MinIO objects + DB rows (`204`/`404`, session-ownership-scoped). `DELETE /chatagent/v3/session` cascades to every attachment in the session. `POST /chatagent/v3` resolves `attachment_ids` (or session history when omitted/empty/null) via `AttachmentContextResolver` into a **metadata-only** `<attachments>` block — `[{"documentId":…,"filename":…,"uploadedAt":…}]` — never injecting file content; the LLM is instructed to call the `/mcp/v2` `retrieve` tool autonomously. Sessions with no uploaded files receive no block and no instruction (zero overhead).
 
 ---
 
@@ -363,7 +363,39 @@ Per-user, owner-isolated CRUD over reusable instruction presets, injected into a
 
 All business paths carry a `/v<N>` version segment (§API Endpoint Naming, `00_rule.md`). Covers ingest (incl. v2 JSON-only request override), ops, retrieve, chat, feedback, mcp, health/metrics probes, and the embedding-lifecycle admin routes.
 
-> Full endpoint table + request/response shapes: [`docs/spec/endpoints.md`](spec/endpoints.md)
+| Method | Path | P1 Auth | Request | Response |
+|---|---|---|---|---|
+| POST   | `/ingest/v1`               | `X-User-Id` | **JSON** (v2, see override above) | `202 { document_id }` |
+| GET    | `/ingest/v1/{id}`          | `X-User-Id` | — | `200 { status, attempt, updated_at }` |
+| GET    | `/ingest/v1?after=&limit=&source_id=&source_app=` | `X-User-Id` | — | `200 { items, next_cursor }` (limit ≤ 100; ordered `document_id DESC`; `source_id`/`source_app` are optional exact-match filters) |
+| DELETE | `/ingest/v1/{id}`          | `X-User-Id` | — | `204` idempotent |
+| POST   | `/ingest/v1/{id}/rerun`    | `X-User-Id` | — | `202 { document_id }` — manual re-dispatch of `ingest.pipeline` for non-READY/non-DELETING rows; `404 INGEST_NOT_FOUND` / `409 INGEST_NOT_RERUNNABLE` per S41. |
+| POST   | `/ingest/v1/upload`        | `X-User-Id` | `multipart/form-data` (server stages to `__default__` MinIO; identical downstream to inline) | `202 { document_id }` |
+| POST   | `/retrieve/v1`             | `X-User-Id` | §3.4.4 schema (`query` required; rest default) | `200 { chunks[] }` per §3.4.4 |
+| POST   | `/retrieve/v2`             | `X-User-Id` | `{ query, document_id_list: [str, …] (min 1), top_k?, min_score? }` | `200 { chunks[] }` — document-scoped retrieval; `403 DOCUMENT_FORBIDDEN` if any id is unknown or not owned by the caller; `422` if `document_id_list` absent/empty; unauthenticated → `403 DOCUMENT_FORBIDDEN`. |
+| POST   | `/chat/v1`                 | `X-User-Id` | §3.4.1 schema (`messages` required; rest default) | `200 application/json` per §3.4.2 |
+| POST   | `/chat/v1/stream`          | `X-User-Id` | §3.4.1 schema | `text/event-stream` per §3.4.3 (`data: {type:delta\|done\|error}`) |
+| POST   | `/feedback/v1`             | `X-User-Id` | §3.4.5 schema | `204` on success; `401`/`410`/`422` `application/problem+json` per §3.4.5. |
+| POST   | `/mcp/v1`               | `<RAGENT_USER_ID_HEADER>` (P1) / `<RAGENT_JWT_HEADER>` (P2) | JSON-RPC 2.0 envelope per §3.8 | `200` with JSON-RPC response envelope; `204` for `notifications/*`. Auth failure (401) returns `application/problem+json` per §3.8.1 (transport-layer). |
+| GET    | `/livez`                | none        | — | `200 {"status":"ok"}` — process up; no dependency probes |
+| GET    | `/startupz`             | none        | — | `200 {"status":"ok"}` once all probes have been green at least once since boot; `503` until then. Latch: flips permanently to ready after first green `/readyz` sweep. |
+| GET    | `/readyz`               | none        | — | `200` if all dep probes pass; else `503 application/problem+json` listing failed deps. Probes: **MariaDB** (`SELECT 1`), **ES** (`GET /_cluster/health` + `analysis-icu` plugin loaded + every `resources/es/*.json` index exists; B26, I5), **Redis broker & rate-limiter** (`PING` against active topology per `REDIS_MODE`; B27), **MinIO** (`ListBuckets`). Each probe ≤ 2 s. |
+| GET    | `/metrics`              | none        | — | `200 text/plain; version=0.0.4` — Prometheus exposition (counters/histograms in §3.7) |
+
+Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (permission, OpenFGA-backed) — see §3.5. ES queries remain permission-blind in every phase.
+
+**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/API.md §Embedding Model Lifecycle`](API.md#embedding-model-lifecycle-admin):
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/embedding/v1/promote` | `X-User-Id` | Open migration; PUT ES mapping + enable dual-write → `200 {state:"CANDIDATE"}` |
+| POST | `/embedding/v1/cutover` | `X-User-Id` | Switch reads to candidate (subject to preflight) → `200 {state:"CUTOVER"}` |
+| POST | `/embedding/v1/rollback` | `X-User-Id` | Revert reads to stable → `200 {state:"CANDIDATE"}` |
+| POST | `/embedding/v1/commit` | `X-User-Id` | Promote candidate to stable; retire old field → `200 {state:"IDLE"}` |
+| POST | `/embedding/v1/abort` | `X-User-Id` | Drop candidate → `200 {state:"IDLE"}` |
+| POST | `/embedding/v1/backfill` | `X-User-Id` | Enqueue backfill task → `200 {state, queued}` |
+| GET  | `/embedding/v1/state` | `X-User-Id` | Registry snapshot → `200 {stable, candidate, read, retired}` |
+| GET  | `/embedding/v1/cutover/preflight` | `X-User-Id` | Run gates without action → `200 {pass, gates}` |
 
 ### 4.1.1 Error Response Schema (B5)
 

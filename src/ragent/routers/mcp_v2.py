@@ -1,4 +1,4 @@
-"""MCP server router — `POST /mcp/v2` JSON-RPC 2.0 (spec §3.8.6).
+"""MCP server router — `POST /mcp/v2` JSON-RPC 2.0 (spec §3.8).
 
 Sole tool: the document-scoped `retrieve` (wraps POST /retrieve/v2). v1's
 corpus-wide retrieve and create_skill are deliberately NOT carried over —
