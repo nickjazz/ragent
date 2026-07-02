@@ -28,6 +28,7 @@ from ragent.pipelines.retrieve.hydrator import (
 )
 from ragent.pipelines.retrieve.joiner import (
     _HAYSTACK_JOIN_MODE,
+    build_document_id_filter,
     build_es_filters,
     dedupe_by_document,
     doc_to_source_entry,
@@ -76,6 +77,7 @@ __all__ = [
     "DEFAULT_MIN_SCORE",
     "_VALID_MODES",
     # joiner
+    "build_document_id_filter",
     "build_es_filters",
     "dedupe_by_document",
     "doc_to_source_entry",

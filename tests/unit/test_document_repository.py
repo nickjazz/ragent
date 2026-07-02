@@ -131,9 +131,68 @@ async def test_create_with_optional_source_meta():
     assert doc_id == "ID2"
 
 
+async def test_create_with_size_bytes_persists_column():
+    engine, conn = _mock_engine()
+    repo = DocumentRepository(engine)
+    await repo.create(
+        document_id="ID3",
+        create_user="dave",
+        source_id="S3",
+        source_app="chat_attachment",
+        source_title="report.pdf",
+        object_key="chat_attachment_S3_ID3",
+        size_bytes=12345,
+    )
+    stmt = str(conn.execute.call_args.args[0])
+    params = conn.execute.call_args.args[1]
+    assert "size_bytes" in stmt
+    assert params["size_bytes"] == 12345
+
+
+async def test_create_defaults_size_bytes_to_null():
+    engine, conn = _mock_engine()
+    repo = DocumentRepository(engine)
+    await repo.create(
+        document_id="ID4",
+        create_user="erin",
+        source_id="S4",
+        source_app="confluence",
+        source_title="T",
+        object_key="confluence_S4_ID4",
+    )
+    params = conn.execute.call_args.args[1]
+    assert params["size_bytes"] is None
+
+
 # ---------------------------------------------------------------------------
 # get
 # ---------------------------------------------------------------------------
+
+
+async def test_get_by_document_ids_returns_rows_keyed_by_id():
+    rows = [
+        _row(document_id="ID1", size_bytes=10),
+        _row(document_id="ID2", create_user="bob"),
+    ]
+    engine, conn = _mock_engine(rows=rows)
+    repo = DocumentRepository(engine)
+
+    out = await repo.get_by_document_ids(["ID1", "ID2"])
+
+    assert set(out) == {"ID1", "ID2"}
+    assert out["ID1"].size_bytes == 10
+    assert out["ID2"].create_user == "bob"
+    stmt = str(conn.execute.call_args.args[0])
+    assert "document_id IN" in stmt
+    assert conn.execute.call_args.args[1] == {"ids": ["ID1", "ID2"]}
+
+
+async def test_get_by_document_ids_empty_input_short_circuits():
+    engine, conn = _mock_engine()
+    repo = DocumentRepository(engine)
+
+    assert await repo.get_by_document_ids([]) == {}
+    conn.execute.assert_not_called()
 
 
 async def test_get_returns_document_row():

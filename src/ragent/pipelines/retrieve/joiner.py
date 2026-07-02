@@ -22,6 +22,17 @@ def build_es_filters(source_app: str | None, source_meta: str | None) -> dict | 
     return {"operator": "AND", "conditions": clauses}
 
 
+def build_document_id_filter(document_ids: list[str]) -> dict:
+    """Haystack filter restricting retrieval to an explicit document set.
+
+    The `in` operator compiles to an ES `terms` clause inside the retriever's
+    bool.filter context — the isolation guarantee of /retrieve/v2.
+    """
+    # verified against haystack-elasticsearch (see test_retrieve_v2's
+    # _normalize_filters assertion pinning the compiled ES query shape).
+    return {"field": "document_id", "operator": "in", "value": list(document_ids)}
+
+
 def dedupe_by_document(docs: list[Any]) -> list[Any]:
     """Keep one chunk per `document_id`, preserving order; chunks without a
     `document_id` are passed through unchanged."""

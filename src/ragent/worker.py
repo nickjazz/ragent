@@ -22,7 +22,6 @@ if __name__ == "__main__":  # pragma: no cover
             modules=[
                 "ragent.workers.ingest",
                 "ragent.workers.backfill",
-                "ragent.workers.attachment",
             ],
         ),
     )

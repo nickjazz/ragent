@@ -41,7 +41,14 @@ def _request(
     )
 
 
-def _make_caller(http_mock, *, user_id="alice", user_token="tok-1", attachments=None):
+def _make_caller(
+    http_mock,
+    *,
+    user_id="alice",
+    user_token="tok-1",
+    attachments=None,
+    attachments_instruction=None,
+):
     return ADKCaller(
         http_client=http_mock,
         api_url="http://upstream",
@@ -50,6 +57,7 @@ def _make_caller(http_mock, *, user_id="alice", user_token="tok-1", attachments=
         user_id=user_id,
         user_token=user_token,
         attachments=attachments,
+        attachments_instruction=attachments_instruction,
     )
 
 
@@ -200,6 +208,39 @@ def test_stream_deltas_prepends_attachments_block() -> None:
     assert '<attachments>[{"attachmentId": "att-1"}]</attachments>' in message
     assert message.startswith("<hidden>\n<attachments>")
     assert message.endswith("What are the features?")
+
+
+def test_stream_deltas_appends_attachment_instruction_after_hidden_block() -> None:
+    """The retrieve-tool instruction sits AFTER </hidden> (an operating rule
+    for the upstream agent, outside the machine-context wrapper the frontend
+    strips)."""
+    http_mock = MagicMock(spec=httpx.Client)
+    http_mock.send.return_value = _resp_mock([_done_line()])
+    caller = _make_caller(
+        http_mock,
+        attachments='[{"documentId": "DOC1"}]',
+        attachments_instruction="[Instruction] use the retrieve tool",
+    )
+
+    list(caller.stream_deltas(_request(), "m"))
+
+    message = http_mock.build_request.call_args.kwargs["json"]["inputData"]["message"]
+    assert "</hidden>\n[Instruction] use the retrieve tool" in message
+    assert message.endswith("What are the features?")
+
+
+def test_stream_deltas_no_instruction_without_attachments() -> None:
+    """An instruction is never emitted on its own — no attachments, no line."""
+    http_mock = MagicMock(spec=httpx.Client)
+    http_mock.send.return_value = _resp_mock([_done_line()])
+    caller = _make_caller(
+        http_mock, attachments=None, attachments_instruction="[Instruction] stray"
+    )
+
+    list(caller.stream_deltas(_request(), "m"))
+
+    message = http_mock.build_request.call_args.kwargs["json"]["inputData"]["message"]
+    assert "[Instruction]" not in message
 
 
 def test_stream_deltas_resume_turn_does_not_fold_attachments() -> None:

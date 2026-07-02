@@ -64,6 +64,7 @@ class ADKCaller:
         auth: str | None = None,
         timeout: float = 30.0,
         attachments: str | None = None,
+        attachments_instruction: str | None = None,
     ) -> None:
         self._http = http_client
         self._api_url = api_url
@@ -72,15 +73,19 @@ class ADKCaller:
         self._user_token = user_token
         self._headers = {"Authorization": auth} if auth else {}
         self._timeout = timeout
-        # T-CAT.W1 — resolved <attachments> block (JSON string), already
-        # decrypted/fetched by DocumentArtifactResolver before this caller is
-        # constructed (resolution is async; this class is not).
+        # Resolved <attachments> metadata block (JSON string) plus the
+        # retrieve-tool instruction line, both produced by
+        # AttachmentContextResolver before this caller is constructed
+        # (resolution is async; this class is not). The instruction is
+        # emitted AFTER </hidden> — an operating rule for the upstream agent,
+        # not machine context the frontend strips.
         self._attachments = attachments
+        self._attachments_instruction = attachments_instruction
 
     def stream_deltas(
         self, request: RunAgentInput, model: str
     ) -> Generator[UpstreamMessage, None, None]:
-        input_data = _resume_input_data(request, self._attachments)
+        input_data = _resume_input_data(request, self._attachments, self._attachments_instruction)
         if input_data is None:
             # All interrupts were cancelled — no upstream call; the run finishes
             # successfully with an empty body.
@@ -199,7 +204,11 @@ def _parse_message(raw: dict) -> UpstreamMessage:
     )
 
 
-def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -> dict | None:
+def _resume_input_data(
+    request: RunAgentInput,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
+) -> dict | None:
     """Build the upstream `inputData` for a turn.
 
     A normal turn sends `{message}`. A resume turn answers a prior interrupt:
@@ -213,7 +222,7 @@ def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -
     """
     resume = request.resume
     if not resume:
-        return {"message": _compose_message(request, attachments)}
+        return {"message": _compose_message(request, attachments, attachments_instruction)}
     resolved = [item for item in resume if item.status == "resolved"]
     if len(resolved) > 1:
         raise ResumeValidationError("resume accepts at most one resolved interrupt per turn")
@@ -222,7 +231,11 @@ def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -
     return {"lastMessageId": resolved[0].interrupt_id, "message": ""}
 
 
-def _compose_message(request: RunAgentInput, attachments: str | None = None) -> str:
+def _compose_message(
+    request: RunAgentInput,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
+) -> str:
     """Prepend the client-supplied context/state ahead of the user's question.
 
     The upstream is a general, tool-capable agent that owns its own persona and
@@ -239,6 +252,12 @@ def _compose_message(request: RunAgentInput, attachments: str | None = None) -> 
     """
     user_message = _last_user_message(request.messages)
     preamble = _context_preamble(request.context, request.state, attachments)
+    # The attachment instruction rides immediately after the </hidden> block —
+    # it instructs the agent (use the retrieve tool, never guess file content)
+    # and must stay outside the wrapper the frontend strips. Emitted only when
+    # an <attachments> section actually exists.
+    if preamble and attachments and attachments_instruction:
+        preamble = f"{preamble}\n{attachments_instruction}"
     if not preamble:
         return user_message
     if not user_message:

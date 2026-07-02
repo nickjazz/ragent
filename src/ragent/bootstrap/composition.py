@@ -7,17 +7,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ragent.bootstrap.auth_mode import AuthMode, parse_auth_mode
-from ragent.services.chat_attachment_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
-from ragent.services.document_artifact_resolver import (
-    ARTIFACT_MAX_CHARS_DEFAULT,
-    TOTAL_MAX_CHARS_DEFAULT,
-)
+from ragent.services.attachment_ingest_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
 
 if TYPE_CHECKING:
-    from ragent.repositories.attachment_repository import AttachmentRepository
+    from ragent.repositories.session_document_repository import SessionDocumentRepository
     from ragent.routers.chatagent_v3 import AgentFactory
-    from ragent.services.chat_attachment_service import ChatAttachmentService
-    from ragent.services.document_artifact_resolver import DocumentArtifactResolver
+    from ragent.services.attachment_context_resolver import AttachmentContextResolver
+    from ragent.services.retrieve_v2_service import RetrieveV2Service
 from ragent.utility.env import bool_env as _bool_env
 from ragent.utility.env import float_env as _float_env
 from ragent.utility.env import int_env as _int_env
@@ -84,20 +80,13 @@ class Container:
     # T-CAv3.DIP — (user_id, user_token) -> twp_ai.agent.Agent. None when v3 is
     # disabled (chatagent_api_url unset); set whenever v3 is enabled.
     chatagent_agent_factory: AgentFactory | None = None
-    # T-CAT.W1 — in-conversation file attachments. attachment_repository needs
-    # only `engine` (always present) so it is built unconditionally — the
-    # worker uses it to mark a row FAILED even when the feature is disabled.
-    # chat_attachment_service/document_artifact_resolver stay None unless
-    # RAGENT_KEK_BASE64 is set (optional feature, like unprotect_client); the
-    # attachments router only registers and /chatagent/v3 only resolves
-    # attachment_ids when chat_attachment_service is not None.
-    attachment_repository: AttachmentRepository | None = None
-    chat_attachment_service: ChatAttachmentService | None = None
-    document_artifact_resolver: DocumentArtifactResolver | None = None
+    # T-CAT — ingest-backed file attachments (ingest pipeline, session_documents).
+    session_document_repo: SessionDocumentRepository | None = None
+    attachment_context_resolver: AttachmentContextResolver | None = None
+    retrieve_v2_service: RetrieveV2Service | None = None
     attachment_max_size_bytes: int = ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
     # T-CAT.W16 — cap on how many attachment_ids a single /chatagent/v3 turn
-    # may resolve (DocumentArtifactResolver.resolve() does one DB + storage
-    # round-trip per id).
+    # may resolve (one DB round-trip per id in AttachmentContextResolver).
     attachment_max_files: int = 10
 
 
@@ -120,8 +109,11 @@ def _build_chatagent_agent_factory(
     from twp_ai.agents.adk import ADKAgent
 
     from ragent.clients.adk_caller import ADKCaller
+    from ragent.services.attachment_context_resolver import AttachmentContext
 
-    def factory(user_id: str, user_token: str, attachments: str | None = None) -> Agent:
+    def factory(
+        user_id: str, user_token: str, attachments: AttachmentContext | None = None
+    ) -> Agent:
         caller = ADKCaller(
             http_client=http_client,
             api_url=api_url,
@@ -130,7 +122,8 @@ def _build_chatagent_agent_factory(
             user_token=user_token,
             auth=auth,
             timeout=timeout,
-            attachments=attachments,
+            attachments=attachments.files_json if attachments else None,
+            attachments_instruction=attachments.instruction if attachments else None,
         )
         return ADKAgent(caller)
 
@@ -372,22 +365,12 @@ def build_container() -> Container:
     # as inline ingest — share one read so the two Container fields cannot drift.
     inline_max_bytes = _int_env("INGEST_INLINE_MAX_BYTES", INLINE_MAX_BYTES_DEFAULT)
     # Shared by both the attachments router's cheap early check and
-    # ChatAttachmentService's authoritative post-read check (mirrors above).
+    # AttachmentIngestService's authoritative post-read check (mirrors above).
     attachment_max_size_bytes = _int_env(
         "ATTACHMENT_MAX_SIZE_BYTES", ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
     )
-    # T-CAT.W16 — context-window budget gate: DocumentArtifactResolver falls
-    # back to the simplified variant when complete's char_count exceeds this.
-    attachment_artifact_max_chars = _int_env(
-        "ATTACHMENT_ARTIFACT_MAX_CHARS", ARTIFACT_MAX_CHARS_DEFAULT
-    )
-    # T-CAT.W16 — caps the sum of injected attachment content across one
-    # turn (attachment_artifact_max_chars above only bounds a single
-    # attachment); the direct countermeasure to upstream "unterminated
-    # json" truncation reports.
-    attachment_total_max_chars = _int_env("ATTACHMENT_TOTAL_MAX_CHARS", TOTAL_MAX_CHARS_DEFAULT)
     # T-CAT.W16 — cap on attachment_ids per /chatagent/v3 turn (each id costs
-    # one DB + storage round-trip in DocumentArtifactResolver.resolve()).
+    # one DB round-trip in AttachmentContextResolver.resolve()).
     attachment_max_files = _int_env("ATTACHMENT_MAX_FILES", 10)
     retrieval_pipeline = build_retrieval_pipeline(
         document_store=document_store,
@@ -421,51 +404,19 @@ def build_container() -> Container:
             timeout=_float_env("UNPROTECT_TIMEOUT_SECONDS", 30.0),
         )
 
-    # T-CAT.W1 — in-conversation file attachments. attachment_repository only
-    # needs `engine` (always present, MARIADB_DSN is a hard _require()), so it
-    # is built unconditionally — the worker uses it to mark a row FAILED even
-    # when the rest of the feature is disabled (no RAGENT_KEK_BASE64). The
-    # crypto/service stack below stays gated: constructing KeyManager raises
-    # KeyManagerError on an empty/missing KEK, so constructing it
-    # unconditionally would break every existing deployment that hasn't
-    # provisioned the attachment subsystem's keys yet.
-    from ragent.repositories.attachment_repository import AttachmentRepository
+    # T-CAT — ingest-backed file attachments. Always-on: no env gate.
+    from ragent.repositories.session_document_repository import SessionDocumentRepository
+    from ragent.services.attachment_context_resolver import AttachmentContextResolver
+    from ragent.services.retrieve_v2_service import RetrieveV2Service
 
-    attachment_repository = AttachmentRepository(engine=engine)
-    chat_attachment_service: ChatAttachmentService | None = None
-    document_artifact_resolver: DocumentArtifactResolver | None = None
-    kek_b64 = os.environ.get("RAGENT_KEK_BASE64")
-    if kek_b64:
-        from ragent.bootstrap.broker import broker as taskiq_broker
-        from ragent.bootstrap.dispatcher import TaskiqDispatcher
-        from ragent.pipelines.chat_attachment.pipeline import ChatAttachmentPipeline
-        from ragent.security.ast_cipher import ASTCipher
-        from ragent.security.key_manager import KeyManager
-        from ragent.services.chat_attachment_service import ChatAttachmentService
-        from ragent.services.document_artifact_resolver import DocumentArtifactResolver
-        from ragent.storage.minio_document_store import MinIODocumentStore
-
-        key_manager = KeyManager(
-            kek_b64=kek_b64,
-            encrypted_dek_b64=os.environ.get("RAGENT_ENCRYPTED_DEK_BASE64", ""),
-        )
-        ast_cipher = ASTCipher(key_manager)
-        attachment_document_store = MinIODocumentStore(registry=minio_registry)
-        document_artifact_resolver = DocumentArtifactResolver(
-            document_store=attachment_document_store,
-            ast_cipher=ast_cipher,
-            attachment_repository=attachment_repository,
-            artifact_max_chars=attachment_artifact_max_chars,
-            total_max_chars=attachment_total_max_chars,
-        )
-        chat_attachment_service = ChatAttachmentService(
-            document_store=attachment_document_store,
-            ast_cipher=ast_cipher,
-            attachment_repository=attachment_repository,
-            pipeline=ChatAttachmentPipeline(unprotect_client=unprotect_client),
-            dispatcher=TaskiqDispatcher(taskiq_broker),
-            max_size_bytes=attachment_max_size_bytes,
-        )
+    session_document_repo = SessionDocumentRepository(engine=engine)
+    # AttachmentIngestService is built in app.py because it depends on IngestService
+    # which requires the TaskIQ broker (only available in the app factory).
+    attachment_context_resolver = AttachmentContextResolver(
+        session_document_repo=session_document_repo,
+        document_repo=doc_repo,
+    )
+    retrieve_v2_service = RetrieveV2Service(document_repo=doc_repo)
 
     # T8.5a / T-AM.2 — Build the joserfc-based JWKS verifier iff inbound JWT
     # auth is on. OIDC discovery + JWKS are fetched HERE (boot-time) so a
@@ -560,9 +511,9 @@ def build_container() -> Container:
         chat_stream_store=chat_stream_store,
         nats_publisher=nats_publisher,
         chatagent_agent_factory=chatagent_agent_factory,
-        attachment_repository=attachment_repository,
-        chat_attachment_service=chat_attachment_service,
-        document_artifact_resolver=document_artifact_resolver,
+        session_document_repo=session_document_repo,
+        attachment_context_resolver=attachment_context_resolver,
+        retrieve_v2_service=retrieve_v2_service,
         attachment_max_size_bytes=attachment_max_size_bytes,
         attachment_max_files=attachment_max_files,
     )

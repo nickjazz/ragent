@@ -34,8 +34,11 @@ from ragent.services.skill_service import SkillNotFoundError, SkillService
 from ragent.utility.id_gen import new_id
 
 if TYPE_CHECKING:
-    from ragent.services.chat_attachment_service import ChatAttachmentService
-    from ragent.services.document_artifact_resolver import DocumentArtifactResolver
+    from ragent.services.attachment_context_resolver import (
+        AttachmentContext,
+        AttachmentContextResolver,
+    )
+    from ragent.services.attachment_ingest_service import AttachmentIngestService
 
 # Description attached to the injected skill ContextItem so the upstream agent —
 # whose system prompt is told the <hidden> block carries machine-supplied
@@ -50,10 +53,11 @@ logger = structlog.get_logger(__name__)
 # root (closing over the upstream http_client/api_url/ap_name/auth/timeout)
 # and called per request, since the underlying caller carries per-request
 # user/token state and so cannot be injected as a singleton Agent instance.
-# `attachments` is the already-resolved <attachments> JSON block (or None) —
-# resolution is async (DocumentArtifactResolver) and must happen before this
-# call, since the caller/agent chain below it is synchronous.
-AgentFactory = Callable[[str, str, str | None], Agent]
+# `attachments` is the already-resolved AttachmentContext (metadata JSON +
+# retrieve-tool instruction, or None) — resolution is async
+# (AttachmentContextResolver) and must happen before this call, since the
+# caller/agent chain below it is synchronous.
+AgentFactory = Callable[[str, str, "AttachmentContext | None"], Agent]
 
 
 def create_chatagent_v3_router(
@@ -76,8 +80,8 @@ def create_chatagent_v3_router(
     stream_idle_timeout: float = 30.0,
     stream_poll_interval: float = 0.05,
     stream_producer_workers: int = 64,
-    document_artifact_resolver: DocumentArtifactResolver | None = None,
-    chat_attachment_service: ChatAttachmentService | None = None,
+    attachment_context_resolver: AttachmentContextResolver | None = None,
+    attachment_service: AttachmentIngestService | None = None,
     attachment_max_files: int | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/chatagent/v3")
@@ -179,10 +183,18 @@ def create_chatagent_v3_router(
 
             raw_token = request.headers.get(jwt_header.lower()) or ""
             assert agent_factory is not None  # this route only registers when it is
-            attachments_block = None
-            if body.attachment_ids and document_artifact_resolver is not None:
-                attachments_block = await document_artifact_resolver.resolve(body.attachment_ids)
-            agent = agent_factory(user_id, raw_token, attachments_block)
+            # Resolved on EVERY turn (not only when attachment_ids is present):
+            # with no explicit ids the resolver falls back to the session's
+            # uploaded files (latest flagged priority) and returns None when
+            # the session has none — ordinary conversations stay untouched.
+            attachment_context = None
+            if attachment_context_resolver is not None:
+                attachment_context = await attachment_context_resolver.resolve(
+                    session_id=body.thread_id or "",
+                    user_id=user_id,
+                    attachment_ids=body.attachment_ids or None,
+                )
+            agent = agent_factory(user_id, raw_token, attachment_context)
             logger.info("chatagent_v3.request", user_id=user_id)
 
             # No store wired (e.g. Redis down at boot): fall back to the legacy
@@ -426,9 +438,9 @@ def create_chatagent_v3_router(
             # Cascade the local attachment rows/artifacts once the upstream
             # session is confirmed gone. Fail-soft and logged only — a cleanup
             # error here must never mask the (already-sent) upstream result.
-            if chat_attachment_service is not None and response.status_code < 400:
+            if attachment_service is not None and response.status_code < 400:
                 try:
-                    await chat_attachment_service.delete_by_thread(body.session)
+                    await attachment_service.delete_by_session(body.session)
                 except Exception as exc:
                     logger.error(
                         "chatagent_v3.session_delete_attachment_cleanup_failed",
