@@ -830,10 +830,12 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 | Tool | Arguments | Result (`structuredContent`) | Notable errors |
 |---|---|---|---|
 | `create_skill` | `{name, description?, instructions, enabled?}` | `skill = {skill_id, name, description, enabled, readonly}` (brief) | name collision (incl. preset name, case-insensitive) → `SKILL_NAME_CONFLICT` |
-| `list_skills` | `{}` | `skills = [brief]` (presets pinned first; no instructions/timestamps) | — |
-| `get_skill` | `{skill_id}` | `skill = {…brief, instructions, created_at, updated_at}` (full) | foreign/missing id → `SKILL_NOT_FOUND` |
-| `update_skill` | `{skill_id, name, description, instructions, enabled}` (full replace — all write fields required) | full skill | preset id → `SKILL_READONLY`; collision → `SKILL_NAME_CONFLICT`; foreign/missing → `SKILL_NOT_FOUND` |
-| `delete_skill` | `{skill_id}` | `{skill_id, deleted: true}` | preset id → `SKILL_READONLY`; foreign/missing → `SKILL_NOT_FOUND` |
+| `list_skills` | `{}` | `skills = [brief]` (presets pinned first; no instructions/timestamps); `content[0].text` lists `name (skill_id=…)` per skill | — |
+| `get_skill` | `{skill_id \| skill_name}` | `skill = {…brief, instructions, created_at, updated_at}` (full; also rendered into `content[0].text`) | foreign/missing target → `SKILL_NOT_FOUND` |
+| `update_skill` | `{skill_id \| skill_name, name, description, instructions, enabled}` (full replace — all write fields required) | full skill | preset target → `SKILL_READONLY`; collision → `SKILL_NAME_CONFLICT`; foreign/missing → `SKILL_NOT_FOUND` |
+| `delete_skill` | `{skill_id \| skill_name}` | `{skill_id, deleted: true}` (resolved id) | preset target → `SKILL_READONLY`; foreign/missing → `SKILL_NOT_FOUND` |
+
+`get_skill` / `update_skill` / `delete_skill` take **exactly one** of `skill_id` \| `skill_name` (both or neither → `MCP_TOOL_INPUT_INVALID`). A `skill_name` is the skill's current name, matched **case-insensitively** against the caller's own skills (matching the DB's case-insensitive `(user_id, name)` UNIQUE key — at most one match); no match → `SKILL_NOT_FOUND`. On `update_skill`, `skill_name` finds the skill and `name` is the new value, so a rename by name is `{skill_name: "Old", name: "New", …}`.
 
 Example:
 ```json

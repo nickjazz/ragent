@@ -338,18 +338,36 @@ is outside ragent.
 - **`list_skills`** (read): no args; returns
   `structuredContent.skills = [{skill_id, name, description, enabled, readonly}]`
   (briefs — no instructions/timestamps), presets pinned first. `readOnlyHint=true`.
-- **`get_skill`** (read): `{skill_id}` → `structuredContent.skill` (full: brief +
-  `instructions, created_at, updated_at`); a foreign/missing id → `SKILL_NOT_FOUND`.
-  `readOnlyHint=true`.
-- **`update_skill`** (write): full replace `{skill_id, name, description,
-  instructions, enabled}` — **all** write fields required (a full replace, so an
-  omitted field is a schema error, not a partial edit; this prevents an agent
-  from silently blanking `description` or re-enabling a disabled skill) → full
-  skill; a preset id → `SKILL_READONLY`, a name collision → `SKILL_NAME_CONFLICT`,
-  a foreign/missing id → `SKILL_NOT_FOUND`. `readOnlyHint=false`.
-- **`delete_skill`** (write): `{skill_id}` → `structuredContent = {skill_id,
-  deleted:true}`; a preset id → `SKILL_READONLY`, a foreign/missing id →
-  `SKILL_NOT_FOUND`. `readOnlyHint=false`.
+- **`get_skill`** (read): `{skill_id | skill_name}` → `structuredContent.skill`
+  (full: brief + `instructions, created_at, updated_at`); a foreign/missing
+  target → `SKILL_NOT_FOUND`. `readOnlyHint=true`.
+- **`update_skill`** (write): full replace `{skill_id | skill_name, name,
+  description, instructions, enabled}` — **all** write fields required (a full
+  replace, so an omitted field is a schema error, not a partial edit; this
+  prevents an agent from silently blanking `description` or re-enabling a
+  disabled skill) → full skill; a preset target → `SKILL_READONLY`, a name
+  collision → `SKILL_NAME_CONFLICT`, a foreign/missing target → `SKILL_NOT_FOUND`.
+  `readOnlyHint=false`.
+- **`delete_skill`** (write): `{skill_id | skill_name}` → `structuredContent =
+  {skill_id, deleted:true}` (the **resolved** id); a preset target →
+  `SKILL_READONLY`, a foreign/missing target → `SKILL_NOT_FOUND`.
+  `readOnlyHint=false`.
+
+**Name-based targeting:** users know skills by **name**, not by opaque id — so
+`get_skill` / `update_skill` / `delete_skill` accept **exactly one** of
+`skill_id` | `skill_name` (JSON Schema `oneOf`; both or neither →
+`MCP_TOOL_INPUT_INVALID`). A `skill_name` resolves server-side against the
+caller's own skills (presets included), **case-insensitively** — mirroring the
+DB's case-insensitive `(user_id, name)` UNIQUE key, which also guarantees at
+most one match. An unmatched name → `SKILL_NOT_FOUND`. On `update_skill`,
+`skill_name` is the lookup key and `name` is the new value — renaming by name
+is `{skill_name: "Old", name: "New", …}`.
+
+**Text-channel digests:** `list_skills`' `content[0].text` renders one line per
+skill (`- <name> (skill_id=<id>) [readonly|disabled]`), and `get_skill`'s
+renders the full skill including its instructions — so hosts that forward only
+the text channel (not `structuredContent`) still give the calling LLM enough to
+find and edit skills. Mirrors the `retrieve` tool's dual-channel rule.
 
 **Skill-tool error handling:** non-object `arguments` (e.g. `[]`/`""`/`false`)
 → `MCP_TOOL_INPUT_INVALID` (not silently coerced to `{}`); typed SkillService
@@ -389,9 +407,10 @@ a full skill-CRUD persona: its instructions guide the agent to **draft**
 complete skills (name / description / instructions) from the user's intent —
 proposing a first version rather than interrogating field by field — and to
 manage existing skills by calling the MCP tools `create_skill` / `list_skills` /
-`get_skill` / `update_skill` / `delete_skill` (resolving a `skill_id` via
-`list_skills` before any get/update/delete, confirming before overwrite/delete,
-and refusing to mutate read-only built-ins). Adding more presets later =
+`get_skill` / `update_skill` / `delete_skill` (targeting skills by the **name**
+the user said — via `skill_name` — never interrogating the user for a
+`skill_id`; confirming before overwrite/delete, and refusing to mutate
+read-only built-ins). Adding more presets later =
 one entry in the registry (no migration, no per-user seeding). Constraints: a user skill may not take a
 preset's `name` (case-insensitive, matching the DB's utf8mb4 collation → `409
 SKILL_NAME_CONFLICT`) — on `PUT` this is reported only **after** the target row

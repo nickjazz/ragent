@@ -23,8 +23,28 @@ from ragent.schemas.skill import DESCRIPTION_MAX, INSTRUCTIONS_MAX, NAME_MAX
 _SKILL_ID_SCHEMA: dict[str, Any] = {
     "type": "string",
     "minLength": 1,
-    "description": "The target skill's skill_id (obtain it from list_skills).",
+    "description": (
+        "The target skill's skill_id (from list_skills). If you only know the "
+        "skill's name, pass skill_name instead — never ask the user for an id."
+    ),
 }
+
+_SKILL_NAME_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": NAME_MAX,
+    "description": (
+        "The skill's current name, matched case-insensitively against the "
+        "caller's own skills. Use this when the user refers to a skill by name."
+    ),
+}
+
+# get/update/delete identify their target by EXACTLY ONE of skill_id |
+# skill_name (names are unique per owner, so a name resolves deterministically).
+_TARGET_ONE_OF: list[dict[str, Any]] = [
+    {"required": ["skill_id"]},
+    {"required": ["skill_name"]},
+]
 
 # Editable write fields (name/description/instructions/enabled), mirroring
 # `schemas.skill.SkillWriteRequest` bounds. Shared by `create_skill` and
@@ -89,8 +109,9 @@ LIST_SKILLS_TOOL = Tool(
     name="list_skills",
     description=(
         "List the current user's skills (skill_id, name, description, enabled, readonly). "
-        "Built-in skills have readonly=true. Use this to find a skill_id before "
-        "get_skill / update_skill / delete_skill. Returns only the caller's own skills."
+        "Built-in skills have readonly=true. Use this to browse or disambiguate; "
+        "get_skill / update_skill / delete_skill also accept the skill's name directly "
+        "(skill_name). Returns only the caller's own skills."
     ),
     annotations=ToolAnnotations(readOnlyHint=True),
     inputSchema={"type": "object", "additionalProperties": False, "properties": {}},
@@ -105,15 +126,16 @@ LIST_SKILLS_TOOL = Tool(
 GET_SKILL_TOOL = Tool(
     name="get_skill",
     description=(
-        "Fetch one of the current user's skills in full (including its instructions) "
-        "by skill_id. A skill_id not owned by the caller is reported as not found."
+        "Fetch one of the current user's skills in full (including its instructions), "
+        "by skill_id or by its current name (skill_name — case-insensitive). A skill "
+        "not owned by the caller is reported as not found."
     ),
     annotations=ToolAnnotations(readOnlyHint=True),
     inputSchema={
         "type": "object",
         "additionalProperties": False,
-        "required": ["skill_id"],
-        "properties": {"skill_id": _SKILL_ID_SCHEMA},
+        "oneOf": _TARGET_ONE_OF,
+        "properties": {"skill_id": _SKILL_ID_SCHEMA, "skill_name": _SKILL_NAME_SCHEMA},
     },
     outputSchema={
         "type": "object",
@@ -126,7 +148,8 @@ GET_SKILL_TOOL = Tool(
 UPDATE_SKILL_TOOL = Tool(
     name="update_skill",
     description=(
-        "Full-replace one of the current user's skills. This OVERWRITES every field, so "
+        "Full-replace one of the current user's skills, targeted by skill_id or by its "
+        "current name (skill_name — case-insensitive). This OVERWRITES every field, so "
         "you must supply ALL of name, description, instructions, and enabled — omitting a "
         "field is not a partial edit, it replaces that field. Read the current values with "
         "get_skill first so you don't blank the description or re-enable a disabled skill. "
@@ -139,8 +162,15 @@ UPDATE_SKILL_TOOL = Tool(
         "additionalProperties": False,
         # Full replace → every write field is required, so an omitted field can never
         # silently default (description→"" / enabled→true) and clobber existing data.
-        "required": ["skill_id", "name", "description", "instructions", "enabled"],
-        "properties": {"skill_id": _SKILL_ID_SCHEMA, **SKILL_WRITE_PROPERTIES},
+        # The target is exactly one of skill_id | skill_name (oneOf); `name` remains
+        # the NEW name to write, distinct from the skill_name lookup key.
+        "required": ["name", "description", "instructions", "enabled"],
+        "oneOf": _TARGET_ONE_OF,
+        "properties": {
+            "skill_id": _SKILL_ID_SCHEMA,
+            "skill_name": _SKILL_NAME_SCHEMA,
+            **SKILL_WRITE_PROPERTIES,
+        },
     },
     outputSchema={
         "type": "object",
@@ -153,15 +183,16 @@ UPDATE_SKILL_TOOL = Tool(
 DELETE_SKILL_TOOL = Tool(
     name="delete_skill",
     description=(
-        "Permanently delete one of the current user's skills by skill_id. Built-in "
-        "skills cannot be deleted. Confirm with the user before calling."
+        "Permanently delete one of the current user's skills, targeted by skill_id or "
+        "by its current name (skill_name — case-insensitive). Built-in skills cannot "
+        "be deleted. Confirm with the user before calling."
     ),
     annotations=ToolAnnotations(readOnlyHint=False),
     inputSchema={
         "type": "object",
         "additionalProperties": False,
-        "required": ["skill_id"],
-        "properties": {"skill_id": _SKILL_ID_SCHEMA},
+        "oneOf": _TARGET_ONE_OF,
+        "properties": {"skill_id": _SKILL_ID_SCHEMA, "skill_name": _SKILL_NAME_SCHEMA},
     },
     outputSchema={
         "type": "object",

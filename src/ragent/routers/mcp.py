@@ -189,6 +189,34 @@ def _skill_full(resp: Any) -> dict[str, Any]:
     }
 
 
+# Text digests: hosts that forward only content[0].text (not structuredContent)
+# must still let the LLM see names/ids — a bare count would leave the agent
+# unable to find any skill. Mirrors the retrieve tool's dual-channel rule.
+
+
+def _skills_digest(briefs: list[dict[str, Any]]) -> str:
+    if not briefs:
+        return "0 skills."
+    lines = [f"{len(briefs)} skill(s):"]
+    for b in briefs:
+        flags = [
+            flag for flag, on in (("readonly", b["readonly"]), ("disabled", not b["enabled"])) if on
+        ]
+        suffix = f" [{', '.join(flags)}]" if flags else ""
+        lines.append(f"- {_header_field(b['name'])} (skill_id={b['skill_id']}){suffix}")
+    return "\n".join(lines)
+
+
+def _skill_text(full: dict[str, Any]) -> str:
+    state = "enabled" if full["enabled"] else "disabled"
+    flags = f"{state}, readonly" if full["readonly"] else state
+    return (
+        f"Skill '{_header_field(full['name'])}' (skill_id={full['skill_id']}, {flags})\n"
+        f"Description: {_header_field(full['description'])}\n"
+        f"Instructions:\n{full['instructions']}"
+    )
+
+
 def _validate_against(validator: Draft7Validator, args: Any) -> None:
     """Validate `tools/call` arguments against a tool's inputSchema.
 
@@ -333,6 +361,23 @@ def create_mcp_router(
     # (additionalProperties:false rejects a spoofed user_id), then maps
     # SkillService errors onto JSON-RPC envelopes via _raise_skill_tool_error.
 
+    async def _resolve_skill_id(arguments: dict[str, Any], user_id: str) -> str:
+        """Resolve the tool's target to a skill_id.
+
+        Users know skills by NAME, not by opaque id — so get/update/delete accept
+        `skill_name` and resolve it here against the caller's own skills,
+        case-insensitively (mirroring the DB's case-insensitive (user_id, name)
+        UNIQUE key, which also guarantees at most one match). The schema's oneOf
+        ensures exactly one of skill_id | skill_name reaches this point.
+        """
+        if "skill_id" in arguments:
+            return arguments["skill_id"]
+        wanted = arguments["skill_name"].casefold()
+        for skill in await skill_service.list_for_user(user_id=user_id):
+            if skill.name.casefold() == wanted:
+                return skill.skill_id
+        raise SkillNotFoundError(f"skill not found by name: {arguments['skill_name']!r}")
+
     async def _run_create_skill(arguments: dict[str, Any], user_id: str | None) -> dict[str, Any]:
         _require_mcp_user(user_id)
         _validate_against(_CREATE_SKILL_INPUT_VALIDATOR, arguments)
@@ -365,7 +410,7 @@ def create_mcp_router(
             _raise_skill_tool_error("list_skills", exc)
         briefs = [_skill_brief(r) for r in resps]
         return {
-            "content": [{"type": "text", "text": f"{len(briefs)} skill(s)."}],
+            "content": [{"type": "text", "text": _skills_digest(briefs)}],
             "structuredContent": {"skills": briefs},
             "isError": False,
         }
@@ -374,12 +419,14 @@ def create_mcp_router(
         _require_mcp_user(user_id)
         _validate_against(_GET_SKILL_INPUT_VALIDATOR, arguments)
         try:
-            resp = await skill_service.get(user_id=user_id, skill_id=arguments["skill_id"])
+            skill_id = await _resolve_skill_id(arguments, user_id)
+            resp = await skill_service.get(user_id=user_id, skill_id=skill_id)
         except Exception as exc:
             _raise_skill_tool_error("get_skill", exc)
+        full = _skill_full(resp)
         return {
-            "content": [{"type": "text", "text": f"Skill '{resp.name}'."}],
-            "structuredContent": {"skill": _skill_full(resp)},
+            "content": [{"type": "text", "text": _skill_text(full)}],
+            "structuredContent": {"skill": full},
             "isError": False,
         }
 
@@ -391,7 +438,7 @@ def create_mcp_router(
             # them directly — no `.get` default that could silently overwrite.
             resp = await skill_service.update(
                 user_id=user_id,
-                skill_id=arguments["skill_id"],
+                skill_id=await _resolve_skill_id(arguments, user_id),
                 name=arguments["name"],
                 description=arguments["description"],
                 instructions=arguments["instructions"],
@@ -410,8 +457,8 @@ def create_mcp_router(
     async def _run_delete_skill(arguments: dict[str, Any], user_id: str | None) -> dict[str, Any]:
         _require_mcp_user(user_id)
         _validate_against(_DELETE_SKILL_INPUT_VALIDATOR, arguments)
-        skill_id = arguments["skill_id"]
         try:
+            skill_id = await _resolve_skill_id(arguments, user_id)
             await skill_service.delete(user_id=user_id, skill_id=skill_id)
         except Exception as exc:
             _raise_skill_tool_error("delete_skill", exc)

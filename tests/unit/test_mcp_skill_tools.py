@@ -317,6 +317,134 @@ def test_delete_skill_rejects_stray_arguments():
     svc.delete.assert_not_called()
 
 
+# --- name-based targeting (skill_name) ---------------------------------------
+# Users refer to skills by NAME; the agent must never need to interrogate the
+# user for an opaque skill_id. get/update/delete accept exactly one of
+# skill_id | skill_name; a name resolves server-side, case-insensitively
+# (matching the DB's case-insensitive (user_id, name) UNIQUE key).
+
+
+def test_get_skill_by_name_resolves_case_insensitively():
+    svc = AsyncMock()
+    svc.list_for_user = AsyncMock(
+        return_value=[_skill_resp(skill_id="skill-manager", name="skill-manager"), _skill_resp()]
+    )
+    svc.get = AsyncMock(return_value=_skill_resp())
+    client = _client(skill_service=svc)
+    body = _call(client, "get_skill", {"skill_name": "tRANSLATOR"}, headers=ALICE)
+    assert body["result"]["structuredContent"]["skill"]["skill_id"] == "SKILL000000000000000000000"
+    # resolved to the owner's matching skill, then fetched by its real id.
+    assert svc.get.call_args.kwargs == {
+        "user_id": "alice",
+        "skill_id": "SKILL000000000000000000000",
+    }
+
+
+def test_get_skill_by_unknown_name_maps_to_not_found():
+    svc = AsyncMock()
+    svc.list_for_user = AsyncMock(return_value=[_skill_resp()])
+    client = _client(skill_service=svc)
+    body = _call(client, "get_skill", {"skill_name": "no such skill"}, headers=ALICE)
+    assert body["error"]["data"]["error_code"] == "SKILL_NOT_FOUND"
+    svc.get.assert_not_called()
+
+
+def test_get_skill_requires_exactly_one_of_id_or_name():
+    svc = AsyncMock()
+    client = _client(skill_service=svc)
+    both = _call(
+        client,
+        "get_skill",
+        {"skill_id": "SKILL000000000000000000000", "skill_name": "Translator"},
+        headers=ALICE,
+    )
+    neither = _call(client, "get_skill", {}, headers=ALICE)
+    assert both["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    assert neither["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    svc.get.assert_not_called()
+
+
+def test_update_skill_by_name_targets_resolved_id():
+    svc = AsyncMock()
+    svc.list_for_user = AsyncMock(return_value=[_skill_resp()])
+    svc.update = AsyncMock(return_value=_skill_resp(name="Renamed"))
+    client = _client(skill_service=svc)
+    args = {k: v for k, v in _FULL_UPDATE.items() if k != "skill_id"}
+    body = _call(client, "update_skill", {**args, "skill_name": "Translator"}, headers=ALICE)
+    assert body["result"]["isError"] is False
+    assert svc.update.call_args.kwargs["skill_id"] == "SKILL000000000000000000000"
+
+
+def test_update_skill_rejects_both_id_and_name():
+    svc = AsyncMock()
+    client = _client(skill_service=svc)
+    body = _call(client, "update_skill", {**_FULL_UPDATE, "skill_name": "X"}, headers=ALICE)
+    assert body["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    svc.update.assert_not_called()
+
+
+def test_delete_skill_requires_exactly_one_of_id_or_name():
+    # Pins DELETE_SKILL_TOOL's own oneOf — without it, a missing target key would
+    # surface as a KeyError (EXECUTION_FAILED) instead of a schema rejection.
+    svc = AsyncMock()
+    client = _client(skill_service=svc)
+    both = _call(
+        client,
+        "delete_skill",
+        {"skill_id": "SKILL000000000000000000000", "skill_name": "Translator"},
+        headers=ALICE,
+    )
+    neither = _call(client, "delete_skill", {}, headers=ALICE)
+    assert both["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    assert neither["error"]["data"]["error_code"] == "MCP_TOOL_INPUT_INVALID"
+    svc.delete.assert_not_called()
+
+
+def test_delete_skill_by_name_targets_resolved_id():
+    svc = AsyncMock()
+    svc.list_for_user = AsyncMock(return_value=[_skill_resp()])
+    svc.delete = AsyncMock(return_value=None)
+    client = _client(skill_service=svc)
+    body = _call(client, "delete_skill", {"skill_name": "Translator"}, headers=ALICE)
+    # the result reports the RESOLVED id, not the lookup name.
+    assert body["result"]["structuredContent"] == {
+        "skill_id": "SKILL000000000000000000000",
+        "deleted": True,
+    }
+    assert svc.delete.call_args.kwargs["skill_id"] == "SKILL000000000000000000000"
+
+
+# --- text-channel digests ------------------------------------------------------
+# Hosts that forward only content[0].text (not structuredContent) must still
+# give the LLM enough to work with: names + ids in the list, full fields on get.
+
+
+def test_list_skills_text_carries_names_and_ids():
+    svc = AsyncMock()
+    svc.list_for_user = AsyncMock(
+        return_value=[
+            _skill_resp(skill_id="skill-manager", name="skill-manager", readonly=True),
+            _skill_resp(enabled=False),
+        ]
+    )
+    client = _client(skill_service=svc)
+    body = _call(client, "list_skills", {}, headers=ALICE)
+    text = body["result"]["content"][0]["text"]
+    assert "skill-manager" in text
+    assert "SKILL000000000000000000000" in text
+    assert "Translator" in text
+
+
+def test_get_skill_text_carries_instructions():
+    svc = AsyncMock()
+    svc.get = AsyncMock(return_value=_skill_resp())
+    client = _client(skill_service=svc)
+    body = _call(client, "get_skill", {"skill_id": "SKILL000000000000000000000"}, headers=ALICE)
+    text = body["result"]["content"][0]["text"]
+    assert "Translate to English." in text  # instructions usable via text-only hosts
+    assert "SKILL000000000000000000000" in text
+
+
 def test_skill_tool_unexpected_error_wrapped_as_execution_failed():
     # A non-domain backend failure surfaces as a JSON-RPC envelope, not a 500.
     svc = AsyncMock()
