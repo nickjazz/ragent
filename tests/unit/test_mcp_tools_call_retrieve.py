@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft7Validator
 
 from ragent.routers.mcp import create_mcp_router
-from ragent.routers.mcp_tools.retrieve_documents import RETRIEVE_DOCUMENTS_TOOL
+from ragent.routers.mcp_tools.retrieve_documents import MCP_TOP_K_MAX, RETRIEVE_DOCUMENTS_TOOL
 from ragent.services.retrieve_v2_service import RetrieveV2Service
 from tests.helpers import bypass_retrieve_v2_service, make_doc_row, make_retrieve_v2_service
 
@@ -362,6 +362,72 @@ def test_tools_call_retrieve_rejects_unknown_argument(client_factory) -> None:
     body = _call_retrieve(client, {"unknown_field": "bad"})
     assert "error" in body
     assert body["error"]["code"] == -32602
+
+
+def test_tools_call_retrieve_rejects_top_k_above_max(client_factory) -> None:
+    """top_k above MCP_TOP_K_MAX is rejected with -32602."""
+    client = client_factory([])
+    body = _call_retrieve(client, {"top_k": MCP_TOP_K_MAX + 1})
+    assert "error" in body
+    assert body["error"]["code"] == -32602
+
+
+def test_tools_call_retrieve_accepts_top_k_at_max(client_factory) -> None:
+    """top_k=MCP_TOP_K_MAX (boundary) is accepted."""
+    client = client_factory([])
+    body = _call_retrieve(client, {"top_k": MCP_TOP_K_MAX})
+    assert "error" not in body
+    assert body["result"]["isError"] is False
+
+
+def test_tools_call_retrieve_accepts_top_k_at_min(client_factory) -> None:
+    """top_k=1 (minimum boundary) is accepted."""
+    client = client_factory([])
+    body = _call_retrieve(client, {"top_k": 1})
+    assert "error" not in body
+    assert body["result"]["isError"] is False
+
+
+def test_tools_call_retrieve_top_k_0_is_rejected(client_factory) -> None:
+    """top_k=0 is below the minimum of 1 — must be rejected."""
+    client = client_factory([])
+    body = _call_retrieve(client, {"top_k": 0})
+    assert "error" in body
+    assert body["error"]["code"] == -32602
+
+
+def test_tools_call_retrieve_omitted_top_k_defaults_to_mcp_max(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When top_k is not supplied the handler forwards MCP_TOP_K_MAX to the pipeline."""
+    captured: dict = {}
+
+    def _capture(*_args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _capture)
+    with TestClient(app) as client:
+        _call_retrieve(client, {"query": "q", "document_id_list": ["d1"]})
+
+    assert captured["top_k"] == MCP_TOP_K_MAX
+
+
+def test_tools_call_retrieve_supplied_top_k_forwarded_to_pipeline(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit top_k is forwarded unchanged to run_retrieval (not replaced by default)."""
+    captured: dict = {}
+
+    def _capture(*_args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _capture)
+    with TestClient(app) as client:
+        _call_retrieve(client, {"query": "q", "document_id_list": ["d1"], "top_k": 1})
+
+    assert captured["top_k"] == 1
 
 
 def test_tools_call_retrieve_sanitizes_markdown_in_text(

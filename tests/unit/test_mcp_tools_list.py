@@ -87,8 +87,8 @@ def test_retrieve_input_schema_property_types(client: TestClient) -> None:
 
     assert props["top_k"]["type"] == "integer"
     assert props["top_k"]["minimum"] == 1
-    assert props["top_k"]["maximum"] == 200
-    assert props["top_k"]["default"] == 20
+    assert props["top_k"]["maximum"] == 3
+    assert props["top_k"]["default"] == 3
 
     assert props["min_score"]["type"] == "number"
     assert props["min_score"]["minimum"] == 0

@@ -14,6 +14,9 @@ from pydantic import ConfigDict
 from ragent.routers.mcp_tools.retrieve import RETRIEVE_OUTPUT_SCHEMA, _build_mcp_input_schema
 from ragent.schemas.retrieve import RetrieveV2Request
 
+# MCP context-window budget: cap retrieve results tighter than the REST API.
+MCP_TOP_K_MAX = 3
+
 
 class _RetrieveDocumentsArgs(RetrieveV2Request):
     """extra=forbid: MCP callers must not send undeclared fields."""
@@ -29,6 +32,14 @@ def _v2_input_schema() -> dict:
     schema["properties"]["document_id_list"].pop("maxLength", None)
     schema["properties"]["document_id_list"]["minItems"] = 1
     schema["properties"]["document_id_list"]["maxItems"] = 100
+    top_k = schema["properties"]["top_k"]
+    top_k["minimum"] = 1
+    top_k["maximum"] = MCP_TOP_K_MAX
+    top_k["default"] = MCP_TOP_K_MAX
+    top_k["description"] = (
+        f"Maximum chunks to return, ranked by relevance "
+        f"(1–{MCP_TOP_K_MAX}, default {MCP_TOP_K_MAX})."
+    )
     return schema
 
 

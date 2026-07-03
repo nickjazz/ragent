@@ -859,7 +859,7 @@ Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ER
 | Method | Purpose |
 |---|---|
 | `initialize` | Capability negotiation (shared transport, same as `/mcp/v1`). |
-| `tools/list` | Returns exactly one tool: `retrieve` (name, `inputSchema` with required `query` + `document_id_list` [1–100 ids], `additionalProperties:false`). |
+| `tools/list` | Returns exactly one tool: `retrieve` (name, `inputSchema` with required `query` + `document_id_list` [1–100 ids], optional `top_k` [1–3, default 3], `additionalProperties:false`). |
 | `tools/call retrieve` | Anti-IDOR ownership check before ES access; returns `structuredContent.sources` + `content[0].text` markdown digest. |
 
 **Error codes:** `DOCUMENT_FORBIDDEN` → `{code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}` (any id unknown or not owned by caller; unauthenticated caller). Missing/empty `document_id_list` → `{code:-32602, data:{error_code:"MCP_TOOL_INPUT_INVALID"}}`. Unknown tool → `{code:-32602, data:{error_code:"MCP_TOOL_NOT_FOUND"}}`.

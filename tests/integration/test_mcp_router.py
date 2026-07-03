@@ -197,7 +197,7 @@ def test_mcp_full_handshake_round_trip(client: TestClient, es_store, es_url: str
                 "name": tool["name"],  # discovered from tools/list
                 "arguments": {
                     "query": "gradient descent",
-                    "top_k": 5,
+                    "top_k": 3,
                     "document_id_list": ["doc-mcp-1", "doc-mcp-2"],
                 },
             },

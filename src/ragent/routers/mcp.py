@@ -19,7 +19,6 @@ from mcp.types import Tool
 from ragent.errors.codes import HttpErrorCode
 from ragent.pipelines.retrieve import (
     DEFAULT_MIN_SCORE,
-    DEFAULT_TOP_K,
     EXCERPT_MAX_CHARS_DEFAULT,
     build_document_id_filter,
     doc_to_source_entry,
@@ -27,7 +26,7 @@ from ragent.pipelines.retrieve import (
 )
 from ragent.routers.mcp_tools.context_render import render_context_markdown
 from ragent.routers.mcp_tools.create_skill import CREATE_SKILL_TOOL
-from ragent.routers.mcp_tools.retrieve_documents import RETRIEVE_DOCUMENTS_TOOL
+from ragent.routers.mcp_tools.retrieve_documents import MCP_TOP_K_MAX, RETRIEVE_DOCUMENTS_TOOL
 from ragent.routers.mcp_transport import (
     INVALID_PARAMS,
     TOOL_EXECUTION_FAILED,
@@ -73,7 +72,7 @@ def create_mcp_router(
                 retrieval_pipeline,
                 query=arguments["query"],
                 filters=build_document_id_filter(doc_id_list),
-                top_k=arguments.get("top_k", DEFAULT_TOP_K),
+                top_k=arguments.get("top_k", MCP_TOP_K_MAX),
                 min_score=arguments.get("min_score", DEFAULT_MIN_SCORE),
             )
         except Exception as exc:
