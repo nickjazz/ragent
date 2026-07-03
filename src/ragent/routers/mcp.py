@@ -65,12 +65,14 @@ def create_mcp_router(
                 HttpErrorCode.DOCUMENT_FORBIDDEN.value,
                 "one or more document ids are not accessible",
             ) from exc
+        doc_id_list = arguments["document_id_list"]
+        allowed = set(doc_id_list)
         try:
             docs = await run_in_threadpool(
                 run_retrieval,
                 retrieval_pipeline,
                 query=arguments["query"],
-                filters=build_document_id_filter(arguments["document_id_list"]),
+                filters=build_document_id_filter(doc_id_list),
                 top_k=arguments.get("top_k", DEFAULT_TOP_K),
                 min_score=arguments.get("min_score", DEFAULT_MIN_SCORE),
             )
@@ -83,7 +85,6 @@ def create_mcp_router(
             ) from exc
         # Post-filter: _FeedbackMemoryRetriever ignores the Haystack filters argument
         # and can return chunks from documents outside the requested set.
-        allowed = set(arguments["document_id_list"])
         docs = [d for d in docs if d.meta and d.meta.get("document_id") in allowed]
         entries = [doc_to_source_entry(d, max_chars=excerpt_max_chars) for d in docs]
         return {
@@ -137,9 +138,9 @@ def create_mcp_router(
         }
 
     tools: list[Tool] = [RETRIEVE_DOCUMENTS_TOOL]
-    tool_handlers: dict[str, ToolHandler] = {"retrieve": _run_retrieve_documents}
+    tool_handlers: dict[str, ToolHandler] = {RETRIEVE_DOCUMENTS_TOOL.name: _run_retrieve_documents}
     if skill_service is not None:
         tools.append(CREATE_SKILL_TOOL)
-        tool_handlers["create_skill"] = _run_create_skill
+        tool_handlers[CREATE_SKILL_TOOL.name] = _run_create_skill
 
     return create_jsonrpc_router("/mcp/v1", tools, tool_handlers)

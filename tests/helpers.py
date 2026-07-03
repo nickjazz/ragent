@@ -134,19 +134,3 @@ def make_retrieve_v2_service(rows: dict) -> RetrieveV2Service:
     return RetrieveV2Service(document_repo=repo)
 
 
-def make_retrieval_doc(doc_id: str = "ID1") -> SimpleNamespace:
-    """Minimal Haystack doc namespace for retrieval pipeline tests."""
-    return SimpleNamespace(
-        meta={
-            "document_id": doc_id,
-            "source_app": "chat_attachment",
-            "source_id": "SRC-1",
-            "source_meta": "thread-1",
-            "source_title": "report.pdf",
-            "source_url": None,
-            "mime_type": "application/pdf",
-            "raw_content": "excerpt text",
-        },
-        content="excerpt text",
-        score=0.9,
-    )

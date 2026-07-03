@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ragent.routers.mcp import create_mcp_router
-from ragent.services.skill_service import SkillNameConflictError
+from ragent.services.skill_service import SkillNameConflictError, SkillService
 from tests.helpers import bypass_retrieve_v2_service
 
 ALICE = {"X-User-Id": "alice"}
@@ -30,7 +30,11 @@ def _skill_resp(**over) -> SimpleNamespace:
 def _client(skill_service=None) -> TestClient:
     app = FastAPI()
     app.include_router(
-        create_mcp_router(retrieval_pipeline=MagicMock(), retrieve_v2_service=bypass_retrieve_v2_service(), skill_service=skill_service)
+        create_mcp_router(
+            retrieval_pipeline=MagicMock(),
+            retrieve_v2_service=bypass_retrieve_v2_service(),
+            skill_service=skill_service,
+        )
     )
     return TestClient(app)
 
@@ -50,7 +54,7 @@ def _call(client: TestClient, arguments: dict, headers: dict | None = None) -> d
 
 
 def test_tools_list_advertises_create_skill_when_wired():
-    client = _client(skill_service=AsyncMock())
+    client = _client(skill_service=AsyncMock(spec=SkillService))
     resp = client.post(
         "/mcp/v1", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
     )
