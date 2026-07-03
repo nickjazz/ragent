@@ -88,12 +88,22 @@ Briefly summarize what was fixed (or confirm the code was already clean).
 
 ## Phase 4: Stamp (mandatory final step)
 
-After summarizing findings, run the stamp command matching the mode used:
+After summarizing findings, stamp the review. The stamp auto-detects context:
+- **Push context** (no staged changes, upstream tracked): binds stamp to push-range diff.
+- **Commit context** (staged changes exist): binds stamp to staged diff.
 
 ```bash
+# Compute the diff sha to bind this stamp to.
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    _SHA="$(git diff "${_UP}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+else
+    _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
+fi
+
 # fast mode:
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh simplify:fast
+RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh simplify:fast
 
 # full mode (or no --mode argument):
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh simplify:full
+RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh simplify:full
 ```

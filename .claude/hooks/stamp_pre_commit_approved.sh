@@ -57,7 +57,23 @@ EOF
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
-SHA="$(git diff --cached | sha256sum | cut -d' ' -f1)"
+
+# Determine which diff sha to bind this stamp to.
+#   RAGENT_DIFF_SHA set (push context, exported by skill): use it directly.
+#   unset (legacy staged-diff context): compute from git diff --cached and
+#     block if working tree has uncommitted changes (ensures stamp covers the
+#     complete diff being committed — CLAUDE.md §7).
+if [[ -n "${RAGENT_DIFF_SHA:-}" ]]; then
+    SHA="$RAGENT_DIFF_SHA"
+else
+    DIRTY="$(git diff --name-only 2>/dev/null || true)"
+    if [[ -n "$DIRTY" ]]; then
+        printf 'stamp blocked — uncommitted changes in working tree:\n%s\n\n' "$DIRTY" >&2
+        printf 'Stage the /simplify fixes (git add ...) before stamping (CLAUDE.md §7).\n' >&2
+        exit 1
+    fi
+    SHA="$(git diff --cached | sha256sum | cut -d' ' -f1)"
+fi
 TS="$(date +%s)"
 
 mkdir -p "$ROOT/.claude"
