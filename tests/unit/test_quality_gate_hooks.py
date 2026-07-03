@@ -156,40 +156,42 @@ def test_gate_accepts_with_both_fresh_entries(gate_repo):
     assert result.returncode == 0, result.stderr
 
 
-def test_gate_rejects_when_audit_log_missing(gate_repo):
+def test_gate_accepts_when_audit_log_missing(gate_repo):
+    # Commit gate no longer checks the audit log — /simplify+/review are
+    # verified once per push (push gate), not once per commit. A commit that
+    # carries only the marker file (no audit log) must still be accepted.
     stage_default_change(gate_repo)
     sha = staged_diff_sha(gate_repo)
     write_marker(gate_repo, sha, ts=int(time.time()), by=REVIEW_FULL)
     result = run_hook(gate_repo, "pre_commit_gate.sh", 'git commit -m "[STRUCTURAL] x"')
-    assert result.returncode == 2
-    assert "audit log" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
-def test_gate_rejects_when_only_one_skill_present(gate_repo):
+def test_gate_accepts_when_only_one_skill_in_audit_log(gate_repo):
+    # Commit gate no longer cross-checks the audit log for both skills;
+    # that check was moved to pre_push_gate.sh (per-push review gate).
     stage_default_change(gate_repo)
     sha = staged_diff_sha(gate_repo)
     now = int(time.time())
     write_marker(gate_repo, sha, now, REVIEW_FULL)
     append_audit(gate_repo, sha, now, REVIEW_FULL)
     result = run_hook(gate_repo, "pre_commit_gate.sh", 'git commit -m "[STRUCTURAL] x"')
-    assert result.returncode == 2
-    assert "simplify=no" in result.stderr
-    assert "review=yes" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
-def test_gate_rejects_when_audit_entry_older_than_freshness_window(gate_repo):
+def test_gate_accepts_when_audit_entries_are_stale(gate_repo):
+    # Commit gate no longer enforces audit-log freshness — stale entries from
+    # a previous /simplify+/review run do not block the commit; the push gate
+    # enforces freshness with a 60-minute window at push time.
     stage_default_change(gate_repo)
     sha = staged_diff_sha(gate_repo)
     now = int(time.time())
     stale = now - FRESHNESS - 60
-    # Marker itself is fresh (now) so the marker-staleness check passes and
-    # the failure is attributable specifically to the stale audit entries.
     write_marker(gate_repo, sha, now, REVIEW_FULL)
     append_audit(gate_repo, sha, stale, SIMPLIFY_FULL)
     append_audit(gate_repo, sha, stale, REVIEW_FULL)
     result = run_hook(gate_repo, "pre_commit_gate.sh", 'git commit -m "[STRUCTURAL] x"')
-    assert result.returncode == 2
-    assert "audit log missing fresh" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 # --- pre_commit_gate.sh: _classify_risk auth/security boundary (PR #205 review) --
