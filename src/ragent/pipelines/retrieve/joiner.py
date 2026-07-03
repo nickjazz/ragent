@@ -30,6 +30,13 @@ def build_es_filters(source_app: str | None, source_meta: str | None) -> dict | 
     return {"operator": "AND", "conditions": clauses}
 
 
+_ATTACHMENT_EXCLUSION_FILTER: dict = {
+    "field": "source_app",
+    "operator": "!=",
+    "value": _ATTACHMENT_SOURCE_APP,
+}
+
+
 def build_attachment_exclusion_filter() -> dict:
     """Exclude chat_attachment chunks from corpus-wide queries (/retrieve/v1, /chat).
 
@@ -37,7 +44,7 @@ def build_attachment_exclusion_filter() -> dict:
     must be retrieved via /retrieve/v2 (anti-IDOR gate), never surfaced through
     the shared corpus.
     """
-    return {"field": "source_app", "operator": "!=", "value": _ATTACHMENT_SOURCE_APP}
+    return _ATTACHMENT_EXCLUSION_FILTER
 
 
 def build_document_id_filter(document_ids: list[str]) -> dict:

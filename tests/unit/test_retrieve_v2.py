@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from ragent.pipelines.retrieve import build_document_id_filter
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 from ragent.repositories.document_repository import DocumentRepository
 from ragent.routers.retrieve_v2 import create_retrieve_v2_router
 from ragent.schemas.retrieve import RetrieveV2Request
@@ -278,14 +279,14 @@ def test_build_attachment_exclusion_filter():
     from ragent.pipelines.retrieve import build_attachment_exclusion_filter
 
     f = build_attachment_exclusion_filter()
-    assert f == {"field": "source_app", "operator": "!=", "value": "chat_attachment"}
+    assert f == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}
 
 
 def test_combine_filters_with_none_base():
     from ragent.pipelines.retrieve import build_attachment_exclusion_filter, combine_filters
 
     result = combine_filters(None, build_attachment_exclusion_filter())
-    assert result == {"field": "source_app", "operator": "!=", "value": "chat_attachment"}
+    assert result == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}
 
 
 def test_combine_filters_with_existing_base():
@@ -301,6 +302,6 @@ def test_combine_filters_with_existing_base():
         "operator": "AND",
         "conditions": [
             {"field": "source_app", "operator": "==", "value": "my_app"},
-            {"field": "source_app", "operator": "!=", "value": "chat_attachment"},
+            {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP},
         ],
     }

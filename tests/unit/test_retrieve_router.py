@@ -13,6 +13,7 @@ from haystack.dataclasses import Document
 
 from ragent.pipelines.retrieve import run_retrieval
 from ragent.routers.retrieve import create_retrieve_router
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 
 
 def _make_doc(
@@ -116,7 +117,7 @@ def test_retrieve_v1_excludes_chat_attachment_chunks(app, monkeypatch):
     filters = calls[0]["filters"]
     # combine_filters wraps an AND when base is None (no source_app/meta) →
     # returns the exclusion filter directly.
-    assert filters == {"field": "source_app", "operator": "!=", "value": "chat_attachment"}
+    assert filters == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}
 
 
 def test_retrieve_v1_with_source_app_still_excludes_attachments(app, monkeypatch):
@@ -129,7 +130,7 @@ def test_retrieve_v1_with_source_app_still_excludes_attachments(app, monkeypatch
         "operator": "AND",
         "conditions": [
             {"field": "source_app", "operator": "==", "value": "confluence"},
-            {"field": "source_app", "operator": "!=", "value": "chat_attachment"},
+            {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP},
         ],
     }
 

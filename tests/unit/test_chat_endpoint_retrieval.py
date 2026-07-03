@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ragent.routers.chat import create_chat_router
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 
 
 def _make_app():
@@ -88,6 +89,19 @@ def test_chat_top_k_validation_rejects_over_200(monkeypatch):
         "/chat/v1", json={"messages": [{"role": "user", "content": "hi"}], "top_k": 201}
     )
     assert resp.status_code == 422
+
+
+def test_chat_v1_excludes_chat_attachment_chunks(monkeypatch):
+    """corpus-wide /chat/v1 must never surface chat_attachment documents."""
+    app = _make_app()
+    client, calls = _capture_client(app, monkeypatch)
+    client.post("/chat/v1", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert calls, "run_retrieval was not called"
+    assert calls[0]["filters"] == {
+        "field": "source_app",
+        "operator": "!=",
+        "value": ATTACHMENT_SOURCE_APP,
+    }
 
 
 def test_chat_min_score_validation_rejects_negative(monkeypatch):

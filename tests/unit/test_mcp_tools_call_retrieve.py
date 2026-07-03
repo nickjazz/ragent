@@ -17,6 +17,7 @@ from jsonschema import Draft7Validator
 
 from ragent.routers.mcp import create_mcp_router
 from ragent.routers.mcp_tools.retrieve import RETRIEVE_TOOL
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 
 
 def _make_doc(doc_id: str, source_app: str = "confluence") -> SimpleNamespace:
@@ -139,6 +140,25 @@ def test_tools_call_retrieve_passes_arguments_to_pipeline(
     assert captured["min_score"] == 0.3
     # filters are built via build_es_filters; assert shape contains the filters.
     assert captured["filters"] is not None
+
+
+def test_tools_call_retrieve_excludes_chat_attachment_chunks(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """corpus-wide /mcp/v1 retrieve must never surface chat_attachment documents."""
+    captured: dict = {}
+
+    def _capture(*_args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _capture)
+    TestClient(app).post(
+        "/mcp/v1",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "retrieve", "arguments": {"query": "q"}}},
+    )
+    filters = captured.get("filters")
+    assert filters == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}
 
 
 def test_tools_call_retrieve_empty_result(client_factory) -> None:
