@@ -78,19 +78,18 @@ elif git rev-parse --verify origin/HEAD &>/dev/null; then
     BASE="origin/HEAD"
 fi
 
-CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if [[ -n "$BASE" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
+# Compute changed files once; reused for markdown bypass and format+lint below.
+CHANGED=""
+if [[ -n "$BASE" ]]; then
     CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null || true)"
-    if [[ -n "$CHANGED" ]] && ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
+fi
+
+CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -n "$CHANGED" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
+    if ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
         printf 'Pre-push gate: markdown-only diff vs %s — skipping all gates (doc-only push).\n' "$BASE" >&2
         exit 0
     fi
-fi
-
-# Push-range diff sha — used by per-push review gate and format+lint below.
-PUSH_DIFF_SHA=""
-if [[ -n "$BASE" ]]; then
-    PUSH_DIFF_SHA="$(git diff "${BASE}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
 fi
 
 # High-risk full-review gate — if a pre-commit risk classification wrote
@@ -134,9 +133,9 @@ try:
                 # Must be within freshness window AND after the pending marker
                 if ts >= cutoff and ts > pending_ts:
                     by = row.get("by", "")
-                    if by in ("simplify:full", "simplify"):
+                    if by == "simplify" or by.startswith("simplify:"):
                         hits["simplify"] = "yes"
-                    elif by in ("review:full", "review"):
+                    elif by == "review" or by.startswith("review:"):
                         hits["review"] = "yes"
             except Exception:
                 continue
@@ -159,6 +158,17 @@ PY
     # remaining pre-push checks (markdown/tests) also pass.
     _CONSUME_PENDING=1
     printf 'Pre-push gate: full-review requirement satisfied — proceeding to test gate.\n' >&2
+fi
+
+# Push-range diff sha — computed after the high-risk gate to avoid the full
+# content hash on pushes already blocked above.
+# Empty when no upstream base could be resolved; gate is skipped with a warning.
+PUSH_DIFF_SHA=""
+if [[ -n "$BASE" ]]; then
+    PUSH_DIFF_SHA="$(git diff "${BASE}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+fi
+if [[ -z "$PUSH_DIFF_SHA" ]]; then
+    printf 'Pre-push gate: no upstream base resolved — per-push review gate skipped.\n' >&2
 fi
 
 # Per-push review gate — every push requires /simplify + /review stamps bound to
@@ -201,41 +211,39 @@ PY
 fi
 
 LOG_DIR="$(mktemp -d -t ragent-prepush-XXXXXX)"
+_save_log() { local keep="$ROOT/.claude/logs"; mkdir -p "$keep"; cp "$LOG_DIR/$1" "$keep/$1" 2>/dev/null || true; }
 # Combine cleanup: remove temp dir AND conditionally consume pending marker.
 trap '_consume_on_success; rm -rf "$LOG_DIR"' EXIT
 
 FULL="${RAGENT_PREPUSH_FULL:-}"
 
 if [[ -z "$FULL" ]]; then
-    # Format + lint (moved from commit gate): check-only on push-range .py files.
-    if [[ -n "$BASE" ]]; then
-        readarray -t _PY < <(git diff --name-only "${BASE}...HEAD" 2>/dev/null | grep '\.py$' || true)
-        if [[ ${#_PY[@]} -gt 0 ]]; then
-            if ! uv run ruff format --check "${_PY[@]}" >"$LOG_DIR/format.log" 2>&1; then
-                keep="$ROOT/.claude/logs"; mkdir -p "$keep"
-                cp "$LOG_DIR/format.log" "$keep/format.log" 2>/dev/null || true
-                block "format check failed — run: uv run ruff format ${_PY[*]}
+    # Format + lint: check-only on push-range .py files (reuses CHANGED from above).
+    readarray -t _PY < <(printf '%s\n' "$CHANGED" | grep '\.py$' || true)
+    if [[ ${#_PY[@]} -gt 0 ]]; then
+        if ! uv run ruff format --check "${_PY[@]}" >"$LOG_DIR/format.log" 2>&1; then
+            _save_log format.log
+            block "format check failed — run: uv run ruff format ${_PY[*]}
   Re-commit the formatted files, then push. See .claude/logs/format.log"
-            fi
-            if ! uv run ruff check "${_PY[@]}" >"$LOG_DIR/lint.log" 2>&1; then
-                keep="$ROOT/.claude/logs"; mkdir -p "$keep"
-                cp "$LOG_DIR/lint.log" "$keep/lint.log" 2>/dev/null || true
-                block "lint check failed — run: uv run ruff check --fix ${_PY[*]}
+        fi
+        if ! uv run ruff check "${_PY[@]}" >"$LOG_DIR/lint.log" 2>&1; then
+            _save_log lint.log
+            block "lint check failed — run: uv run ruff check --fix ${_PY[*]}
   Re-commit the fixed files, then push. See .claude/logs/lint.log"
-            fi
         fi
     fi
     # Unit test cache: skip if src/ + tests/unit/ content hash unchanged since last passing run.
     CACHE_FILE="$ROOT/.claude/.unit_test_cache"
-    CACHE_HASH="$(find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
-    if [[ -n "$CACHE_HASH" && -s "$CACHE_FILE" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
+    CACHE_HASH=""
+    if [[ -s "$CACHE_FILE" ]]; then
+        CACHE_HASH="$(find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+    fi
+    if [[ -n "$CACHE_HASH" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
         printf 'Pre-push gate: unit test cache hit (%s…) — skipping unit tests.\n' "${CACHE_HASH:0:12}" >&2
         exit 0
     fi
     if ! uv run pytest tests/unit >"$LOG_DIR/test.log" 2>&1; then
-        keep="$ROOT/.claude/logs"
-        mkdir -p "$keep"
-        cp "$LOG_DIR/test.log" "$keep/test.log" 2>/dev/null || true
+        _save_log test.log
         block "unit tests failed — see .claude/logs/test.log
   Integration + e2e are opt-in: re-run with \`RAGENT_PREPUSH_FULL=1 git push ...\`
   (set RAGENT_PREPUSH_FULL=e2e to also include tests/e2e)."
@@ -257,9 +265,7 @@ else
 fi
 
 if ! make "$TARGET" >"$LOG_DIR/test.log" 2>&1; then
-    keep="$ROOT/.claude/logs"
-    mkdir -p "$keep"
-    cp "$LOG_DIR/test.log" "$keep/test.log" 2>/dev/null || true
+    _save_log test.log
     block "$TARGET failed — see .claude/logs/test.log"
 fi
 

@@ -70,7 +70,7 @@ else
     if [[ -n "$DIRTY" ]]; then
         printf 'stamp blocked — uncommitted changes in working tree:\n%s\n\n' "$DIRTY" >&2
         printf 'Stage the /simplify fixes (git add ...) before stamping (CLAUDE.md §7).\n' >&2
-        exit 1
+        exit 2
     fi
     SHA="$(git diff --cached | sha256sum | cut -d' ' -f1)"
 fi

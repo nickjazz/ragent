@@ -25,17 +25,7 @@ This skill accepts an optional `--mode fast|full` argument (default: `full`).
    - **Code quality**: no obvious duplication, no dead code, no commented-out code.
 3. Report LGTM or list findings. Fix any that are clear-cut and re-stage.
 
-Then stamp (auto-detects push vs commit context):
-
-```bash
-_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
-if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
-    _SHA="$(git diff "${_UP}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
-else
-    _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
-fi
-RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:fast
-```
+Then run the **Stamp** section below with `review:fast`.
 
 ---
 
@@ -65,7 +55,13 @@ RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp
 3. Wait for all three agents to complete. Aggregate their findings; if any require fixes, make them and re-stage.
 4. Report LGTM or list findings.
 
-Then stamp (auto-detects push vs commit context):
+Then run the **Stamp** section below with `review:full`.
+
+---
+
+## Stamp (mandatory final step)
+
+Auto-detects push vs commit context: push context binds the stamp to the push-range diff; commit context binds it to the staged diff.
 
 ```bash
 _UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
@@ -74,5 +70,8 @@ if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
 else
     _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
 fi
+# fast mode:
+RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:fast
+# full mode:
 RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:full
 ```

@@ -17,6 +17,18 @@ block() {
     exit 2
 }
 
+# Write or skip .pending_full_review based on diff_sha. Skips the update when
+# sha is unchanged (e.g. author-only rebase) to preserve valid push-gate stamps.
+_write_pending_if_changed() {
+    local pending="$ROOT/.claude/.pending_full_review"
+    local ex_sha
+    ex_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("diff_sha",""))' "$pending" 2>/dev/null || true)"
+    if [[ "$ex_sha" != "$CURRENT_SHA" ]]; then
+        printf '{"diff_sha":"%s","ts":%s,"reason":"%s"}\n' \
+            "$CURRENT_SHA" "$NOW" "${RISK_REASONS%;}" > "$pending"
+    fi
+}
+
 # 1. Commit message must carry [BEHAVIORAL] or [STRUCTURAL] prefix.
 #    Heuristic: the prefix tag must appear somewhere in the commit invocation
 #    (covers both `-m "[STRUCTURAL] ..."` and heredoc `-m "$(cat <<'EOF' ...`).
@@ -121,8 +133,8 @@ CURRENT_SHA="$(git diff --cached | sha256sum | cut -d' ' -f1)"
 #           migrations/alembic/ (schema)
 #     Trivially low-risk (skip remaining checks): only tests/ and/or .md files.
 #
-#     Note: the marker is written AFTER format+lint pass so a rejected commit
-#     never leaves a stale .pending_full_review behind (fix for review #4).
+#     Note: the marker is written at end of all commit-gate checks so a blocked
+#     commit never leaves a stale .pending_full_review behind.
 _classify_risk() {
     local staged="$1"
     RISK_REASONS=""
@@ -166,7 +178,7 @@ _classify_risk() {
     stat_summary=$(LC_ALL=C git diff --cached --shortstat 2>/dev/null || true)
     ins=$(printf '%s' "$stat_summary" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)
     del=$(printf '%s' "$stat_summary" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)
-    local total=$(( ins + del ))
+    local total; total=$(( ins + del ))
     if [[ $total -gt 200 ]]; then
         RISK_REASONS+=" lines>200($total);"; hr=1; fi
     if [[ $del -gt 50 ]]; then
@@ -188,12 +200,7 @@ fi
 if [[ $CODE_GATE -eq 0 ]]; then
     # Spec/plan-only commit: skip format / lint / tests — no executable code changed.
     if [[ $_NEED_PENDING -eq 1 ]]; then
-        PENDING="$ROOT/.claude/.pending_full_review"
-        _EX_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("diff_sha",""))' "$PENDING" 2>/dev/null || true)"
-        if [[ "$_EX_SHA" != "$CURRENT_SHA" ]]; then
-            printf '{"diff_sha":"%s","ts":%s,"reason":"%s"}\n' \
-                "$CURRENT_SHA" "$NOW" "${RISK_REASONS%;}" > "$PENDING"
-        fi
+        _write_pending_if_changed
     fi
     exit 0
 fi
@@ -231,12 +238,7 @@ fi
 # Skip update when diff content is unchanged (e.g. author-only rebase) to avoid
 # invalidating push-gate stamps that already satisfy the full-review requirement.
 if [[ $_NEED_PENDING -eq 1 ]]; then
-    PENDING="$ROOT/.claude/.pending_full_review"
-    _EX_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("diff_sha",""))' "$PENDING" 2>/dev/null || true)"
-    if [[ "$_EX_SHA" != "$CURRENT_SHA" ]]; then
-        printf '{"diff_sha":"%s","ts":%s,"reason":"%s"}\n' \
-            "$CURRENT_SHA" "$NOW" "${RISK_REASONS%;}" > "$PENDING"
-    fi
+    _write_pending_if_changed
 fi
 
 exit 0
