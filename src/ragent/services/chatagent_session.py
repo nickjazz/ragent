@@ -52,15 +52,19 @@ def _strip_tool_response_prefix(text: str) -> str:
     The upstream agent sometimes prepends {"sources": …} or {"skill": …} to the
     assistant text content. raw_decode locates the object boundary without
     allocating a substring, and runs in C.
+    Only strips when actual reply text follows — a JSON-only response is preserved.
     """
-    if not text.startswith("{"):
+    stripped = text.lstrip()
+    if not stripped.startswith("{"):
         return text
     try:
-        parsed, end = json.JSONDecoder().raw_decode(text)
+        parsed, end = json.JSONDecoder().raw_decode(stripped)
     except ValueError:
         return text
     if not _TOOL_RESPONSE_PREFIX_KEYS.isdisjoint(parsed):
-        return text[end:].lstrip()
+        remainder = stripped[end:].lstrip()
+        if remainder:
+            return remainder
     return text
 
 
@@ -169,9 +173,10 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
     # strip below — extraction must run on the un-stripped block (it reads
     # the <attachments> tag strip_machine_context removes).
     unwrapped = _unwrap_json_string(content) if isinstance(content, str) else None
-    # Strip tool-response prefix before hidden-block stripping so the regex
-    # sees a clean string without a leading JSON blob.
-    if unwrapped is not None:
+    # Strip tool-response prefix (upstream bug, assistant turns only) before
+    # hidden-block stripping so the regex sees a clean string.
+    upstream_role = raw.get("role") or "assistant"
+    if unwrapped is not None and upstream_role == "assistant":
         unwrapped = _strip_tool_response_prefix(unwrapped)
     # `or "assistant"`: a present-but-null `role` must fall back too, not just a
     # missing key — keeps a non-empty string for node_to_role.

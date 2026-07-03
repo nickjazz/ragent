@@ -497,3 +497,73 @@ def test_tool_response_prefix_stripped_then_hidden_context_stripped() -> None:
 
     assert out["messages"][0]["content"] == "Question"
     assert out["messages"][1]["content"] == "The answer."
+
+
+def test_tool_response_prefix_with_leading_whitespace_is_stripped() -> None:
+    # After _unwrap_json_string a double-encoded string may produce leading \n
+    # before the JSON prefix; lstrip() must handle it.
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '\n{"sources": []}The answer.',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "The answer."
+
+
+def test_json_only_assistant_content_is_not_stripped_to_empty() -> None:
+    # When the entire content is the JSON object (no trailing text), the message
+    # is the answer itself — do not wipe it out by returning empty string.
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"sources": [{"id": "1"}]}',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == '{"sources": [{"id": "1"}]}'
+
+
+def test_prefix_stripping_is_not_applied_to_user_turns() -> None:
+    # A user who pastes {"sources":[...]} please summarize must not have the
+    # JSON object stripped — the fix is for assistant turns only.
+    payload = _session(
+        [
+            {
+                "messageId": "u1",
+                "role": "user",
+                "content": '{"sources": []} please summarize',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == '{"sources": []} please summarize'
+
+
+def test_prefix_stripping_is_not_applied_to_tool_turns() -> None:
+    payload = _session(
+        [
+            {
+                "messageId": "t1",
+                "role": "tool",
+                "content": '{"skill": "result"}tool output',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == '{"skill": "result"}tool output'
