@@ -147,9 +147,16 @@ class NatsSessionPublisher:
             )
             resp.raise_for_status()
             body = resp.json()
-            # Drives the proactive reconnect cadence; absent → fall back to the
-            # configured interval (see _reconnect_interval).
-            self._token_expires_in = body.get("expiresIn")
+            # Drives the proactive reconnect cadence; absent/garbage → fall back to the
+            # configured interval (see _reconnect_interval). Coerce defensively: the auth
+            # service is external, and a non-numeric expiresIn (e.g. the string "60") must
+            # not reach _reconnect_interval's `> 0` compare — that runs OUTSIDE the
+            # supervisor's try/except, so a TypeError there would kill it permanently.
+            raw_expires = body.get("expiresIn")
+            try:
+                self._token_expires_in = None if raw_expires is None else float(raw_expires)
+            except (TypeError, ValueError):
+                self._token_expires_in = None
             return body["natsToken"]
 
     async def _refresh_credentials(self) -> None:
@@ -232,7 +239,7 @@ class NatsSessionPublisher:
         """
         if self._token_expires_in and self._token_expires_in > 0:
             return max(_MIN_RECONNECT_INTERVAL, self._token_expires_in * _RECONNECT_TTL_FRACTION)
-        return self._jwt_refresh_seconds
+        return max(_MIN_RECONNECT_INTERVAL, self._jwt_refresh_seconds)
 
     async def _maintain_connection(self) -> None:
         """Own the connection lifecycle: reconnect on any death, before every expiry.

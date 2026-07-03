@@ -246,6 +246,7 @@ async def test_supervisor_force_reconnects_before_expiry_with_a_fresh_jwt(monkey
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
@@ -277,6 +278,7 @@ async def test_supervisor_rebuilds_a_brand_new_connection_when_closed(monkeypatc
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
@@ -310,6 +312,7 @@ async def test_supervisor_recovers_when_the_initial_connect_failed(monkeypatch) 
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
@@ -348,6 +351,7 @@ async def test_supervisor_exchange_mints_a_fresh_keypair_and_keeps_the_pair_matc
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     with structlog.testing.capture_logs() as logs:
@@ -376,6 +380,7 @@ async def test_close_stops_the_supervisor(monkeypatch) -> None:
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
@@ -444,6 +449,60 @@ def test_reconnect_interval_prefers_expires_in_over_the_fallback() -> None:
     assert pub._reconnect_interval() == 80.0  # noqa: SLF001 — 0.8 × TTL
     pub._token_expires_in = 1.0  # noqa: SLF001
     assert pub._reconnect_interval() == 5.0  # noqa: SLF001 — floored
+
+
+def test_reconnect_interval_floors_a_misconfigured_tiny_fallback() -> None:
+    # A misconfigured NATS_JWT_REFRESH_SECONDS (0 / negative / sub-floor) must not spin
+    # the supervisor into a hot loop when the auth response omits expiresIn.
+    for tiny in (0.0, -1.0, 0.5):
+        pub = _publisher(jwt_refresh_seconds=tiny)
+        assert pub._reconnect_interval() == 5.0  # noqa: SLF001 — floored to _MIN_RECONNECT_INTERVAL
+
+
+async def test_fetch_app_jwt_coerces_or_drops_a_non_numeric_expires_in(monkeypatch) -> None:
+    # The auth service is external: a string ("120") or garbage expiresIn must be coerced
+    # to float (or dropped to None), never stored raw — _reconnect_interval compares it
+    # with `> 0` OUTSIDE the supervisor's try/except, so a TypeError there would crash the
+    # supervisor permanently (the exact never-recovers failure this whole change prevents).
+    bodies = iter(
+        [
+            {"natsToken": "j", "expiresIn": "120"},  # numeric string → coerced to 120.0
+            {"natsToken": "j", "expiresIn": "banana"},  # garbage → None
+            {"natsToken": "j", "expiresIn": None},  # explicit null → None
+            {"natsToken": "j"},  # absent → None
+        ]
+    )
+
+    class _Resp:
+        def __init__(self, body: dict) -> None:
+            self._body = body
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict:
+            return self._body
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def post(self, *args, **kwargs):  # noqa: ANN001
+            return _Resp(next(bodies))
+
+    monkeypatch.setattr("ragent.clients.nats_publisher.httpx.AsyncClient", lambda **k: _Client())
+    pub = _publisher()
+
+    await pub._fetch_app_jwt("UABC")  # noqa: SLF001
+    assert pub._token_expires_in == 120.0  # noqa: SLF001 — numeric string coerced to float
+    pub._reconnect_interval()  # noqa: SLF001 — must not raise on the coerced value
+
+    for _ in range(3):  # garbage / null / absent all drop to None without raising
+        await pub._fetch_app_jwt("UABC")  # noqa: SLF001
+        assert pub._token_expires_in is None  # noqa: SLF001
+        pub._reconnect_interval()  # noqa: SLF001 — never raises
 
 
 async def test_connect_skips_exchange_when_servers_is_whitespace_only(monkeypatch) -> None:

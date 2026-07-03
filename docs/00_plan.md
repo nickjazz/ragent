@@ -148,7 +148,7 @@
 > server-authoritative) — ragent publishes per-user status; the frontend
 > subscribes over its existing NATS connection. SSE endpoint + Redis pub/sub removed.
 
-**Counter: 完成 7 / 未完成 1 / descope 0**
+**Counter: 完成 16 / 未完成 1 / descope 0**
 
 | # | Category | Task | Status | Owner |
 |---|---|---|:---:|---|
