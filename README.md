@@ -75,9 +75,10 @@ docs/               — spec, plan, journal, API reference
 
 | File | Purpose |
 |---|---|
-| [`docs/API.md`](docs/API.md) | API reference (ingest, chat, retrieve, feedback, observability, MCP) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System diagram and key design decisions |
+| [`docs/00_API.md`](docs/00_API.md) | API reference (ingest, chat, retrieve, feedback, observability, MCP) |
+| [`docs/00_ARCHITECTURE.md`](docs/00_ARCHITECTURE.md) | System diagram and key design decisions |
 | [`docs/00_domain_map.md`](docs/00_domain_map.md) | Domain boundary and quick index |
+| [`docs/00_api_call_chains.md`](docs/00_api_call_chains.md) | API surface call chains |
 | [`docs/00_rule.md`](docs/00_rule.md) | Development standards and mandatory workflow |
 | [`docs/00_spec.md`](docs/00_spec.md) | Full technical specification (subdocs in `docs/spec/`) |
 | [`docs/00_plan.md`](docs/00_plan.md) | Active TDD implementation checklist (completed tracks archived in [`docs/00_plan_done.md`](docs/00_plan_done.md)) |
