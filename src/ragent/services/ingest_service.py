@@ -296,6 +296,7 @@ class IngestService:
         source_meta: str | None = None,
         source_url: str | None = None,
         max_upload_bytes: int | None = None,
+        persist_size_bytes: bool = False,
     ) -> str:
         document_id = new_id()
         object_key = self._put_to_default_site(
@@ -318,6 +319,9 @@ class IngestService:
             ingest_type="upload",
             minio_site=None,
             mime_type=mime_type.value,
+            # Chat-attachment uploads report AttachmentInfo.sizeBytes back to
+            # the client; other upload callers keep the column NULL.
+            size_bytes=len(data) if persist_size_bytes else None,
         )
         await self._broker.enqueue("ingest.pipeline", document_id=document_id)
         logger.info(

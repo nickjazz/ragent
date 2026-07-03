@@ -64,6 +64,7 @@ class ADKCaller:
         auth: str | None = None,
         timeout: float = 30.0,
         attachments: str | None = None,
+        attachments_instruction: str | None = None,
     ) -> None:
         self._http = http_client
         self._api_url = api_url
@@ -72,15 +73,19 @@ class ADKCaller:
         self._user_token = user_token
         self._headers = {"Authorization": auth} if auth else {}
         self._timeout = timeout
-        # T-CAT.W1 — resolved <attachments> block (JSON string), already
-        # decrypted/fetched by DocumentArtifactResolver before this caller is
-        # constructed (resolution is async; this class is not).
+        # Resolved <attachments> metadata block (JSON string) plus the
+        # retrieve-tool instruction line, both produced by
+        # AttachmentContextResolver before this caller is constructed
+        # (resolution is async; this class is not). The instruction is
+        # emitted AFTER </hidden> — an operating rule for the upstream agent,
+        # not machine context the frontend strips.
         self._attachments = attachments
+        self._attachments_instruction = attachments_instruction
 
     def stream_deltas(
         self, request: RunAgentInput, model: str
     ) -> Generator[UpstreamMessage, None, None]:
-        input_data = _resume_input_data(request, self._attachments)
+        input_data = _resume_input_data(request, self._attachments, self._attachments_instruction)
         if input_data is None:
             # All interrupts were cancelled — no upstream call; the run finishes
             # successfully with an empty body.
@@ -199,7 +204,11 @@ def _parse_message(raw: dict) -> UpstreamMessage:
     )
 
 
-def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -> dict | None:
+def _resume_input_data(
+    request: RunAgentInput,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
+) -> dict | None:
     """Build the upstream `inputData` for a turn.
 
     A normal turn sends `{message}`. A resume turn answers a prior interrupt:
@@ -213,7 +222,7 @@ def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -
     """
     resume = request.resume
     if not resume:
-        return {"message": _compose_message(request, attachments)}
+        return {"message": _compose_message(request, attachments, attachments_instruction)}
     resolved = [item for item in resume if item.status == "resolved"]
     if len(resolved) > 1:
         raise ResumeValidationError("resume accepts at most one resolved interrupt per turn")
@@ -222,7 +231,11 @@ def _resume_input_data(request: RunAgentInput, attachments: str | None = None) -
     return {"lastMessageId": resolved[0].interrupt_id, "message": ""}
 
 
-def _compose_message(request: RunAgentInput, attachments: str | None = None) -> str:
+def _compose_message(
+    request: RunAgentInput,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
+) -> str:
     """Prepend the client-supplied context/state ahead of the user's question.
 
     The upstream is a general, tool-capable agent that owns its own persona and
@@ -238,7 +251,9 @@ def _compose_message(request: RunAgentInput, attachments: str | None = None) -> 
     still read it.
     """
     user_message = _last_user_message(request.messages)
-    preamble = _context_preamble(request.context, request.state, attachments)
+    preamble = _context_preamble(
+        request.context, request.state, attachments, attachments_instruction
+    )
     if not preamble:
         return user_message
     if not user_message:
@@ -252,7 +267,9 @@ def _compose_message(request: RunAgentInput, attachments: str | None = None) -> 
 # A lenient stripper also honours whitespace/attributes (`</hidden >`,
 # `<hidden attr="1">`), so those forms are neutralized too — anything a relaxed
 # HTML/XML parser would accept as one of our wrapper tags.
-_WRAPPER_TAG_RE = re.compile(r"<(/?\s*(?:hidden|context|state)(?:\s+[^>]*)?)>", re.IGNORECASE)
+_WRAPPER_TAG_RE = re.compile(
+    r"<(/?\s*(?:hidden|context|state|instruction)(?:\s+[^>]*)?)>", re.IGNORECASE
+)
 
 
 def _neutralize_wrapper_tags(value: str) -> str:
@@ -260,11 +277,18 @@ def _neutralize_wrapper_tags(value: str) -> str:
 
 
 def _context_preamble(
-    context: list[ContextItem], state: object, attachments: str | None = None
+    context: list[ContextItem],
+    state: object,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
 ) -> str:
     sections: list[str] = []
     if attachments:
         sections.append(f"<attachments>{_neutralize_wrapper_tags(attachments)}</attachments>")
+        if attachments_instruction:
+            # Inside <hidden> so strip_machine_context removes it from session
+            # history; the upstream agent still reads it as machine context.
+            sections.append(f"<instruction>{attachments_instruction}</instruction>")
     if context:
         context_json = json.dumps(
             [item.model_dump(by_alias=True) for item in context],

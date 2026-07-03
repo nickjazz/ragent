@@ -418,7 +418,7 @@ Same upstream as v2 (`CHATAGENT_API_URL`, `CHATAGENT_AUTH`, rate limit, `CHATAGE
 
 - `threadId` — session id, **server-owned** (Model B): omit it on a brand-new conversation and ragent mints one; the assigned id is echoed back in `RUN_STARTED.threadId` and the client reuses it on every later turn.
 - `messages[].id` — **currently not used by ragent**: the client's optimistic id. The proxy ignores it (only the last `role="user"` message text is forwarded); the upstream assigns the authoritative `messageId` returned in the stream / session history — never key on this value server-side. Rationale: `docs/00_spec.md §3.4.7` (Session id ownership).
-- `attachmentIds` — optional list of previously-uploaded attachment ids (see [Attachments](#attachments-chatagentv3attachments)) to resolve into an `<attachments>` block inside the `<hidden>` preamble. Capped at `ATTACHMENT_MAX_FILES` (default 10, env-configurable) per turn; exceeding the cap is a `RUN_ERROR` (`code = ATTACHMENT_TOO_MANY_FILES`) raised before any resolver I/O, never an HTTP 413.
+- `attachmentIds` — optional list of previously-uploaded attachment ids (see [Attachments](#attachments-chatagentv3attachments)) to resolve into a metadata-only `<attachments>` block inside the `<hidden>` preamble. The block lists `documentId`/`filename`/`uploadedAt` and instructs the LLM to call the `/mcp/v1` `retrieve` tool for actual content. When omitted, `null`, or empty, the resolver falls back to listing all attachments uploaded in the session (newest-first).
 
 ```json
 {
@@ -708,6 +708,23 @@ curl -X POST http://localhost:8000/retrieve/v1 \
 
 ---
 
+### `POST /retrieve/v2` — Document-scoped retrieval (Anti-IDOR)
+
+Same pipeline as `/retrieve/v1` but **document-scoped**: `document_id_list` is mandatory and every id must be owned by the authenticated caller; personal attachment chunks are the primary use-case (surfaced by the `/mcp/v1` `retrieve` tool).
+
+```bash
+curl -X POST http://localhost:8000/retrieve/v2 \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user-123" \
+  -d '{"query": "summary", "document_id_list": ["01J9AAA", "01J9BBB"]}'
+```
+
+**Request:** `query` (required), `document_id_list` (1–100 ids, required), `top_k`, `min_score`.
+
+**Responses:** `200 { chunks[] }` — same chunk shape as `/retrieve/v1`. `403 DOCUMENT_FORBIDDEN` if any id is unknown, not owned by the caller, or the caller is unauthenticated. `422` if `document_id_list` is absent, empty, or over 100 ids.
+
+---
+
 ## Feedback
 
 ### `POST /feedback/v1` — Record a vote against a chat source
@@ -837,6 +854,16 @@ Optional `retrieve` arguments (`source_app`, `source_meta`, `min_score`) must be
 
 Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
 
+`POST /mcp/v1` — Document-scoped MCP server (JSON-RPC 2.0). Exposes a single `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block. Designed for chat agents whose retrieval must stay inside a specific document set.
+
+| Method | Purpose |
+|---|---|
+| `initialize` | Capability negotiation (shared transport, same as `/mcp/v1`). |
+| `tools/list` | Returns exactly one tool: `retrieve` (name, `inputSchema` with required `query` + `document_id_list` [1–100 ids], `additionalProperties:false`). |
+| `tools/call retrieve` | Anti-IDOR ownership check before ES access; returns `structuredContent.sources` + `content[0].text` markdown digest. |
+
+**Error codes:** `DOCUMENT_FORBIDDEN` → `{code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}` (any id unknown or not owned by caller; unauthenticated caller). Missing/empty `document_id_list` → `{code:-32602, data:{error_code:"MCP_TOOL_INPUT_INVALID"}}`. Unknown tool → `{code:-32602, data:{error_code:"MCP_TOOL_NOT_FOUND"}}`.
+
 ## Embedding Model Lifecycle (admin)
 
 `POST /embedding/v1/{promote,cutover,rollback,commit,abort}` plus `GET /embedding/v1/state` and `GET /embedding/v1/cutover/preflight` drive a zero-downtime embedding-model swap (B50). State machine: `IDLE → promote → CANDIDATE → cutover → CUTOVER → {commit|rollback}`; `CANDIDATE → abort → IDLE`.
@@ -864,15 +891,17 @@ Cutover hard gates: `state_is_candidate`, `field_dim_matches`, `candidate_covera
 
 ## Attachments (`/chatagent/v3/attachments`)
 
-In-conversation file attachments for chat sessions. Users can attach files to a thread and reference their content in chat turns. Attachments are stored encrypted at rest and accessible across live chat, session history, and stream reconnect. Registered only when both `RAGENT_KEK_BASE64` and `RAGENT_ENCRYPTED_DEK_BASE64` are set.
+In-conversation file attachments for chat sessions. Attachments ride the standard ingest pipeline (stored in MinIO, chunked and embedded into ES `chunks_v1`); a `session_documents` link table binds each upload to its thread. Always registered (no KEK gating).
 
 **MIME types supported:** `text/plain`, `text/markdown`, `text/html`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (DOCX), `application/vnd.openxmlformats-officedocument.presentationml.presentation` (PPTX), `application/pdf`.
+
+**Auth:** `X-User-Id` header required for all attachment endpoints. Anonymous callers receive `403 AUTH_REQUIRED`.
 
 **Defaults:** max size 50 MB (env var `ATTACHMENT_MAX_SIZE_BYTES`).
 
 ### `POST /chatagent/v3/attachments/upload` — Upload an attachment
 
-Fast intake only (T-CAT.W2): stores the raw file and an `UPLOADED` row, then enqueues async processing (`attachment.process` worker task) and returns immediately. The pipeline run + AST encryption happen out-of-request; poll `GET /chatagent/v3/attachments/{attachmentId}` for completion.
+Validates MIME/size, calls the ingest pipeline (`source_app="chat_attachment"`, unique `source_id`), creates a `session_documents` link row, and returns `202 Accepted`. Poll `GET /chatagent/v3/attachments/{attachmentId}` for READY status before referencing in chat.
 
 **Request:** `multipart/form-data`
 - `file` — the attachment file (required)
@@ -894,17 +923,16 @@ curl -X POST "http://localhost:8000/chatagent/v3/attachments/upload" \
 ```
 
 **Errors:**
-- `415 ATTACHMENT_MIME_UNSUPPORTED` — MIME type not in allow-list (after extension fallback). Returned as a standard RFC 9457 `problem()` body (T-CAT.W10), not a raw FastAPI `HTTPException`.
-- `413 ATTACHMENT_TOO_LARGE` — file size exceeds cap. Checked twice: a cheap early `file.size` check in the router, then an authoritative post-read check in `ChatAttachmentService.upload()` (raises `FileTooLarge`) for transfers that omit a size hint.
-- `422 ATTACHMENT_PARSE_FAILED` — AST building failed during async processing (surfaced via `status=FAILED` on poll, not on the upload response).
-
-**Business-step logs:** `attachments.upload_request` / `attachments.upload_rejected_mime` (router); `chat_attachment.upload_started` / `chat_attachment.upload_completed` / `chat_attachment.upload_failed` (service, fast intake only); `chat_attachment.process_completed` / `chat_attachment.process_failed` (service, async worker — carries a `stage` field identifying which phase of processing failed).
+- `403 AUTH_REQUIRED` — `X-User-Id` header absent or empty.
+- `415 ATTACHMENT_MIME_UNSUPPORTED` — MIME type not in allow-list (after extension fallback).
+- `413 ATTACHMENT_TOO_LARGE` — file size exceeds cap.
+- `422 ATTACHMENT_PARSE_FAILED` — pipeline rejected the file during async processing (surfaced via `status=FAILED` on poll).
 
 ### `GET /chatagent/v3/attachments/{attachmentId}` — Poll attachment status
 
-Polls a single attachment's processing status. Clients poll this after upload with backoff until `status` is `READY` or `FAILED`.
+Polls a single attachment's processing status. Clients poll after upload with backoff until `status` is `READY` or `FAILED`.
 
-`status` is one of `UPLOADED` (raw bytes stored, processing pending), `PROCESSING` (worker claimed, pipeline+encryption running), `READY` (artifacts persisted, resolvable in chat), `FAILED`.
+`status` values: `PENDING` / `UPLOADED` → mapped to `PROCESSING` in the response; `READY`; `FAILED`.
 
 ```bash
 curl "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNPQRSTVWXYZ" \
@@ -924,16 +952,13 @@ curl "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNPQRSTVWXYZ"
 }
 ```
 
-`errorCode`/`errorReason` are set when `status="FAILED"` (e.g. `PIPELINE_UNEXPECTED_ERROR`).
-
-Reads are scoped to the requesting user (`X-User-Id`, defaulting to `anonymous`): an attachment owned by a different user is indistinguishable from a missing one.
-
 **Errors:**
+- `403 AUTH_REQUIRED` — `X-User-Id` header absent or empty.
 - `404 ATTACHMENT_NOT_FOUND` — unknown `attachmentId`, or owned by a different user.
 
 ### `GET /chatagent/v3/attachments` — List thread attachments
 
-Lists all attachments for a conversation thread, scoped to the requesting user (`X-User-Id`, defaulting to `anonymous`) — another user's attachments on the same thread are not returned.
+Lists all attachments for a conversation thread, scoped to the requesting user.
 
 **Query params:**
 - `threadId` — thread ID (required)
@@ -961,9 +986,11 @@ curl "http://localhost:8000/chatagent/v3/attachments?threadId=thread_1" \
   -H "X-User-Id: alice"
 ```
 
+**Errors:** `403 AUTH_REQUIRED` if unauthenticated.
+
 ### `GET /chatagent/v3/attachments/mine` — List every attachment for the caller
 
-Lists every attachment the requesting user has uploaded, across all threads (unlike `GET /chatagent/v3/attachments`, which is scoped to a single thread). Registered before `GET /chatagent/v3/attachments/{attachmentId}` so the literal `mine` path segment resolves to this route rather than being parsed as an `attachmentId`.
+Lists every attachment the requesting user has uploaded, across all threads.
 
 **Response (200 OK):** same shape as `GET /chatagent/v3/attachments` above.
 
@@ -975,11 +1002,12 @@ curl "http://localhost:8000/chatagent/v3/attachments/mine" \
 
 ### `DELETE /chatagent/v3/attachments/{attachmentId}` — Delete an attachment
 
-Deletes an attachment's storage objects (raw file + both AST artifacts) and DB rows. Scoped to the requesting user (`X-User-Id`, defaulting to `anonymous`) — a missing or foreign-owned `attachmentId` returns the same `404` as the GET endpoints. Storage-delete failures are fail-soft per object (logged, not blocking) so a stale S3 object can never prevent the DB row from being removed.
+Deletes the ingest document (ES chunks + MinIO objects + DB row) and removes the `session_documents` link. Scoped to the requesting user — a missing or foreign-owned `attachmentId` returns `404`.
 
 **Response:** `204 No Content` on success.
 
 **Errors:**
+- `403 AUTH_REQUIRED` — `X-User-Id` header absent or empty.
 - `404 ATTACHMENT_NOT_FOUND` — unknown `attachmentId`, or owned by a different user.
 
 **Example:**
@@ -988,7 +1016,7 @@ curl -X DELETE "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNP
   -H "X-User-Id: alice"
 ```
 
-**Note:** `DELETE /chatagent/v3/session` (existing session-delete proxy) also cascades this same deletion to every attachment in the session, once the upstream session delete succeeds — no separate call is needed when deleting a whole session.
+**Note:** `DELETE /chatagent/v3/session` also cascades this deletion to every attachment in the session once the upstream session delete succeeds — no separate call needed when deleting a whole session.
 
 ---
 

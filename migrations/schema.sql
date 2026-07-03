@@ -1,5 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
--- Latest migration folded in: 014_chat_attachments.sql
+-- Latest migration folded in: 015_session_documents.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS documents (
   -- 006_documents_error_code.sql: failure diagnostics for async task failures.
   error_code       VARCHAR(64)  NULL,
   error_reason     VARCHAR(255) NULL,
+  -- 015_session_documents.sql: raw byte size persisted by the chat-attachment
+  -- upload path (AttachmentInfo.sizeBytes); NULL for inline/file ingests.
+  -- Appended last so ALTER TABLE ADD COLUMN output matches this snapshot.
+  size_bytes       BIGINT UNSIGNED NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_document_id (document_id),
   INDEX idx_status_updated (status, updated_at),
@@ -87,48 +91,23 @@ CREATE TABLE IF NOT EXISTS feedback (
   CONSTRAINT ck_vote_unit CHECK (vote IN (-1, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 014_chat_attachments.sql: chat-attachment metadata + per-AST-variant
--- storage pointers, including PROCESSING (async worker hand-off) and
--- error_code/error_reason failure diagnostics (T-CAT.7/T-CAT.W2). No
--- `introduced_run_id` — the `<hidden><attachments>` block already binds
--- the attachment to its turn. Squashes the former 015 (content_type
--- column) and 016 (FK removal) revisions into this one file.
-CREATE TABLE IF NOT EXISTS chat_attachments (
-  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  attachment_id CHAR(26)     NOT NULL,
-  thread_id     VARCHAR(64)  NOT NULL,
-  create_user   VARCHAR(64)  NOT NULL,
-  filename      VARCHAR(256) NOT NULL,
-  mime_type     VARCHAR(128) NOT NULL,
-  size_bytes    BIGINT UNSIGNED NOT NULL,
-  status        ENUM('UPLOADED','PROCESSING','READY','FAILED') NOT NULL DEFAULT 'UPLOADED',
-  created_at    DATETIME(6)  NOT NULL,
-  updated_at    DATETIME(6)  NOT NULL,
-  error_code    VARCHAR(64)  NULL,
-  error_reason  VARCHAR(255) NULL,
+-- 015_session_documents.sql: chat attachments now ride the standard ingest
+-- pipeline (documents + ES chunks_v1); this link table binds a chatagent
+-- session (twp-ai thread_id — same value) to the documents uploaded in it.
+-- Business identity is the (session_id, document_id) tuple (uq_session_document);
+-- a pure link table has no standalone Base32 business id. No physical FK on
+-- document_id (docs/00_rule.md "No Physical Foreign Keys").
+CREATE TABLE IF NOT EXISTS session_documents (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  session_id  VARCHAR(64) NOT NULL,
+  document_id CHAR(26)    NOT NULL,
+  create_date DATETIME(6) NOT NULL,
+  create_user VARCHAR(64) NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_attachment_id (attachment_id),
-  INDEX idx_thread_created (thread_id, created_at),
-  INDEX idx_create_user_attachment (create_user, attachment_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- No physical FK on attachment_id (docs/00_rule.md "No Physical Foreign
--- Keys" — relationships belong only in application-level ORM models).
--- uq_attachment_variant's leftmost prefix already covers attachment_id
--- lookups. content_type folded in from the former 015 revision. char_count
--- (rendered markdown length, computed at creation time) gates
--- complete-vs-simplified selection in DocumentArtifactResolver against
--- ATTACHMENT_ARTIFACT_MAX_CHARS without decrypting the artifact first.
-CREATE TABLE IF NOT EXISTS chat_attachment_artifacts (
-  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  attachment_id CHAR(26)     NOT NULL,
-  variant       ENUM('complete','simplified') NOT NULL,
-  storage_key   VARCHAR(256) NOT NULL,
-  content_type  VARCHAR(64)  NOT NULL DEFAULT 'text/markdown',
-  char_count    INT UNSIGNED NOT NULL DEFAULT 0,
-  created_at    DATETIME(6)  NOT NULL,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_attachment_variant (attachment_id, variant)
+  UNIQUE KEY uq_session_document (session_id, document_id),
+  INDEX idx_session_created (session_id, create_date),
+  INDEX idx_document (document_id),
+  INDEX idx_create_user (create_user, session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 013_skills.sql: per-user reusable instruction/prompt presets ("skills").

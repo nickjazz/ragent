@@ -20,7 +20,9 @@ from ragent.errors.problem import problem
 from ragent.errors.upstream import LLMStreamInterruptedError
 from ragent.pipelines.retrieve import (
     EXCERPT_MAX_CHARS_DEFAULT,
+    build_attachment_exclusion_filter,
     build_es_filters,
+    combine_filters,
     dedupe_by_document,
     doc_to_source_entry,
     run_retrieval,
@@ -228,7 +230,10 @@ def _run_retrieval(retrieval_pipeline: Any, req: ChatRequest, last_user: str) ->
     return run_retrieval(
         retrieval_pipeline,
         query=last_user,
-        filters=build_es_filters(req.source_app, req.source_meta),
+        filters=combine_filters(
+            build_es_filters(req.source_app, req.source_meta),
+            build_attachment_exclusion_filter(),
+        ),
         top_k=req.top_k,
         min_score=req.min_score,
     )

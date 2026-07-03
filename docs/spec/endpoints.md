@@ -25,7 +25,7 @@
 | DELETE | `/ingest/v1/{id}`          | `X-User-Id` | — | `204` idempotent |
 | POST   | `/ingest/v1/{id}/rerun`    | `X-User-Id` | — | `202 { document_id }` — manual re-dispatch of `ingest.pipeline` for non-READY/non-DELETING rows; `404 INGEST_NOT_FOUND` / `409 INGEST_NOT_RERUNNABLE` per S41. |
 | POST   | `/ingest/v1/upload`        | `X-User-Id` | `multipart/form-data` (server stages to `__default__` MinIO; identical downstream to inline) | `202 { document_id }` |
-| POST   | `/ops/v1/retry`            | `X-User-Id` | `{ statuses[], dry_run?, source_app?, source_id?, created_after?, limit? }` — batch force-retry stuck ingest documents, bypassing the reconciler's redispatch window | `200 { dry_run, counts, queued, skipped }` — see [`docs/API.md §Batch force-retry`](../API.md#post-opsv1retry--batch-force-retry-stuck-documents) |
+| POST   | `/ops/v1/retry`            | `X-User-Id` | `{ statuses[], dry_run?, source_app?, source_id?, created_after?, limit? }` — batch force-retry stuck ingest documents, bypassing the reconciler's redispatch window | `200 { dry_run, counts, queued, skipped }` — see [`docs/00_API.md §Batch force-retry`](../00_API.md#post-opsv1retry--batch-force-retry-stuck-documents) |
 | POST   | `/retrieve/v1`             | `X-User-Id` | §3.4.4 schema (`query` required; rest default) | `200 { chunks[] }` per §3.4.4 |
 | POST   | `/chat/v1`                 | `X-User-Id` | §3.4.1 schema (`messages` required; rest default) | `200 application/json` per §3.4.2 |
 | POST   | `/chat/v1/stream`          | `X-User-Id` | §3.4.1 schema | `text/event-stream` per §3.4.3 (`data: {type:delta\|done\|error}`) |
@@ -38,7 +38,7 @@
 
 Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (permission, OpenFGA-backed) — see §3.5. ES queries remain permission-blind in every phase.
 
-**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/API.md §Embedding Model Lifecycle`](../API.md#embedding-model-lifecycle-admin):
+**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/00_API.md §Embedding Model Lifecycle`](../00_API.md#embedding-model-lifecycle-admin):
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|

@@ -5,8 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 from ragent.pipelines.retrieve._constants import EXCERPT_MAX_CHARS_DEFAULT
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP as _ATTACHMENT_SOURCE_APP
 
 _HAYSTACK_JOIN_MODE = {"rrf": "reciprocal_rank_fusion", "concatenate": "concatenate"}
+
+
+def combine_filters(base: dict | None, extra: dict) -> dict:
+    """AND-combine an optional base filter with an additional clause."""
+    if base is None:
+        return extra
+    return {"operator": "AND", "conditions": [base, extra]}
 
 
 def build_es_filters(source_app: str | None, source_meta: str | None) -> dict | None:
@@ -20,6 +28,34 @@ def build_es_filters(source_app: str | None, source_meta: str | None) -> dict | 
     if len(clauses) == 1:
         return clauses[0]
     return {"operator": "AND", "conditions": clauses}
+
+
+_ATTACHMENT_EXCLUSION_FILTER: dict = {
+    "field": "source_app",
+    "operator": "!=",
+    "value": _ATTACHMENT_SOURCE_APP,
+}
+
+
+def build_attachment_exclusion_filter() -> dict:
+    """Exclude chat_attachment chunks from corpus-wide queries (/retrieve/v1, /chat).
+
+    Attachment documents are personal files scoped to a session owner; they
+    must be retrieved via /retrieve/v2 (anti-IDOR gate), never surfaced through
+    the shared corpus.
+    """
+    return _ATTACHMENT_EXCLUSION_FILTER
+
+
+def build_document_id_filter(document_ids: list[str]) -> dict:
+    """Haystack filter restricting retrieval to an explicit document set.
+
+    The `in` operator compiles to an ES `terms` clause inside the retriever's
+    bool.filter context — the isolation guarantee of /retrieve/v2.
+    """
+    # verified against haystack-elasticsearch (see test_retrieve_v2's
+    # _normalize_filters assertion pinning the compiled ES query shape).
+    return {"field": "document_id", "operator": "in", "value": list(document_ids)}
 
 
 def dedupe_by_document(docs: list[Any]) -> list[Any]:

@@ -17,13 +17,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ragent.routers.mcp import create_mcp_router
+from tests.helpers import bypass_retrieve_v2_service
 
 
 @pytest.fixture
 def app() -> FastAPI:
     pipeline = MagicMock()
     a = FastAPI()
-    a.include_router(create_mcp_router(retrieval_pipeline=pipeline))
+    a.include_router(
+        create_mcp_router(
+            retrieval_pipeline=pipeline, retrieve_v2_service=bypass_retrieve_v2_service()
+        )
+    )
     return a
 
 
@@ -91,7 +96,7 @@ def test_tools_call_pipeline_failure(app: FastAPI, monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _boom)
     client = TestClient(app)
-    body = _call(client, name="retrieve", arguments={"query": "q"})
+    body = _call(client, name="retrieve", arguments={"query": "q", "document_id_list": ["d1"]})
     assert "result" not in body
     err = body["error"]
     assert err["code"] == -32001

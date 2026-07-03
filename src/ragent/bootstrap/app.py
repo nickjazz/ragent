@@ -41,6 +41,7 @@ from ragent.routers.health import create_health_router
 from ragent.routers.ingest import create_router as create_ingest_router
 from ragent.routers.mcp import create_mcp_router
 from ragent.routers.retrieve import create_retrieve_router
+from ragent.routers.retrieve_v2 import create_retrieve_v2_router
 from ragent.routers.skill import create_skill_router
 from ragent.utility.env import float_env as _float_env
 from ragent.utility.env import list_env as _list_env
@@ -341,7 +342,6 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     # Importing the workers module triggers `@broker.task` decorator
     # registration so that `dispatcher.enqueue(label, ...)` can resolve
     # task labels at producer side (B25).
-    import ragent.workers.attachment  # noqa: F401
     import ragent.workers.backfill  # noqa: F401
     import ragent.workers.ingest  # noqa: F401
     from ragent.bootstrap.broker import broker as taskiq_broker
@@ -412,6 +412,15 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
         inline_max_bytes=container.ingest_inline_max_bytes,
         file_max_bytes=container.ingest_file_max_bytes,
         list_max_limit=container.ingest_list_max_limit,
+    )
+
+    from ragent.services.attachment_ingest_service import AttachmentIngestService
+
+    attachment_svc = AttachmentIngestService(
+        ingest_service=ingest_svc,
+        session_document_repo=container.session_document_repo,
+        document_repo=container.doc_repo,
+        max_size_bytes=container.attachment_max_size_bytes,
     )
 
     app.include_router(create_ingest_router(svc=ingest_svc))
@@ -491,19 +500,24 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 chat_stream_store=container.chat_stream_store,
                 nats_publisher=container.nats_publisher,
                 stream_idle_timeout=_float_env("CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS", 30.0),
-                document_artifact_resolver=container.document_artifact_resolver,
-                chat_attachment_service=container.chat_attachment_service,
+                attachment_context_resolver=container.attachment_context_resolver,
+                attachment_service=attachment_svc,
                 attachment_max_files=container.attachment_max_files,
             )
         )
-    if container.chat_attachment_service is not None:
-        app.include_router(
-            create_attachments_router(
-                service=container.chat_attachment_service,
-                repository=container.attachment_repository,
-                max_size_bytes=container.attachment_max_size_bytes,
-            )
+    app.include_router(
+        create_attachments_router(
+            service=attachment_svc,
+            max_size_bytes=container.attachment_max_size_bytes,
         )
+    )
+    app.include_router(
+        create_retrieve_v2_router(
+            retrieval_pipeline=container.retrieval_pipeline,
+            retrieve_v2_service=container.retrieve_v2_service,
+            excerpt_max_chars=container.excerpt_max_chars,
+        )
+    )
     if container.feedback_hmac_secret is not None:
         app.include_router(
             create_feedback_router(
@@ -517,6 +531,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     app.include_router(
         create_mcp_router(
             retrieval_pipeline=container.retrieval_pipeline,
+            retrieve_v2_service=container.retrieve_v2_service,
             skill_service=container.skill_service,
             excerpt_max_chars=container.excerpt_max_chars,
         )

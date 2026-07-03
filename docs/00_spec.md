@@ -219,19 +219,19 @@ Request: `{request_id, feedback_token, query_text, shown_sources, source_app, so
 
 > Full spec: [docs/spec/twp_ai.md](spec/twp_ai.md) — run-input schema, SSE event types (`RUN_STARTED`/`TEXT_MESSAGE_*`/`TOOL_CALL_*`/`RUN_FINISHED`/`RUN_ERROR`), tool-result boundary.
 
-Mounted at `POST /twp/v1/run`. Requires `TWP_DEFAULT_MODEL` env var. Standard auth applies. See [`docs/API.md §twp-ai`](API.md#twp-ai) for curl examples.
+Mounted at `POST /twp/v1/run`. Requires `TWP_DEFAULT_MODEL` env var. Standard auth applies. See [`docs/00_API.md §twp-ai`](00_API.md#twp-ai) for curl examples.
 
 #### 3.4.7–3.4.8 `POST /chatagent/v3` — twp-ai protocol and session management
 
 > Full spec: [docs/spec/chatagent_v3.md](spec/chatagent_v3.md) — request/upstream conversion, session-id ownership (Model B), SSE event mapping (`TEXT_MESSAGE`/`REASONING`/`TOOL_CALL_*`/`RUN_ERROR`), human-in-the-loop interrupts (`RUN_FINISHED.outcome` + `resume`), error contract, and session-history reshaping (role mapping, machine-context strip, backward-compat legacy `<context>` strip).
 
-Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rate limit, and timeout with `/chatagent/v2`. Every failure is emitted as `RUN_ERROR` over `200 text/event-stream` (v3 never returns HTTP 429/502/504). Human-in-the-loop: an upstream `isInterrupt` ends the run with `RUN_FINISHED.outcome={type:"interrupt", interrupts:[…]}` (success otherwise); the client answers via request `resume` (`resolved` → upstream `lastMessageId`; `cancelled` → no upstream call). Session routes (`/sessionList`, `/session` GET/PUT/DELETE, `/session/read`) are JSON proxies with twp-ai role mapping applied; failures use HTTP 504/502 (not `RUN_ERROR`). `/sessionList` also carries per-session live status (`running` spinner / `hasNewReply` dot); transitions are pushed in realtime by publishing to a per-user **NATS** subject (`session.<user_id>.status`) that the frontend subscribes to over its own connection (snapshot+delta; NATS unset → snapshot-only). "Read" (dropping the `hasNewReply` dot) is an **explicit client signal** — `POST /chatagent/v3/session/read` — not inferred from loading history or from a stream draining to `eos`. See [`docs/API.md §ChatAgent`](API.md#chatagent) for curl examples.
+Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rate limit, and timeout with `/chatagent/v2`. Every failure is emitted as `RUN_ERROR` over `200 text/event-stream` (v3 never returns HTTP 429/502/504). Human-in-the-loop: an upstream `isInterrupt` ends the run with `RUN_FINISHED.outcome={type:"interrupt", interrupts:[…]}` (success otherwise); the client answers via request `resume` (`resolved` → upstream `lastMessageId`; `cancelled` → no upstream call). Session routes (`/sessionList`, `/session` GET/PUT/DELETE, `/session/read`) are JSON proxies with twp-ai role mapping applied; failures use HTTP 504/502 (not `RUN_ERROR`). `/sessionList` also carries per-session live status (`running` spinner / `hasNewReply` dot); transitions are pushed in realtime by publishing to a per-user **NATS** subject (`session.<user_id>.status`) that the frontend subscribes to over its own connection (snapshot+delta; NATS unset → snapshot-only). "Read" (dropping the `hasNewReply` dot) is an **explicit client signal** — `POST /chatagent/v3/session/read` — not inferred from loading history or from a stream draining to `eos`. See [`docs/00_API.md §ChatAgent`](00_API.md#chatagent) for curl examples.
 
 #### 3.4.9 `POST /chatagent/v3/attachments/upload`, `GET/DELETE /chatagent/v3/attachments/{attachmentId}`, `GET /chatagent/v3/attachments`, `GET /chatagent/v3/attachments/mine` — in-conversation file attachments
 
-> Full spec: [docs/spec/chat_attachments.md](spec/chat_attachments.md) — MIME allow-list, unprotect whitelist, encrypted AST storage (KEK/DEK), `chat_attachment` pipeline, async worker processing + polling contract (T-CAT.W2, spec §7), `<attachments>` persistence in `<hidden>`, reconstruction paths (live POST / session history; Redis reconnect needs no attachment-specific code — see spec §8), deletion + cross-thread listing (T-CAT.W11, spec §8.1).
+> Full spec: [docs/spec/chat_attachments.md](spec/chat_attachments.md) — MIME allow-list, `session_documents` link table, ingest pipeline, status mapping, metadata-only `<attachments>` block, Anti-IDOR ownership, deletion cascade (T-CAT.R1/R2).
 
-Lets a user attach a file to a `/chatagent/v3` turn. `POST .../upload` validates MIME + size, stores raw bytes (MinIO), writes a `chat_attachments` row (`UPLOADED`), and enqueues `attachment.process` — returning `202` with `attachmentId` immediately (mirrors `POST /ingest/v1`). The worker (`ragent.worker`) then runs the `chat_attachment` pipeline (load → optional unprotect → AST build), encrypts both AST variants (AES-256-GCM, process-wide DEK unwrapped from `RAGENT_KEK_BASE64`/`RAGENT_ENCRYPTED_DEK_BASE64` at startup), writes artifacts, and promotes the row to `READY`/`FAILED`. Clients poll `GET .../attachments/{attachmentId}` (mirrors `GET /ingest/v1/{id}`) for `status`/`errorCode`/`errorReason`; the list endpoint returns the same fields. `GET .../attachments/mine` lists every attachment the caller has uploaded across all threads. `DELETE .../attachments/{attachmentId}` removes both the storage objects and DB rows (`204`/`404`, ownership-scoped); `DELETE /chatagent/v3/session` cascades the same deletion to every attachment in the session once the upstream session delete succeeds. `POST /chatagent/v3` resolves `attachment_ids` into an `<attachments>` block inside the existing `<hidden>` preamble, folded into the outbound upstream message before the run starts; `GET /chatagent/v3/reconnect` needs no attachment-specific code (it only replays buffered upstream *response* frames, which never carry `<hidden>` content), and session-history replay re-extracts the block from the persisted turn the same way it already does for `<context>`/`<state>`.
+Lets a user attach a file to a `/chatagent/v3` turn. `POST .../upload` validates MIME + size, then delegates to the standard `IngestService` pipeline (`source_app=chat_attachment`, unique `source_id` per upload disabling supersede) and creates a `session_documents` link row — returning `202` with `attachmentId` (= `document_id`) immediately; unauthenticated callers receive `403 AUTH_REQUIRED`. The standard ingest worker processes the file (load → optional unprotect → chunk → embed → ES `chunks_v1`) and promotes the `documents` row to `READY`/`FAILED`. Clients poll `GET .../attachments/{attachmentId}` for `status`/`errorCode`/`errorReason`; `status` maps `PENDING`/`DELETING` → `PROCESSING`, passes `READY`/`FAILED`/`UPLOADED` through. `GET .../attachments/mine` lists every attachment the caller has uploaded across all threads. `DELETE .../attachments/{attachmentId}` removes ES chunks + MinIO objects + DB rows (`204`/`404`, session-ownership-scoped). `DELETE /chatagent/v3/session` cascades to every attachment in the session. `POST /chatagent/v3` resolves `attachment_ids` (or session history when omitted/empty/null) via `AttachmentContextResolver` into a **metadata-only** `<attachments>` block — `[{"documentId":…,"filename":…,"uploadedAt":…}]` — never injecting file content; the LLM is instructed to call the `/mcp/v1` `retrieve` tool autonomously. Sessions with no uploaded files receive no block and no instruction (zero overhead).
 
 ---
 
@@ -339,7 +339,7 @@ envelope — never an HTTP 500 — matching the `retrieve` tool.
 **Interface notes (2026-05-27):**
 - `tools/list` response includes `annotations: {readOnlyHint: true}` on the `retrieve` tool — signals to MCP hosts (protocol 2025-03-26+) that the tool is read-only. Clients on earlier pinned version (`"2024-11-05"`) silently ignore the field.
 - `excerpt_max_chars` is threaded into the MCP handler at router-creation time (same `EXCERPT_MAX_CHARS` env var used by `POST /retrieve/v1`). Previously the MCP surface always used the hardcoded 512-char default regardless of operator config.
-- Full API call chain (upstream services, exception handling, process-exit conditions): [docs/api_call_chains.md](api_call_chains.md).
+- Full API call chain (upstream services, exception handling, process-exit conditions): [docs/00_api_call_chains.md](00_api_call_chains.md).
 
 ### 3.9 MCP Hub Microservice
 
@@ -363,7 +363,39 @@ Per-user, owner-isolated CRUD over reusable instruction presets, injected into a
 
 All business paths carry a `/v<N>` version segment (§API Endpoint Naming, `00_rule.md`). Covers ingest (incl. v2 JSON-only request override), ops, retrieve, chat, feedback, mcp, health/metrics probes, and the embedding-lifecycle admin routes.
 
-> Full endpoint table + request/response shapes: [`docs/spec/endpoints.md`](spec/endpoints.md)
+| Method | Path | P1 Auth | Request | Response |
+|---|---|---|---|---|
+| POST   | `/ingest/v1`               | `X-User-Id` | **JSON** (v2, see override above) | `202 { document_id }` |
+| GET    | `/ingest/v1/{id}`          | `X-User-Id` | — | `200 { status, attempt, updated_at }` |
+| GET    | `/ingest/v1?after=&limit=&source_id=&source_app=` | `X-User-Id` | — | `200 { items, next_cursor }` (limit ≤ 100; ordered `document_id DESC`; `source_id`/`source_app` are optional exact-match filters) |
+| DELETE | `/ingest/v1/{id}`          | `X-User-Id` | — | `204` idempotent |
+| POST   | `/ingest/v1/{id}/rerun`    | `X-User-Id` | — | `202 { document_id }` — manual re-dispatch of `ingest.pipeline` for non-READY/non-DELETING rows; `404 INGEST_NOT_FOUND` / `409 INGEST_NOT_RERUNNABLE` per S41. |
+| POST   | `/ingest/v1/upload`        | `X-User-Id` | `multipart/form-data` (server stages to `__default__` MinIO; identical downstream to inline) | `202 { document_id }` |
+| POST   | `/retrieve/v1`             | `X-User-Id` | §3.4.4 schema (`query` required; rest default) | `200 { chunks[] }` per §3.4.4 |
+| POST   | `/retrieve/v2`             | `X-User-Id` | `{ query, document_id_list: [str, …] (1–100, required), top_k?, min_score? }` | `200 { chunks[] }` — document-scoped retrieval; `403 DOCUMENT_FORBIDDEN` if any id is unknown or not owned by the caller; `422` if `document_id_list` absent/empty/over 100; unauthenticated → `403 DOCUMENT_FORBIDDEN`. |
+| POST   | `/chat/v1`                 | `X-User-Id` | §3.4.1 schema (`messages` required; rest default) | `200 application/json` per §3.4.2 |
+| POST   | `/chat/v1/stream`          | `X-User-Id` | §3.4.1 schema | `text/event-stream` per §3.4.3 (`data: {type:delta\|done\|error}`) |
+| POST   | `/feedback/v1`             | `X-User-Id` | §3.4.5 schema | `204` on success; `401`/`410`/`422` `application/problem+json` per §3.4.5. |
+| POST   | `/mcp/v1`               | `<RAGENT_USER_ID_HEADER>` (P1) / `<RAGENT_JWT_HEADER>` (P2) | JSON-RPC 2.0 envelope per §3.8 — tools: `retrieve` (`query` + `document_id_list` required, 1–100 ids; Anti-IDOR ownership check); optionally `create_skill` | `200` JSON-RPC response; DOCUMENT_FORBIDDEN → `{code:-32002}`; auth failure (401) returns `application/problem+json` per §3.8.1. |
+| GET    | `/livez`                | none        | — | `200 {"status":"ok"}` — process up; no dependency probes |
+| GET    | `/startupz`             | none        | — | `200 {"status":"ok"}` once all probes have been green at least once since boot; `503` until then. Latch: flips permanently to ready after first green `/readyz` sweep. |
+| GET    | `/readyz`               | none        | — | `200` if all dep probes pass; else `503 application/problem+json` listing failed deps. Probes: **MariaDB** (`SELECT 1`), **ES** (`GET /_cluster/health` + `analysis-icu` plugin loaded + every `resources/es/*.json` index exists; B26, I5), **Redis broker & rate-limiter** (`PING` against active topology per `REDIS_MODE`; B27), **MinIO** (`ListBuckets`). Each probe ≤ 2 s. |
+| GET    | `/metrics`              | none        | — | `200 text/plain; version=0.0.4` — Prometheus exposition (counters/histograms in §3.7) |
+
+Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (permission, OpenFGA-backed) — see §3.5. ES queries remain permission-blind in every phase.
+
+**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/00_API.md §Embedding Model Lifecycle`](00_API.md#embedding-model-lifecycle-admin):
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/embedding/v1/promote` | `X-User-Id` | Open migration; PUT ES mapping + enable dual-write → `200 {state:"CANDIDATE"}` |
+| POST | `/embedding/v1/cutover` | `X-User-Id` | Switch reads to candidate (subject to preflight) → `200 {state:"CUTOVER"}` |
+| POST | `/embedding/v1/rollback` | `X-User-Id` | Revert reads to stable → `200 {state:"CANDIDATE"}` |
+| POST | `/embedding/v1/commit` | `X-User-Id` | Promote candidate to stable; retire old field → `200 {state:"IDLE"}` |
+| POST | `/embedding/v1/abort` | `X-User-Id` | Drop candidate → `200 {state:"IDLE"}` |
+| POST | `/embedding/v1/backfill` | `X-User-Id` | Enqueue backfill task → `200 {state, queued}` |
+| GET  | `/embedding/v1/state` | `X-User-Id` | Registry snapshot → `200 {stable, candidate, read, retired}` |
+| GET  | `/embedding/v1/cutover/preflight` | `X-User-Id` | Run gates without action → `200 {pass, gates}` |
 
 ### 4.1.1 Error Response Schema (B5)
 
@@ -450,7 +482,7 @@ All 3rd-party calls: timeout/retry/backoff per `00_rule.md`; circuit-breaker on 
 
 > Full schemas: [`docs/spec/data_structures.md`](spec/data_structures.md)
 
-MariaDB tables: `documents`, `feedback`, `system_settings`, `skills`, `chat_attachments`, `chat_attachment_artifacts`. ES indexes: `chunks_v1` (text + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
+MariaDB tables: `documents`, `feedback`, `system_settings`, `skills`, `session_documents`. ES indexes: `chunks_v1` (text + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
 
 ---
 

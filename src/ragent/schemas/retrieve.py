@@ -92,6 +92,48 @@ class RetrieveRequest(BaseModel):
         return validate_filter_str(v, name="source_meta", max_len=FILTER_META_MAX_LEN)
 
 
+class RetrieveV2Request(BaseModel):
+    """POST /retrieve/v2 — retrieval scoped to an explicit document set.
+
+    `document_id_list` is mandatory: the endpoint never searches the whole
+    corpus, and every id must be owned by the authenticated caller (403
+    DOCUMENT_FORBIDDEN otherwise — anti-IDOR, spec §3.4.6).
+    """
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Natural-language question or topic to search for within the "
+            "listed documents. Write as a full question or statement — "
+            "both semantic and keyword matching are applied."
+        ),
+    )
+    document_id_list: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description=(
+            "Document ids to search within (1–100, required). Every id "
+            "must belong to the authenticated caller; any foreign or unknown "
+            "id rejects the whole request with 403."
+        ),
+    )
+    top_k: int = Field(
+        default=DEFAULT_TOP_K,
+        ge=1,
+        le=200,
+        description=(
+            f"Maximum chunks to return, ranked by relevance (1–200, default {DEFAULT_TOP_K})."
+        ),
+    )
+    min_score: float | None = Field(
+        default=DEFAULT_MIN_SCORE,
+        ge=0.0,
+        description="Exclude chunks below this relevance score (≥ 0.0).",
+    )
+
+
 class ChunkEntry(BaseModel):
     document_id: str | None
     source_app: str | None

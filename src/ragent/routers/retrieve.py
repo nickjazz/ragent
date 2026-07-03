@@ -12,7 +12,9 @@ from opentelemetry import trace
 from ragent.auth.deps import get_user_id
 from ragent.pipelines.retrieve import (
     EXCERPT_MAX_CHARS_DEFAULT,
+    build_attachment_exclusion_filter,
     build_es_filters,
+    combine_filters,
     dedupe_by_document,
     doc_to_source_entry,
     run_retrieval,
@@ -45,7 +47,10 @@ def create_retrieve_router(
                     run_retrieval,
                     retrieval_pipeline,
                     query=body.query,
-                    filters=build_es_filters(body.source_app, body.source_meta),
+                    filters=combine_filters(
+                        build_es_filters(body.source_app, body.source_meta),
+                        build_attachment_exclusion_filter(),
+                    ),
                     top_k=body.top_k,
                     min_score=body.min_score,
                 )

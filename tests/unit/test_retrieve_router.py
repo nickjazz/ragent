@@ -13,6 +13,7 @@ from haystack.dataclasses import Document
 
 from ragent.pipelines.retrieve import run_retrieval
 from ragent.routers.retrieve import create_retrieve_router
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 
 
 def _make_doc(
@@ -101,6 +102,37 @@ def test_chunk_response_source_meta_none_when_not_set(app, monkeypatch):
     assert resp.status_code == 200
     chunk = resp.json()["chunks"][0]
     assert chunk["source_meta"] is None
+
+
+# ---------------------------------------------------------------------------
+# Attachment exclusion filter
+# ---------------------------------------------------------------------------
+
+
+def test_retrieve_v1_excludes_chat_attachment_chunks(app, monkeypatch):
+    """corpus-wide /retrieve/v1 must never surface chat_attachment documents."""
+    calls: list[dict] = []
+    client = _client_capture(app, monkeypatch, calls)
+    client.post("/retrieve/v1", json={"query": "q"})
+    filters = calls[0]["filters"]
+    # combine_filters wraps an AND when base is None (no source_app/meta) →
+    # returns the exclusion filter directly.
+    assert filters == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}
+
+
+def test_retrieve_v1_with_source_app_still_excludes_attachments(app, monkeypatch):
+    """When source_app is provided, combine_filters AND-combines with exclusion filter."""
+    calls: list[dict] = []
+    client = _client_capture(app, monkeypatch, calls)
+    client.post("/retrieve/v1", json={"query": "q", "source_app": "confluence"})
+    filters = calls[0]["filters"]
+    assert filters == {
+        "operator": "AND",
+        "conditions": [
+            {"field": "source_app", "operator": "==", "value": "confluence"},
+            {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP},
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

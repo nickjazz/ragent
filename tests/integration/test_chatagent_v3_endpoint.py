@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.routers.chatagent_v3 import create_chatagent_v3_router
-from ragent.services.chat_attachment_service import ChatAttachmentService
+from ragent.services.attachment_ingest_service import AttachmentIngestService
 from tests.helpers import done_line as _done_line
 from tests.helpers import msg_line as _msg_line
 from tests.helpers import parse_sse_events as _events
@@ -18,7 +18,7 @@ from tests.helpers import real_agent_factory as _real_agent_factory
 from tests.helpers import resp_mock as _resp_mock
 
 
-def _make_app(*, chat_attachment_service=None):
+def _make_app(*, attachment_service=None):
     http_mock = MagicMock(spec=httpx.Client)
     app = FastAPI()
     app.include_router(
@@ -32,7 +32,7 @@ def _make_app(*, chat_attachment_service=None):
             agent_factory=_real_agent_factory(
                 http_mock, api_url="http://upstream", ap_name="IntegAP", auth="Bearer up"
             ),
-            chat_attachment_service=chat_attachment_service,
+            attachment_service=attachment_service,
         )
     )
     return app, http_mock
@@ -329,8 +329,8 @@ def test_v3_session_delete_forwards_payload():
 
 def test_v3_session_delete_cascades_to_attachments():
     """A successful upstream session delete also cascades local attachments."""
-    attachment_service = AsyncMock(spec=ChatAttachmentService)
-    app, http_mock = _make_app(chat_attachment_service=attachment_service)
+    svc = AsyncMock(spec=AttachmentIngestService)
+    app, http_mock = _make_app(attachment_service=svc)
     http_mock.request.return_value = MagicMock(
         raise_for_status=MagicMock(return_value=None),
         json=MagicMock(return_value={"returnCode": 96200, "returnData": {}}),
@@ -345,13 +345,13 @@ def test_v3_session_delete_cascades_to_attachments():
         )
 
     assert r.status_code == 200
-    attachment_service.delete_by_thread.assert_awaited_once_with("s1")
+    svc.delete_by_session.assert_awaited_once_with("s1")
 
 
 def test_v3_session_delete_skips_cascade_when_upstream_fails():
     """A failed upstream delete must not trigger local attachment cleanup."""
-    attachment_service = AsyncMock(spec=ChatAttachmentService)
-    app, http_mock = _make_app(chat_attachment_service=attachment_service)
+    svc = AsyncMock(spec=AttachmentIngestService)
+    app, http_mock = _make_app(attachment_service=svc)
     http_mock.request.side_effect = httpx.TimeoutException("slow")
 
     with TestClient(app) as client:
@@ -363,14 +363,14 @@ def test_v3_session_delete_skips_cascade_when_upstream_fails():
         )
 
     assert r.status_code == 504
-    attachment_service.delete_by_thread.assert_not_called()
+    svc.delete_by_session.assert_not_called()
 
 
 def test_v3_session_delete_cascade_failure_does_not_mask_upstream_response():
-    """An exception from delete_by_thread is fail-soft: the upstream 200 still returns."""
-    attachment_service = AsyncMock(spec=ChatAttachmentService)
-    attachment_service.delete_by_thread.side_effect = RuntimeError("db down")
-    app, http_mock = _make_app(chat_attachment_service=attachment_service)
+    """An exception from delete_by_session is fail-soft: the upstream 200 still returns."""
+    svc = AsyncMock(spec=AttachmentIngestService)
+    svc.delete_by_session.side_effect = RuntimeError("db down")
+    app, http_mock = _make_app(attachment_service=svc)
     http_mock.request.return_value = MagicMock(
         raise_for_status=MagicMock(return_value=None),
         json=MagicMock(return_value={"returnCode": 96200, "returnData": {}}),

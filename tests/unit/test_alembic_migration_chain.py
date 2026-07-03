@@ -61,6 +61,39 @@ def test_verify_and_get_chain_matches_disk(env):
         assert Path(item["down_path"]).exists()
 
 
+def test_chain_head_is_015_session_documents(env):
+    head = env.MIGRATION_CHAIN[-1]
+    assert head["version"] == 15
+    assert head["upgrade"] == "015_session_documents.sql"
+    assert head["downgrade"] == "015_session_documents.sql"
+
+
+def test_015_upgrade_drops_attachment_tables_and_creates_session_documents(env):
+    sql = (env.UPGRADE_DIR / "015_session_documents.sql").read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS chat_attachment_artifacts" in sql
+    assert "DROP TABLE IF EXISTS chat_attachments" in sql
+    assert "CREATE TABLE IF NOT EXISTS session_documents" in sql
+    assert "UNIQUE KEY uq_session_document (session_id, document_id)" in sql
+    assert "ALTER TABLE documents ADD COLUMN size_bytes BIGINT UNSIGNED NULL" in sql
+
+
+def test_015_downgrade_restores_previous_head(env):
+    sql = (env.DOWNGRADE_DIR / "015_session_documents.sql").read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS session_documents" in sql
+    assert "ALTER TABLE documents DROP COLUMN size_bytes" in sql
+    assert "CREATE TABLE IF NOT EXISTS chat_attachments" in sql
+    assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" in sql
+
+
+def test_schema_snapshot_reflects_015():
+    """migrations/schema.sql is updated in lockstep with the chain head."""
+    schema = (ENV_PY.parents[1] / "migrations" / "schema.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS session_documents" in schema
+    assert "CREATE TABLE IF NOT EXISTS chat_attachments" not in schema
+    assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" not in schema
+    assert "size_bytes" in schema
+
+
 def test_verify_and_get_chain_raises_on_gap(env, monkeypatch):
     monkeypatch.setattr(
         env,

@@ -67,6 +67,8 @@
 | `AUTH_TOKEN_EXPIRED`                 | 401             | JWT `exp` claim is in the past (T8.1a) | Auth middleware T8.2a |
 | `AUTH_CLAIM_MISSING`                 | 401             | `<RAGENT_JWT_CLAIM_USER_ID>` claim absent or empty (T8.1a) | Auth middleware T8.2a |
 | `AUTH_TOKEN_INVALID`                 | 401             | JWT absent, malformed, bad signature, wrong `iss`/`aud`, or any other JWKS failure (T8.1a) | Auth middleware T8.2a |
+| `AUTH_REQUIRED`                      | 403             | Attachment endpoint called without a resolved `user_id` (anonymous callers cannot own documents — fail-closed) | `attachments` router (T-CAT) |
+| `DOCUMENT_FORBIDDEN`                 | 403             | `/retrieve/v2` or `/mcp/v1` request targets a `document_id` that does not exist or belongs to another user (anti-IDOR; missing ids are treated the same as foreign ones to avoid existence-oracle leaks) | `RetrieveV2Service.assert_owner` |
 
 ---
 

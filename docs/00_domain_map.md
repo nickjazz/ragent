@@ -106,7 +106,7 @@
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
 
-> 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/chatagent_agent_backend.md`。
+> 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/spec/chatagent_agent_backend.md`。
 
 ---
 ### 2.3 Services（業務邏輯層）
@@ -130,8 +130,9 @@
 | `embedding/lifecycle.py` | embedding model 狀態機：draft → staging → active → retired（B50）|
 | `embedding/backfill.py` | backfill 長跑背景 op（enqueue 給 worker）|
 | `embedding/preflight.py` | embedding cutover 前置檢查：warmup + similarity gate |
-| `chat_attachment_service.py` | `upload()`(快速 intake，同步)：`DocumentStore.put`(raw bytes) → `attachment_repository.create()`(UPLOADED) → `dispatcher.enqueue("attachment.process", ...)`。`process()`(worker 呼叫，異步，T-CAT.W2)：`attachment_repository.claim_for_processing()`(UPLOADED→PROCESSING)→ 取回 raw bytes → `ChatAttachmentPipeline.run()` → `ASTCipher.encrypt_ast()` → `DocumentStore.put`(每個 artifact)→ `add_artifact` → `update_status(READY)`；例外時 terminalize 為 FAILED（`error_code`/`error_reason`），不 re-raise |
-| `document_artifact_resolver.py` | `attachment_ids` → `ContextItems`：`DocumentStore.get` → `ASTCipher.decrypt_ast` → 組裝給 `/chatagent/v3` 的 `<attachments>` 區塊 |
+| `attachment_ingest_service.py` | `upload()`：`IngestService.create_from_upload()` → `session_document_repo.create()`。`get/list_by_thread/list_by_user/delete/delete_by_session`：`session_documents` join `documents`，status 映射到 4-value 合約（PENDING/DELETING→PROCESSING）|
+| `attachment_context_resolver.py` | `resolve(session_id, user_id, attachment_ids)` → `AttachmentContext(files_json, instruction)` または `None`；顯式 ids 做 owner+session 校驗；session fallback 倒序＋latest flag；永不注入文件內容 |
+| `retrieve_v2_service.py` | `assert_owner(user_id, document_ids)`：`document_repo.get_by_document_ids()` 批次查；任一 id 不屬於 user → `DocumentForbidden` |
 
 ---
 ### 2.4 Repositories（資料持久層）
@@ -150,7 +151,7 @@
 | `document_repository.py` | `documents` 表 — CRUD、status 轉換、選舉（supersede）|
 | `feedback_repository.py` | `feedback` 表 — 投票記錄寫入 |
 | `system_settings_repository.py` | `system_settings` 表 — embedding model config 讀寫 |
-| `attachment_repository.py` | `chat_attachments` + `chat_attachment_artifacts` 表 — CRUD、依 `thread_id`/`create_user` 查詢；`claim_for_processing()` 原子 claim(UPLOADED→PROCESSING，鏡像 `DocumentRepository._atomic_claim`)；`update_status()` 可選寫入 `error_code`/`error_reason`(T-CAT.W2) |
+| `session_document_repository.py` | `session_documents` 表 — `create()`（INSERT IGNORE 幂等）、`list_by_session(session_id, create_user)`（create_date DESC）、`get_by_document`、`list_by_user`、`delete_by_document`、`delete_by_session() → list[document_id]` |
 | `skill_repository.py` | `skills` 表 — owner-scoped CRUD（每條語句都以 `user_id` 過濾；T-SK）|
 
 ---

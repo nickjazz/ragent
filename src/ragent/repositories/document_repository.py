@@ -54,6 +54,9 @@ class DocumentRow:
     # 006_documents_error_code.sql: persisted failure diagnostics.
     error_code: str | None = None
     error_reason: str | None = None
+    # 015_session_documents.sql: raw byte size persisted by the chat-attachment
+    # upload path; NULL for inline/file ingests.
+    size_bytes: int | None = None
 
     @classmethod
     def from_mapping(cls, m: Any) -> DocumentRow:
@@ -75,6 +78,7 @@ class DocumentRow:
             mime_type=m.get("mime_type"),
             error_code=m.get("error_code"),
             error_reason=m.get("error_reason"),
+            size_bytes=m.get("size_bytes"),
         )
 
 
@@ -152,17 +156,18 @@ class DocumentRepository:
         ingest_type: str = "inline",
         minio_site: str | None = None,
         mime_type: str | None = None,
+        size_bytes: int | None = None,
     ) -> str:
         stmt = text(
             """
             INSERT INTO documents
                 (document_id, create_user, source_id, source_app, source_title,
                  source_meta, source_url, object_key, ingest_type, minio_site,
-                 mime_type, status, attempt, created_at, updated_at)
+                 mime_type, size_bytes, status, attempt, created_at, updated_at)
             VALUES
                 (:document_id, :create_user, :source_id, :source_app, :source_title,
                  :source_meta, :source_url, :object_key, :ingest_type, :minio_site,
-                 :mime_type, 'UPLOADED', 0, NOW(6), NOW(6))
+                 :mime_type, :size_bytes, 'UPLOADED', 0, NOW(6), NOW(6))
             """
         )
         params = {
@@ -177,6 +182,7 @@ class DocumentRepository:
             "ingest_type": ingest_type,
             "minio_site": minio_site,
             "mime_type": mime_type,
+            "size_bytes": size_bytes,
         }
         for attempt in range(3):
             try:
@@ -199,6 +205,18 @@ class DocumentRepository:
             {"id": document_id},
         )
         return DocumentRow.from_mapping(row) if row else None
+
+    async def get_by_document_ids(self, ids: list[str]) -> dict[str, DocumentRow]:
+        """Batch fetch full rows keyed by document_id (any status)."""
+        if not ids:
+            return {}
+        rows = await self._fetch_all(
+            text("SELECT * FROM documents WHERE document_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            ),
+            {"ids": list(ids)},
+        )
+        return {r["document_id"]: DocumentRow.from_mapping(r) for r in rows}
 
     # ------------------------------------------------------------------
     # Locking

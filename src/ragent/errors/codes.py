@@ -92,6 +92,15 @@ class HttpErrorCode(StrEnum):
     # (v3 contract — see chatagent_v3.py module docstring).
     ATTACHMENT_TOO_MANY_FILES = "ATTACHMENT_TOO_MANY_FILES"  # 413
 
+    # Zero-trust surfaces (403) — chat-attachment redesign.
+    # AUTH_REQUIRED: attachment endpoints / retrieve v2 / mcp v2 fail closed
+    # when no authenticated user identity is present (no anonymous fallback).
+    # DOCUMENT_FORBIDDEN: /retrieve/v2 anti-IDOR — at least one requested
+    # document_id does not exist or is not owned by the caller (missing ids
+    # also return 403, never 404, to avoid an existence oracle).
+    AUTH_REQUIRED = "AUTH_REQUIRED"  # 403
+    DOCUMENT_FORBIDDEN = "DOCUMENT_FORBIDDEN"  # 403
+
     # Embedding-model lifecycle (B50, main). 409 on state-machine rejection;
     # 409 on cutover preflight failure; 422 on invalid promote payload;
     # 422 on field-name collision with a still-mapped retired field.

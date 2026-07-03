@@ -1,4 +1,12 @@
-"""T-CAT.12 — Attachments upload and retrieval endpoints (nested under /chatagent/v3)."""
+"""Attachments endpoints (nested under /chatagent/v3) — ingest-backed redesign.
+
+Wire contract (paths, payload shapes, status codes) is unchanged from the
+original T-CAT.12 surface; internally every endpoint now fronts
+AttachmentIngestService (documents + session_documents) and the whole surface
+fails closed (403 AUTH_REQUIRED) for unauthenticated callers — an anonymous
+document could never pass the /retrieve/v2 ownership check, so accepting it
+would only create unretrievable dead data.
+"""
 
 from __future__ import annotations
 
@@ -12,14 +20,14 @@ from ragent.auth.deps import get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.schemas.attachments import AttachmentMime
-from ragent.services.chat_attachment_service import (
-    ATTACHMENT_MAX_SIZE_BYTES_DEFAULT,
-    FileTooLarge,
-)
+from ragent.services.attachment_ingest_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
+from ragent.services.ingest_service import FileTooLarge
 
 if TYPE_CHECKING:
-    from ragent.repositories.attachment_repository import AttachmentRepository
-    from ragent.services.chat_attachment_service import ChatAttachmentService
+    from ragent.services.attachment_ingest_service import (
+        AttachmentIngestService,
+        AttachmentView,
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -48,7 +56,7 @@ class ListAttachmentsResponse(BaseModel):
     attachments: list[AttachmentInfo]
 
 
-def _to_attachment_info(att) -> AttachmentInfo:
+def _to_attachment_info(att: AttachmentView) -> AttachmentInfo:
     return AttachmentInfo(
         attachmentId=att.attachment_id,
         filename=att.filename,
@@ -60,24 +68,27 @@ def _to_attachment_info(att) -> AttachmentInfo:
     )
 
 
-def _to_list_response(attachments) -> ListAttachmentsResponse:
+def _to_list_response(attachments: list[AttachmentView]) -> ListAttachmentsResponse:
     return ListAttachmentsResponse(attachments=[_to_attachment_info(att) for att in attachments])
 
 
+def _auth_required(endpoint: str):
+    logger.warning("attachments.auth_required", endpoint=endpoint)
+    return problem(403, HttpErrorCode.AUTH_REQUIRED, "Authentication required")
+
+
 def create_attachments_router(
-    service: ChatAttachmentService,
-    repository: AttachmentRepository,
+    service: AttachmentIngestService,
     max_size_bytes: int = ATTACHMENT_MAX_SIZE_BYTES_DEFAULT,
 ) -> APIRouter:
     """Create attachments router with injected dependencies.
 
     Args:
-        service: ChatAttachmentService instance
-        repository: AttachmentRepository instance
+        service: AttachmentIngestService instance
         max_size_bytes: Upload size cap; oversized files are rejected with 413
 
     Returns:
-        APIRouter with POST/GET attachment endpoints
+        APIRouter with POST/GET/DELETE attachment endpoints
     """
     router = APIRouter(prefix="/chatagent/v3/attachments", tags=["attachments"])
 
@@ -88,7 +99,9 @@ def create_attachments_router(
         user_id: Annotated[str | None, Depends(get_user_id)] = None,
     ) -> UploadAttachmentResponse:
         """Upload a file to a conversation thread."""
-        user_id = user_id or "anonymous"
+        if not user_id:
+            await file.close()
+            return _auth_required("upload")
 
         def reject_too_large(size_bytes: int) -> UploadAttachmentResponse:
             logger.warning(
@@ -161,9 +174,10 @@ def create_attachments_router(
         user_id: Annotated[str | None, Depends(get_user_id)] = None,
     ) -> ListAttachmentsResponse:
         """List attachments for a conversation thread."""
-        user_id = user_id or "anonymous"
+        if not user_id:
+            return _auth_required("list")
         logger.info("attachments.list_request", thread_id=threadId, user_id=user_id)
-        attachments = await repository.list_by_thread(threadId, create_user=user_id)
+        attachments = await service.list_by_thread(threadId, create_user=user_id)
         return _to_list_response(attachments)
 
     @router.get("/mine", response_model=ListAttachmentsResponse, status_code=200)
@@ -171,9 +185,10 @@ def create_attachments_router(
         user_id: Annotated[str | None, Depends(get_user_id)] = None,
     ) -> ListAttachmentsResponse:
         """List every attachment uploaded by the requesting user, across threads."""
-        user_id = user_id or "anonymous"
+        if not user_id:
+            return _auth_required("list_mine")
         logger.info("attachments.list_mine_request", user_id=user_id)
-        attachments = await repository.list_by_user(user_id)
+        attachments = await service.list_by_user(user_id)
         return _to_list_response(attachments)
 
     @router.get("/{attachmentId}", response_model=AttachmentInfo, status_code=200)
@@ -182,8 +197,9 @@ def create_attachments_router(
         user_id: Annotated[str | None, Depends(get_user_id)] = None,
     ):
         """Poll a single attachment's processing status."""
-        user_id = user_id or "anonymous"
-        att = await repository.get(attachmentId, create_user=user_id)
+        if not user_id:
+            return _auth_required("get")
+        att = await service.get(attachmentId, create_user=user_id)
         if att is None:
             logger.info("attachments.not_found", attachment_id=attachmentId, user_id=user_id)
             return problem(404, HttpErrorCode.ATTACHMENT_NOT_FOUND, "Attachment not found")
@@ -195,8 +211,9 @@ def create_attachments_router(
         attachmentId: str,
         user_id: Annotated[str | None, Depends(get_user_id)] = None,
     ):
-        """Delete an attachment and its artifacts (storage + DB rows)."""
-        user_id = user_id or "anonymous"
+        """Delete an attachment (documents row + ES chunks + session link)."""
+        if not user_id:
+            return _auth_required("delete")
         deleted = await service.delete(attachmentId, create_user=user_id)
         if not deleted:
             logger.info("attachments.delete_not_found", attachment_id=attachmentId, user_id=user_id)
