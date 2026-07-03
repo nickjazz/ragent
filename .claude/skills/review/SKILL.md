@@ -4,20 +4,20 @@ Perform a review of the current staged changes covering plan compliance, spec al
 
 ## Mode selection
 
-This skill accepts an optional `--mode fast|full` argument (default: `full`).
+This skill accepts an optional `--mode fast|full` argument (default: **`fast`**).
 
 | Mode | When to use | What runs |
 |------|-------------|-----------|
-| `--mode fast` | Pre-commit fast gate on low-risk or high-risk staged diffs | Focused single-pass check of the four compliance dimensions |
-| `--mode full` | Pre-push full gate on high-risk commits; default when no mode given | Three parallel sub-agents (Plan & Spec · Domain Boundaries · Tests & Quality) |
+| `--mode fast` | Standard push gate (default) | Focused single-pass check of the four compliance dimensions |
+| `--mode full` | Manual deep review on explicit request | Three parallel sub-agents (Plan & Spec · Domain Boundaries · Tests & Quality) |
 
-**Stamp used:** `review:fast` or `review:full` (see Stamp step).
+**Stamp used:** `review:fast` (default) or `review:full` (see Stamp step).
 
 ---
 
-## fast mode
+## fast mode (default)
 
-1. Run `git diff --cached` to get the staged diff.
+1. Run `git diff` (push context) or `git diff --cached` (commit context) to get the diff.
 2. In a single response, check all four dimensions:
    - **Plan compliance**: do the staged changes complete the next unmarked `[ ]` item in `docs/00_plan.md`? Any obvious gaps?
    - **Spec alignment**: do HTTP shapes, error codes, DB schema, env-var names match `docs/00_spec.md`? Spot-check the most relevant sections for the diff.
@@ -29,11 +29,11 @@ Then run the **Stamp** section below with `review:fast`.
 
 ---
 
-## full mode (default)
+## full mode
 
 > **MANDATORY — no exceptions:** ALWAYS launch all three sub-agents below even if the diff appears small, focused, or surgical. The phrase *"diff is small/focused/inline review sufficient"* is a process violation — see journal Process 2026-05-17 "Inline /simplify rationalization". The fan-out **is** the review; skipping it means skipping the review.
 
-1. Run `git diff --cached` (or `git diff origin/<branch>..HEAD` if triggered from the pre-push gate for a high-risk commit) to get the diff.
+1. Run `git diff` (push context) or `git diff --cached` (commit context) to get the diff.
 2. Use the Agent tool to launch all three agents below concurrently in a single message. Pass each agent the full diff plus the doc(s) named in its section — each agent reads only what its dimension needs, not all three docs.
 
 ### Agent 1: Plan & Spec Compliance
@@ -61,7 +61,7 @@ Then run the **Stamp** section below with `review:full`.
 
 ## Stamp (mandatory final step)
 
-Auto-detects push vs commit context: push context binds the stamp to the push-range diff; commit context binds it to the staged diff.
+Auto-detects push vs commit context; binds stamp to the appropriate diff sha.
 
 ```bash
 _UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
@@ -70,8 +70,8 @@ if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
 else
     _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
 fi
-# fast mode:
+# Default (fast mode):
 RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:fast
-# full mode:
-RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:full
+# Only when --mode full was explicitly requested:
+# RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:full
 ```

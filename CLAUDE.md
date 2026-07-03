@@ -177,22 +177,27 @@ uv run --env-file .env python -m ragent.worker       # background worker
 ## Push-time Review Gate
 
 `/simplify` and `/review` are required **once per push** (not per commit).
-The pre-push hook (`.claude/hooks/pre_push_gate.sh`) verifies both ran against
-the push-range diff before allowing `git push`.
+Both default to `--mode fast` — a single inline pass, ~30s, ~16k tokens total.
+Use `--mode full` only on explicit request for deep analysis (3 sub-agents, ~270k tokens).
+
+**Standard pre-push workflow:**
+```bash
+/simplify   # fast mode: inline reuse/quality/efficiency scan + auto-formats .py files
+/review     # fast mode: inline plan/spec/test/quality check
+git push
+```
 
 **How stamps work:** Each skill's final step calls
 `.claude/hooks/stamp_pre_commit_approved.sh <skill>:<mode>` with
 `RAGENT_SKILL_INVOCATION_TOKEN=1` and `RAGENT_DIFF_SHA=<push-range-sha>`.
-The stamp script writes to `.claude/.pre_commit_approved` (last-write-wins)
-and appends to `.claude/.stamp_audit.log` (append-only). The `by` field
-carries the mode suffix: `simplify:fast`, `simplify:full`, `review:fast`,
-`review:full`.
+The stamp appends to `.claude/.stamp_audit.log` (append-only). The push gate
+accepts any `simplify:*` + `review:*` entry — both `:fast` and `:full` satisfy it.
 
 **What the push gate checks** (against `.claude/.stamp_audit.log`):
 1. Both a `simplify:*` entry AND a `review:*` entry exist for the exact
    push-range `diff_sha` within a 60-minute freshness window.
-2. High-risk commits (classified at commit time) additionally require
-   `simplify:full` and `review:full` stamps newer than the commit timestamp.
+2. High-risk commits (classified at commit time) additionally require both
+   stamps to be newer than the commit timestamp.
 
 **Marker consumption:** `.pending_full_review` is consumed at push success
 via an EXIT trap in `pre_push_gate.sh`. No marker is consumed at commit time.

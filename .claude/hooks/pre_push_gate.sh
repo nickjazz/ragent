@@ -100,7 +100,7 @@ fi
 #
 # Marker consumption: deferred until ALL pre-push checks pass via an EXIT
 # trap. If tests fail and the push is blocked the marker remains, so the
-# next retry still requires full review (fix for review finding P1: consume).
+# next retry still requires review (fix for review finding P1: consume).
 PENDING="$ROOT/.claude/.pending_full_review"
 _CONSUME_PENDING=0
 _consume_on_success() {
@@ -142,20 +142,20 @@ except FileNotFoundError:
 print(hits["simplify"], hits["review"])
 PY
 ) || FULL_HITS="no no"
-    read -r SIM_FULL REV_FULL <<<"$FULL_HITS"
-    if [[ "$SIM_FULL" != yes || "$REV_FULL" != yes ]]; then
+    read -r HR_SIM HR_REV <<<"$FULL_HITS"
+    if [[ "$HR_SIM" != yes || "$HR_REV" != yes ]]; then
         REASON=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("reason","?"))' "$PENDING" 2>/dev/null || echo "?")
-        block "high-risk full-review gate: .pending_full_review exists (reason: ${REASON}, pending_ts=${PENDING_TS}).
+        block "high-risk review gate: .pending_full_review exists (reason: ${REASON}, pending_ts=${PENDING_TS}).
   Run BOTH skills IN ORDER after your last commit, then git push:
     1. /simplify   (context: git diff ${BASE}...HEAD)
     2. /review     (same context)
   Stamps must be within 60 min AND newer than pending_ts=${PENDING_TS}.
-  Got simplify:full=${SIM_FULL} review:full=${REV_FULL}."
+  Got simplify=${HR_SIM} review=${HR_REV}."
     fi
     # Mark for consumption — actual rm happens in the EXIT trap after all
     # remaining pre-push checks (markdown/tests) also pass.
     _CONSUME_PENDING=1
-    printf 'Pre-push gate: full-review requirement satisfied — proceeding to test gate.\n' >&2
+    printf 'Pre-push gate: high-risk review satisfied — proceeding to test gate.\n' >&2
 fi
 
 # Push-range diff sha — computed after the high-risk gate to avoid the full
