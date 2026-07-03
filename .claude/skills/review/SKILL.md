@@ -15,6 +15,22 @@ This skill accepts an optional `--mode fast|full` argument (default: **`fast`**)
 
 ---
 
+## Phase 1: Context guard (run before any review)
+
+```bash
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    # push context — abort if working tree is dirty (stamp would bind to stale SHA after commit)
+    if [[ -n "$(git diff 2>/dev/null)" ]]; then
+        echo "ERROR: working-tree has uncommitted changes in push context." >&2
+        echo "Commit your changes first, then re-run /review." >&2
+        exit 1
+    fi
+fi
+```
+
+---
+
 ## fast mode (default)
 
 1. Run `git diff` (push context) or `git diff --cached` (commit context) to get the diff.

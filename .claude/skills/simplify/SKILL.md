@@ -17,7 +17,21 @@ This skill accepts an optional `--mode fast|full` argument (default: **`fast`**)
 
 ## Phase 1: Identify Changes
 
-Run `git diff` (push context, no staged changes) or `git diff --cached` (commit context, staged changes exist).  
+First, detect context and guard against stale stamps:
+
+```bash
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    # push context — abort if working tree is dirty (stamp would bind to stale SHA after commit)
+    if [[ -n "$(git diff 2>/dev/null)" ]]; then
+        echo "ERROR: working-tree has uncommitted changes in push context." >&2
+        echo "Commit your changes first, then re-run /simplify." >&2
+        exit 1
+    fi
+fi
+```
+
+Then run `git diff` (push context, no staged changes) or `git diff --cached` (commit context, staged changes exist).  
 If no git changes in either case, review the most recently modified files mentioned by the user or edited in this conversation.
 
 ---
