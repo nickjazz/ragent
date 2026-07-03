@@ -234,11 +234,8 @@ if [[ -z "$FULL" ]]; then
     fi
     # Unit test cache: skip if src/ + tests/unit/ content hash unchanged since last passing run.
     CACHE_FILE="$ROOT/.claude/.unit_test_cache"
-    CACHE_HASH=""
-    if [[ -s "$CACHE_FILE" ]]; then
-        CACHE_HASH="$(find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
-    fi
-    if [[ -n "$CACHE_HASH" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
+    CACHE_HASH="$(find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+    if [[ -n "$CACHE_HASH" && -s "$CACHE_FILE" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
         printf 'Pre-push gate: unit test cache hit (%s…) — skipping unit tests.\n' "${CACHE_HASH:0:12}" >&2
         exit 0
     fi

@@ -174,29 +174,31 @@ uv run --env-file .env python -m ragent.api          # API (port 8000)
 uv run --env-file .env python -m ragent.worker       # background worker
 ```
 
-## Pre-commit Approval Marker
+## Push-time Review Gate
 
-The pre-commit hook (`.claude/hooks/pre_commit_gate.sh`) verifies four things
-against `.claude/.pre_commit_approved` and `.claude/.stamp_audit.log`:
+`/simplify` and `/review` are required **once per push** (not per commit).
+The pre-push hook (`.claude/hooks/pre_push_gate.sh`) verifies both ran against
+the push-range diff before allowing `git push`.
 
-1. The marker file is valid JSON `{"diff_sha": <sha256 git diff --cached>,
-   "ts": <epoch>, "by": "simplify"|"review"}` — manual `date >` stamping
-   produces plain text and is rejected.
-2. `ts` is within the 45-minute freshness window.
-3. `diff_sha` matches the staged diff's sha256 *now* (re-staging after
-   stamping invalidates the marker).
-4. The append-only audit log contains BOTH a `"by":"simplify"` entry AND a
-   `"by":"review"` entry for the current `diff_sha`, each with `ts` inside
-   the same 45-minute freshness window (a single skill running twice no
-   longer satisfies the gate, and stale entries from a long-ago review of
-   the same diff are also rejected).
+**How stamps work:** Each skill's final step calls
+`.claude/hooks/stamp_pre_commit_approved.sh <skill>:<mode>` with
+`RAGENT_SKILL_INVOCATION_TOKEN=1` and `RAGENT_DIFF_SHA=<push-range-sha>`.
+The stamp script writes to `.claude/.pre_commit_approved` (last-write-wins)
+and appends to `.claude/.stamp_audit.log` (append-only). The `by` field
+carries the mode suffix: `simplify:fast`, `simplify:full`, `review:fast`,
+`review:full`.
 
-The marker is emitted ONLY by `.claude/hooks/stamp_pre_commit_approved.sh
-<simplify|review>`, which itself refuses to run unless
-`RAGENT_SKILL_INVOCATION_TOKEN` is set. That env var is set inside the
-`/simplify` and `/review` skill bodies — no shell-callable bypass exists.
-The hook consumes the marker on commit; the next commit needs a fresh
-`/simplify` + `/review` cycle.
+**What the push gate checks** (against `.claude/.stamp_audit.log`):
+1. Both a `simplify:*` entry AND a `review:*` entry exist for the exact
+   push-range `diff_sha` within a 60-minute freshness window.
+2. High-risk commits (classified at commit time) additionally require
+   `simplify:full` and `review:full` stamps newer than the commit timestamp.
+
+**Marker consumption:** `.pending_full_review` is consumed at push success
+via an EXIT trap in `pre_push_gate.sh`. No marker is consumed at commit time.
+
+The stamp script refuses to run unless `RAGENT_SKILL_INVOCATION_TOKEN` is set
+(only set inside skill bodies) — no shell-callable bypass exists.
 
 ## Architecture (orientation only — read `docs/00_spec.md` for contracts)
 
