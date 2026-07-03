@@ -23,8 +23,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from haystack.dataclasses import Document
 
-from unittest.mock import AsyncMock, MagicMock
-
 from ragent.routers.mcp import create_mcp_router
 from ragent.services.retrieve_v2_service import RetrieveV2Service
 

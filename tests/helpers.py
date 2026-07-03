@@ -132,5 +132,3 @@ def make_retrieve_v2_service(rows: dict) -> RetrieveV2Service:
     repo = AsyncMock(spec=DocumentRepository)
     repo.get_by_document_ids.return_value = rows
     return RetrieveV2Service(document_repo=repo)
-
-

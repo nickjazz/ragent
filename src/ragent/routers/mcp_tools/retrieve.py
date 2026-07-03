@@ -79,4 +79,3 @@ RETRIEVE_OUTPUT_SCHEMA: dict[str, Any] = {
         },
     },
 }
-
