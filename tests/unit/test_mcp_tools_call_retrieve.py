@@ -155,7 +155,12 @@ def test_tools_call_retrieve_excludes_chat_attachment_chunks(
     monkeypatch.setattr("ragent.routers.mcp.run_retrieval", _capture)
     TestClient(app).post(
         "/mcp/v1",
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "retrieve", "arguments": {"query": "q"}}},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "retrieve", "arguments": {"query": "q"}},
+        },
     )
     filters = captured.get("filters")
     assert filters == {"field": "source_app", "operator": "!=", "value": ATTACHMENT_SOURCE_APP}

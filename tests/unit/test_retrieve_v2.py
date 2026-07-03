@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from ragent.pipelines.retrieve import build_document_id_filter
-from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 from ragent.repositories.document_repository import DocumentRepository
 from ragent.routers.retrieve_v2 import create_retrieve_v2_router
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP
 from ragent.schemas.retrieve import RetrieveV2Request
 from ragent.services.retrieve_v2_service import DocumentForbidden, RetrieveV2Service
 
