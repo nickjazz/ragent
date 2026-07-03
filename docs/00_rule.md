@@ -4,7 +4,7 @@
    - `docs/00_spec.md`: Specification Standards
    - `docs/00_plan.md`: Master TDD Implementation Checklist
    - `docs/00_journal.md` (Blameless Team Reflection)
-   - `docs/API.md` (API example reference)
+   - `docs/00_API.md` (API example reference)
 - **(Mandatory)** Execute the full pre-commit sequence (**start Docker daemon** → format → lint → **full test suite including docker testcontainers integration tests** → security scan) before every commit. Do **not** skip `@pytest.mark.docker` tests; skipped docker tests are a blocking violation. Start the Docker daemon **in advance** so testcontainers (MariaDB, ES, Redis, MinIO) actually run. See `# Command` section.
 - **Always** refer to `00_agent_team.md` and use "RAGENT Agent Team" workflow for planning, implementation, delivery.
 - **Always** refer to "Context7" MCP for any library and framework standard spec and example.
@@ -435,7 +435,7 @@ Update this counter whenever an item status changes. The counts cover all items 
 
 - **Rule**: K8s `command:` arrays that reference executables installed by `uv sync` MUST use the full venv path `/app/.venv/bin/<exe>` (e.g. `/app/.venv/bin/uvicorn`). The Dockerfile does not add `.venv/bin` to `PATH`; bare executable names are not found. Verify the path once when adding a new entry point.
 
-- **Rule**: Documented startup commands (in spec, README, API.md) that accept a variable the runtime reads MUST use `${VAR:-default}` form — never bare `$VAR`. Bare `$VAR` silently produces an empty-string argument when the variable is unset, which can bind to an unintended address or crash the process. Specifically: when a CLI `--host` / `--port` argument maps to an env var that has a documented code-side default, the shell command in docs MUST use `${VAR:-<same default>}` so the CLI and the guard read the same value.
+- **Rule**: Documented startup commands (in spec, README, 00_API.md) that accept a variable the runtime reads MUST use `${VAR:-default}` form — never bare `$VAR`. Bare `$VAR` silently produces an empty-string argument when the variable is unset, which can bind to an unintended address or crash the process. Specifically: when a CLI `--host` / `--port` argument maps to an env var that has a documented code-side default, the shell command in docs MUST use `${VAR:-<same default>}` so the CLI and the guard read the same value.
 
 # Command
 

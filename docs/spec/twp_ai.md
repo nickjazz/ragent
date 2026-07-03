@@ -3,7 +3,7 @@
 `packages/twp-ai` is the Agent-User Interaction adapter used by frontend applications that need page-aware runs plus client-provided tools. Its wire contract follows twp-ai protocol shapes while implementing the event types needed by the current tool-call flow.
 
 > Mounted at `POST /twp/v1/run`. Standard auth applies (via `<RAGENT_USER_ID_HEADER>` or `<RAGENT_JWT_HEADER>`).  
-> Full API examples: [`docs/API.md §twp-ai`](../API.md#twp-ai).
+> Full API examples: [`docs/00_API.md §twp-ai`](../00_API.md#twp-ai).
 
 ---
 

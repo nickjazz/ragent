@@ -106,7 +106,7 @@
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
 
-> 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/chatagent_agent_backend.md`。
+> 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/spec/chatagent_agent_backend.md`。
 
 ---
 ### 2.3 Services（業務邏輯層）

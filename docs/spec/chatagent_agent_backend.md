@@ -215,7 +215,7 @@ GET /chatagent/v3/sessionList, /session (unchanged by this refactor):
 | 10. 驗收：router 隔離迴歸測試 | 既有測試持續通過 | `test_v3_router_does_not_import_concrete_agent_or_caller_classes` | 對應測試檔 | 必須 |
 | 11. 驗收：錯誤路徑不中斷 stream | 模擬上游異常，確認以 `RUN_ERROR` 收尾 | 新增單元測試覆蓋異常情境 | 新增 Agent 的測試檔 | 必須 |
 | 12. 驗收：端到端切換生效 | 設定 `CHATAGENT_BACKEND` 後，`/chatagent/v3` 確實打到新大腦 | 手動或整合測試驗證 | 整合測試 / 手動驗證 | 必須 |
-| 13. 已知限制：session history 不可攜 | 舊 session 資料不會自動出現在新大腦的儲存裡 | 三種策略待選（雙軌並存 / ragent 自建 session DB / 一次性 ETL），皆非本次必做 | `docs/chatagent_agent_backend.md` §7（已記載） | 知情即可，非強制動作 |
+| 13. 已知限制：session history 不可攜 | 舊 session 資料不會自動出現在新大腦的儲存裡 | 三種策略待選（雙軌並存 / ragent 自建 session DB / 一次性 ETL），皆非本次必做 | `docs/spec/chatagent_agent_backend.md` §7（已記載） | 知情即可，非強制動作 |
 
 ---
 

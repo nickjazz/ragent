@@ -1,6 +1,6 @@
 # API Call Chains — ragent
 
-> Authored: 2026-05-27  
+> Authored: 2026-05-27 · Updated: 2026-07-03  
 > Maintained by: Dev / SRE  
 > Source modules: `src/ragent/routers/`, `src/ragent/clients/`, `src/ragent/workers/`
 
@@ -23,6 +23,7 @@ calls it makes, and annotates each chain with:
 5. [DELETE /ingest/v1/{id} — delete document](#5-delete-ingestv1id--delete-document)
 6. [POST /ingest/v1/{id}/rerun — manual rerun](#6-post-ingestv1idrerun--manual-rerun)
 7. [POST /chat/v1 — synchronous chat](#7-post-chatv1--synchronous-chat)
+(new: see §16 /retrieve/v2, §17 /mcp/v2, §18 chat attachments)
 8. [POST /chat/v1/stream — streaming chat](#8-post-chatv1stream--streaming-chat)
 9. [POST /retrieve/v1 — standalone retrieval](#9-post-retrievev1--standalone-retrieval)
 10. [POST /mcp/v1 (tools/call retrieve) — MCP retrieve](#10-post-mcpv1-toolscall-retrieve--mcp-retrieve)
@@ -451,3 +452,130 @@ a token exchange outage causes:
 > **No runtime exception causes a process exit** — FastAPI's global exception handler
 > (`_register_unhandled_exception_handler`) catches everything that escapes a route
 > handler and returns a structured problem+json response.
+
+---
+
+## 16. POST /retrieve/v2 — document-scoped retrieval (Anti-IDOR)
+
+```
+POST /retrieve/v2
+  └── Middleware: user-id check (required — fail-closed 403 if missing)
+  └── RetrieveV2Router.retrieve()
+        ├── RetrieveV2Service.assert_owner(user_id, document_id_list)
+        │     └── document_repo.get_create_users_by_document_ids(ids)   [MariaDB SELECT]
+        │           any id unknown or create_user ≠ user_id → raise DOCUMENT_FORBIDDEN
+        └── run_retrieval(pipeline, filters=build_document_id_filter(ids))
+              [same Haystack pipeline as /retrieve/v1, §9]
+              └── post-filter: remove chunks with meta.document_id ∉ allowed set
+```
+
+**Exception handling**:
+
+| Exception | Response |
+|---|---|
+| `user_id` is `None` | 403 `DOCUMENT_FORBIDDEN` |
+| any id unknown or not owned | 403 `DOCUMENT_FORBIDDEN` |
+| `document_id_list` absent/empty/> 100 | 422 |
+| `UpstreamServiceError` (embedding) | 502 `EMBEDDER_ERROR` |
+| ES `ConnectionError` | 500 `INTERNAL_ERROR` |
+
+**Security invariant**: the post-filter is a defense-in-depth guard against
+a feedback retriever returning cross-owner chunks; the upstream `assert_owner`
+is the primary IDOR gate.
+
+---
+
+## 17. POST /mcp/v2 — attachment-scoped MCP (retrieve_documents tool only)
+
+JSON-RPC 2.0 envelope → `tools/call` → `_handle_retrieve_documents()`
+
+```
+POST /mcp/v2
+  └── McpTransport (shared with /mcp/v1)
+        ├── JSON parse / schema validate
+        ├── tools/list   → returns RETRIEVE_DOCUMENTS_TOOL (name "retrieve", document_id_list required)
+        └── tools/call retrieve
+              ├── [missing user_id] → JSON-RPC error {code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}
+              ├── RetrieveV2Service.assert_owner(user_id, document_id_list)
+              │     → IDOR violation: JSON-RPC error {code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}
+              └── run_retrieval() [same pipeline as §16]
+```
+
+The `/mcp/v2` transport is shared with `/mcp/v1` via the extracted
+`create_mcp_transport` factory.  `/mcp/v2` registers only the
+`retrieve_documents` tool; the corpus-wide `retrieve` tool from `/mcp/v1`
+is **not** registered here.
+
+**Exception handling**: same JSON-RPC error envelope as `/mcp/v1` (§10), with
+`-32002` for IDOR violations (distinct from `-32602` input schema errors).
+
+---
+
+## 18. Attachment endpoints — POST /chatagent/v3/attachments/upload et al.
+
+### 18.1 POST /chatagent/v3/attachments/upload
+
+```
+POST /chatagent/v3/attachments/upload   (multipart/form-data)
+  └── Middleware: user-id check (required — 403 AUTH_REQUIRED if missing)
+  └── AttachmentsRouter.upload_attachment()
+        ├── size pre-check (file.size vs ATTACHMENT_MAX_SIZE_BYTES)   [no upstream]
+        ├── MIME check (AttachmentMime allow-list + extension fallback) [no upstream]
+        └── AttachmentIngestService.upload()
+              ├── post-read size check (len(bytes) vs max_size_bytes)
+              ├── IngestService.create(source_app="chat_attachment", …)
+              │     ├── MariaDB INSERT documents(UPLOADED)
+              │     └── broker.kiq("ingest.pipeline", document_id)
+              └── SessionDocumentRepository.create(session_id, document_id, user_id)
+                    └── MariaDB INSERT/IGNORE session_documents
+```
+
+Response: `202 { document_id }`.  `document_id` is the `attachmentId` used in
+all subsequent calls.
+
+**Exception handling**:
+
+| Exception | Response |
+|---|---|
+| `user_id` is `None` | 403 `AUTH_REQUIRED` |
+| `MimeNotAllowed` | 415 `ATTACHMENT_MIME_UNSUPPORTED` (RFC 9457 `problem()`) |
+| `FileTooLarge` | 413 `ATTACHMENT_TOO_LARGE` |
+| MariaDB down | 500 `INTERNAL_ERROR` |
+| Redis down | 500 `INTERNAL_ERROR` |
+
+### 18.2 GET /chatagent/v3/attachments, GET /{id}, GET /mine
+
+```
+GET /chatagent/v3/attachments?threadId=
+  └── AttachmentIngestService.list_by_session(thread_id, user_id)
+        ├── SessionDocumentRepository.list_by_session(session_id, create_user)   [MariaDB SELECT]
+        └── DocumentRepository.get_by_ids(document_ids)                           [MariaDB SELECT]
+```
+
+Status mapping: `PENDING|UPLOADED|DELETING → PROCESSING`, `READY → READY`,
+`FAILED → FAILED`.  Non-owned or missing ids are silently excluded (no 404 on
+list endpoints).
+
+### 18.3 DELETE /chatagent/v3/attachments/{id}
+
+```
+DELETE /chatagent/v3/attachments/{id}
+  └── AttachmentIngestService.delete(document_id, user_id)
+        ├── session_document_repo.get_by_document(document_id, user_id)   [MariaDB SELECT]
+        │     → None → 404 ATTACHMENT_NOT_FOUND
+        ├── ingest_service.delete(document_id)
+        │     → MariaDB UPDATE status=DELETING → cascade ES delete → MariaDB DELETE
+        └── session_document_repo.delete_by_document(document_id)         [MariaDB DELETE]
+```
+
+### 18.4 Session cascade (DELETE /chatagent/v3/session)
+
+After the upstream proxy delete succeeds, `chatagent_v3.py` calls
+`attachment_ingest_service.delete_by_session(session_id)` as a fail-soft
+post-step.  A failure here is logged but does not change the HTTP response.
+
+```
+delete_by_session(session_id)
+  ├── session_document_repo.delete_by_session(session_id) → [document_ids]   [MariaDB]
+  └── for each document_id: ingest_service.delete(document_id)               [MariaDB + ES]
+```

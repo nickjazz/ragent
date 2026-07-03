@@ -219,13 +219,13 @@ Request: `{request_id, feedback_token, query_text, shown_sources, source_app, so
 
 > Full spec: [docs/spec/twp_ai.md](spec/twp_ai.md) — run-input schema, SSE event types (`RUN_STARTED`/`TEXT_MESSAGE_*`/`TOOL_CALL_*`/`RUN_FINISHED`/`RUN_ERROR`), tool-result boundary.
 
-Mounted at `POST /twp/v1/run`. Requires `TWP_DEFAULT_MODEL` env var. Standard auth applies. See [`docs/API.md §twp-ai`](API.md#twp-ai) for curl examples.
+Mounted at `POST /twp/v1/run`. Requires `TWP_DEFAULT_MODEL` env var. Standard auth applies. See [`docs/00_API.md §twp-ai`](00_API.md#twp-ai) for curl examples.
 
 #### 3.4.7–3.4.8 `POST /chatagent/v3` — twp-ai protocol and session management
 
 > Full spec: [docs/spec/chatagent_v3.md](spec/chatagent_v3.md) — request/upstream conversion, session-id ownership (Model B), SSE event mapping (`TEXT_MESSAGE`/`REASONING`/`TOOL_CALL_*`/`RUN_ERROR`), human-in-the-loop interrupts (`RUN_FINISHED.outcome` + `resume`), error contract, and session-history reshaping (role mapping, machine-context strip, backward-compat legacy `<context>` strip).
 
-Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rate limit, and timeout with `/chatagent/v2`. Every failure is emitted as `RUN_ERROR` over `200 text/event-stream` (v3 never returns HTTP 429/502/504). Human-in-the-loop: an upstream `isInterrupt` ends the run with `RUN_FINISHED.outcome={type:"interrupt", interrupts:[…]}` (success otherwise); the client answers via request `resume` (`resolved` → upstream `lastMessageId`; `cancelled` → no upstream call). Session routes (`/sessionList`, `/session` GET/PUT/DELETE, `/session/read`) are JSON proxies with twp-ai role mapping applied; failures use HTTP 504/502 (not `RUN_ERROR`). `/sessionList` also carries per-session live status (`running` spinner / `hasNewReply` dot); transitions are pushed in realtime by publishing to a per-user **NATS** subject (`session.<user_id>.status`) that the frontend subscribes to over its own connection (snapshot+delta; NATS unset → snapshot-only). "Read" (dropping the `hasNewReply` dot) is an **explicit client signal** — `POST /chatagent/v3/session/read` — not inferred from loading history or from a stream draining to `eos`. See [`docs/API.md §ChatAgent`](API.md#chatagent) for curl examples.
+Registered only when `CHATAGENT_API_URL` is set. Shares `CHATAGENT_API_URL`, rate limit, and timeout with `/chatagent/v2`. Every failure is emitted as `RUN_ERROR` over `200 text/event-stream` (v3 never returns HTTP 429/502/504). Human-in-the-loop: an upstream `isInterrupt` ends the run with `RUN_FINISHED.outcome={type:"interrupt", interrupts:[…]}` (success otherwise); the client answers via request `resume` (`resolved` → upstream `lastMessageId`; `cancelled` → no upstream call). Session routes (`/sessionList`, `/session` GET/PUT/DELETE, `/session/read`) are JSON proxies with twp-ai role mapping applied; failures use HTTP 504/502 (not `RUN_ERROR`). `/sessionList` also carries per-session live status (`running` spinner / `hasNewReply` dot); transitions are pushed in realtime by publishing to a per-user **NATS** subject (`session.<user_id>.status`) that the frontend subscribes to over its own connection (snapshot+delta; NATS unset → snapshot-only). "Read" (dropping the `hasNewReply` dot) is an **explicit client signal** — `POST /chatagent/v3/session/read` — not inferred from loading history or from a stream draining to `eos`. See [`docs/00_API.md §ChatAgent`](00_API.md#chatagent) for curl examples.
 
 #### 3.4.9 `POST /chatagent/v3/attachments/upload`, `GET/DELETE /chatagent/v3/attachments/{attachmentId}`, `GET /chatagent/v3/attachments`, `GET /chatagent/v3/attachments/mine` — in-conversation file attachments
 
@@ -339,7 +339,7 @@ envelope — never an HTTP 500 — matching the `retrieve` tool.
 **Interface notes (2026-05-27):**
 - `tools/list` response includes `annotations: {readOnlyHint: true}` on the `retrieve` tool — signals to MCP hosts (protocol 2025-03-26+) that the tool is read-only. Clients on earlier pinned version (`"2024-11-05"`) silently ignore the field.
 - `excerpt_max_chars` is threaded into the MCP handler at router-creation time (same `EXCERPT_MAX_CHARS` env var used by `POST /retrieve/v1`). Previously the MCP surface always used the hardcoded 512-char default regardless of operator config.
-- Full API call chain (upstream services, exception handling, process-exit conditions): [docs/api_call_chains.md](api_call_chains.md).
+- Full API call chain (upstream services, exception handling, process-exit conditions): [docs/00_api_call_chains.md](00_api_call_chains.md).
 
 ### 3.9 MCP Hub Microservice
 
@@ -384,7 +384,7 @@ All business paths carry a `/v<N>` version segment (§API Endpoint Naming, `00_r
 
 Future-phase auth: JWT verify (auth) + `PermissionClient` post-retrieval gate (permission, OpenFGA-backed) — see §3.5. ES queries remain permission-blind in every phase.
 
-**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/API.md §Embedding Model Lifecycle`](API.md#embedding-model-lifecycle-admin):
+**Embedding lifecycle admin routes (B50)** — zero-downtime model swap; full detail in [`docs/00_API.md §Embedding Model Lifecycle`](00_API.md#embedding-model-lifecycle-admin):
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -482,7 +482,7 @@ All 3rd-party calls: timeout/retry/backoff per `00_rule.md`; circuit-breaker on 
 
 > Full schemas: [`docs/spec/data_structures.md`](spec/data_structures.md)
 
-MariaDB tables: `documents`, `feedback`, `system_settings`, `skills`, `chat_attachments`, `chat_attachment_artifacts`. ES indexes: `chunks_v1` (text + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
+MariaDB tables: `documents`, `feedback`, `system_settings`, `skills`, `session_documents`. ES indexes: `chunks_v1` (text + embeddings), `feedback_v1`. ID format: UUIDv7 → 26-char Crockford Base32.
 
 ---
 
