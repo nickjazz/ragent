@@ -216,7 +216,7 @@ FULL="${RAGENT_PREPUSH_FULL:-}"
 
 if [[ -z "$FULL" ]]; then
     # Format + lint: check-only on push-range .py files (reuses CHANGED from above).
-    readarray -t _PY < <(printf '%s\n' "$CHANGED" | grep '\.py$' || true)
+    _PY=($(printf '%s\n' "$CHANGED" | grep '\.py$' || true))
     if [[ ${#_PY[@]} -gt 0 ]]; then
         if ! uv run ruff format --check "${_PY[@]}" >"$LOG_DIR/format.log" 2>&1; then
             _save_log format.log

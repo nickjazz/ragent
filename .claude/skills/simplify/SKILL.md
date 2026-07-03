@@ -81,21 +81,21 @@ Review the same changes for efficiency:
 
 Aggregate findings and fix each issue directly. If a finding is a false positive, note and skip.
 
-Then run format + lint on all changed `.py` files to prevent a push-gate format failure from forcing a restamp cycle:
+In **commit context** (staged changes exist), run format + lint on changed `.py` files and re-stage so the commit is clean:
 
 ```bash
 _UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
-if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
-    _PY=($(git diff "${_UP}...HEAD" --name-only 2>/dev/null | grep '\.py$' || true))
-else
+if [[ -z "$_UP" ]] || ! git diff --cached --quiet 2>/dev/null; then
     _PY=($(git diff --cached --name-only 2>/dev/null | grep '\.py$' || true))
-fi
-if [[ ${#_PY[@]} -gt 0 ]]; then
-    uv run ruff format "${_PY[@]}"
-    uv run ruff check --fix "${_PY[@]}"
-    git add "${_PY[@]}"
+    if [[ ${#_PY[@]} -gt 0 ]]; then
+        uv run ruff format "${_PY[@]}"
+        uv run ruff check --fix "${_PY[@]}"
+        git add "${_PY[@]}"
+    fi
 fi
 ```
+
+In **push context** (no staged changes, upstream set), format is checked by the push gate itself — do not run it here, as any fixes would be uncommitted and not part of the pushed commits. If format issues exist they will be caught and must be committed before pushing.
 
 Briefly summarize what was fixed (or confirm the code was already clean).
 
