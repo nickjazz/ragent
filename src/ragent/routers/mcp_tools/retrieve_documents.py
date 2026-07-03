@@ -36,7 +36,10 @@ def _v2_input_schema() -> dict:
     top_k["minimum"] = 1
     top_k["maximum"] = MCP_TOP_K_MAX
     top_k["default"] = MCP_TOP_K_MAX
-    top_k["description"] = f"Maximum chunks to return, ranked by relevance (1–{MCP_TOP_K_MAX})."
+    top_k["description"] = (
+        f"Maximum chunks to return, ranked by relevance "
+        f"(1–{MCP_TOP_K_MAX}, default {MCP_TOP_K_MAX})."
+    )
     return schema
 
 
