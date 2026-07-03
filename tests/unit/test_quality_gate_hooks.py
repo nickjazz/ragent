@@ -240,7 +240,9 @@ def test_write_pending_skips_update_when_sha_unchanged(gate_repo):
     # (author-only rebase scenario where diff content is unchanged).
     stage_file(gate_repo, "src/ragent/auth.py", "# stub\n")
     sha = staged_diff_sha(gate_repo)
-    original_content = json.dumps({"diff_sha": sha, "ts": int(time.time()) - 100, "reason": "auth/security"})
+    original_content = json.dumps(
+        {"diff_sha": sha, "ts": int(time.time()) - 100, "reason": "auth/security"}
+    )
     (gate_repo / ".claude" / ".pending_full_review").write_text(original_content)
     result = run_hook(gate_repo, "pre_commit_gate.sh", 'git commit -m "[STRUCTURAL] x"')
     assert result.returncode == 0, result.stderr
