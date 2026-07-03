@@ -8,7 +8,7 @@
 
 A user attaches a file inside a `/chatagent/v3` conversation.  The agent
 receives only the file **metadata** (`documentId`, `filename`, `uploadedAt`)
-in its context and must call the `/mcp/v2` `retrieve` tool to read file
+in its context and must call the `/mcp/v1` `retrieve` tool to read file
 content.  The attachment is indexed through the standard ingest pipeline so
 all access paths (live POST, Redis reconnect, session history) see a
 consistent view without special-casing.
@@ -21,7 +21,7 @@ and polls `GET .../attachments/{id}` until `READY`, without blocking the chat.
 
 **UC2 — Reference an attachment in a turn.**
 Once `READY`, the agent sees a JSON metadata list in `<attachments>` inside
-`<hidden>`.  To answer questions about the file the agent calls the `/mcp/v2`
+`<hidden>`.  To answer questions about the file the agent calls the `/mcp/v1`
 `retrieve` tool with the `documentId`(s) from the list; the endpoint enforces
 Anti-IDOR so only the owning user can retrieve those chunks.
 
@@ -58,7 +58,7 @@ Chat turn (POST /chatagent/v3)
   │     └── fallback      → list_by_session(), newest-first, latest=true marker
   └── <hidden>…<attachments>[…]</attachments><instruction>…</instruction>…</hidden>
 
-Agent calls /mcp/v2 (retrieve tool)
+Agent calls /mcp/v1 (retrieve tool)
   ├── RetrieveV2Service.assert_owner(user_id, document_id_list)
   ├── run_retrieval(pipeline, filters={"field":"document_id","operator":"in","value":[…]})
   └── returns chunks — only from caller-owned documents
@@ -129,7 +129,7 @@ CREATE TABLE session_documents (
 
 ## 5. Authentication — Fail-Closed
 
-All attachment endpoints and `/retrieve/v2` / `/mcp/v2` reject unauthenticated
+All attachment endpoints and `/retrieve/v2` / `/mcp/v1` reject unauthenticated
 callers with `403 AUTH_REQUIRED`.  The old `user_id or "anonymous"` fallback
 is removed.  Rationale: an anonymous upload under the Anti-IDOR model is a
 dead document that can never be retrieved.
@@ -174,9 +174,9 @@ POST /retrieve/v2
 
 ---
 
-## 8. `/mcp/v2` — Attachment-Scoped MCP Tool
+## 8. `/mcp/v1` — Attachment-Scoped MCP Tool
 
-`POST /mcp/v2` exposes a single `retrieve` tool with `document_id_list` as a
+`POST /mcp/v1` exposes a single `retrieve` tool with `document_id_list` as a
 required input field (1–100 ids, `minItems: 1`).  The handler reuses
 `RetrieveV2Service.assert_owner`; IDOR violations return JSON-RPC error
 `{code: -32002, data: {error_code: "DOCUMENT_FORBIDDEN"}}`.

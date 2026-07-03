@@ -40,7 +40,6 @@ from ragent.routers.feedback import create_feedback_router
 from ragent.routers.health import create_health_router
 from ragent.routers.ingest import create_router as create_ingest_router
 from ragent.routers.mcp import create_mcp_router
-from ragent.routers.mcp_v2 import create_mcp_v2_router
 from ragent.routers.retrieve import create_retrieve_router
 from ragent.routers.retrieve_v2 import create_retrieve_v2_router
 from ragent.routers.skill import create_skill_router
@@ -519,13 +518,6 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
             excerpt_max_chars=container.excerpt_max_chars,
         )
     )
-    app.include_router(
-        create_mcp_v2_router(
-            retrieval_pipeline=container.retrieval_pipeline,
-            retrieve_v2_service=container.retrieve_v2_service,
-            excerpt_max_chars=container.excerpt_max_chars,
-        )
-    )
     if container.feedback_hmac_secret is not None:
         app.include_router(
             create_feedback_router(
@@ -539,6 +531,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
     app.include_router(
         create_mcp_router(
             retrieval_pipeline=container.retrieval_pipeline,
+            retrieve_v2_service=container.retrieve_v2_service,
             skill_service=container.skill_service,
             excerpt_max_chars=container.excerpt_max_chars,
         )

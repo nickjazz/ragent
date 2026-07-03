@@ -83,7 +83,7 @@ if [[ $TRIGGERS_GATE -eq 1 ]]; then
     #     Use --diff-filter=AM so a staged *deletion* of docs/API.md does not
     #     satisfy the requirement (deleted files appear in --name-only output).
     API_CODE_HITS="$(printf '%s\n' "$STAGED" | grep -E '^src/ragent/(routers/|api\.py$)' || true)"
-    STAGED_API_DOC="$(git diff --cached --name-only --diff-filter=AM 2>/dev/null | grep -E '^docs/API\.md$' || true)"
+    STAGED_API_DOC="$(git diff --cached --name-only --diff-filter=AM 2>/dev/null | grep -E '^docs/(00_)?API\.md$' || true)"
     if [[ -n "$API_CODE_HITS" ]]; then
         if [[ -z "$STAGED_API_DOC" ]]; then
             if [[ $IS_BEHAVIORAL -eq 1 ]]; then

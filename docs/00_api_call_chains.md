@@ -23,7 +23,7 @@ calls it makes, and annotates each chain with:
 5. [DELETE /ingest/v1/{id} — delete document](#5-delete-ingestv1id--delete-document)
 6. [POST /ingest/v1/{id}/rerun — manual rerun](#6-post-ingestv1idrerun--manual-rerun)
 7. [POST /chat/v1 — synchronous chat](#7-post-chatv1--synchronous-chat)
-(new: see §16 /retrieve/v2, §17 /mcp/v2, §18 chat attachments)
+(new: see §16 /retrieve/v2, §17 /mcp/v1 document-scoped retrieve, §18 chat attachments)
 8. [POST /chat/v1/stream — streaming chat](#8-post-chatv1stream--streaming-chat)
 9. [POST /retrieve/v1 — standalone retrieval](#9-post-retrievev1--standalone-retrieval)
 10. [POST /mcp/v1 (tools/call retrieve) — MCP retrieve](#10-post-mcpv1-toolscall-retrieve--mcp-retrieve)
@@ -485,29 +485,26 @@ is the primary IDOR gate.
 
 ---
 
-## 17. POST /mcp/v2 — attachment-scoped MCP (retrieve_documents tool only)
+## 17. POST /mcp/v1 — document-scoped retrieve tool (Zero-Trust)
 
-JSON-RPC 2.0 envelope → `tools/call` → `_handle_retrieve_documents()`
+The `retrieve` tool on `/mcp/v1` uses `document_id_list` (required, 1–100 ids)
+and enforces Anti-IDOR ownership before accessing the pipeline:
 
 ```
-POST /mcp/v2
-  └── McpTransport (shared with /mcp/v1)
-        ├── JSON parse / schema validate
-        ├── tools/list   → returns RETRIEVE_DOCUMENTS_TOOL (name "retrieve", document_id_list required)
-        └── tools/call retrieve
-              ├── [missing user_id] → JSON-RPC error {code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}
+POST /mcp/v1  (tools/call retrieve with document_id_list)
+  └── McpTransport
+        └── _run_retrieve_documents(arguments, user_id)
+              ├── validate_against(_INPUT_VALIDATOR, arguments)   [document_id_list required]
+              ├── [missing user_id] → JSON-RPC error {code:-32002, DOCUMENT_FORBIDDEN}
               ├── RetrieveV2Service.assert_owner(user_id, document_id_list)
-              │     → IDOR violation: JSON-RPC error {code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}
-              └── run_retrieval() [same pipeline as §16]
+              │     → IDOR violation: JSON-RPC error {code:-32002, DOCUMENT_FORBIDDEN}
+              ├── run_retrieval(pipeline, filters=build_document_id_filter(ids))
+              └── post-filter: strips chunks whose document_id ∉ requested set
+                    (guards against _FeedbackMemoryRetriever ignoring Haystack filters)
 ```
 
-The `/mcp/v2` transport is shared with `/mcp/v1` via the extracted
-`create_mcp_transport` factory.  `/mcp/v2` registers only the
-`retrieve_documents` tool; the corpus-wide `retrieve` tool from `/mcp/v1`
-is **not** registered here.
-
-**Exception handling**: same JSON-RPC error envelope as `/mcp/v1` (§10), with
-`-32002` for IDOR violations (distinct from `-32602` input schema errors).
+**Exception handling**: same JSON-RPC error envelope (§10), `-32002` for IDOR
+violations (distinct from `-32602` input schema errors).
 
 ---
 

@@ -1,19 +1,8 @@
-"""MCP tool descriptor for `retrieve` (§3.8.3)."""
+"""Shared MCP tool helpers: schema builder and output schema for sources."""
 
 from __future__ import annotations
 
 from typing import Any
-
-from mcp.types import Tool, ToolAnnotations
-from pydantic import ConfigDict
-
-from ragent.schemas.retrieve import RetrieveRequest
-
-
-class _RetrieveArgs(RetrieveRequest):
-    """extra=forbid: MCP callers must not send undeclared fields."""
-
-    model_config = ConfigDict(extra="forbid")
 
 
 def _build_mcp_input_schema(model: type) -> dict[str, Any]:
@@ -91,19 +80,3 @@ RETRIEVE_OUTPUT_SCHEMA: dict[str, Any] = {
     },
 }
 
-RETRIEVE_TOOL = Tool(
-    name="retrieve",
-    description=(
-        "Retrieve ranked document chunks from the ragent knowledge corpus. "
-        "Use when you need to ground a response in the organisation's internal documents — "
-        "runs hybrid semantic + keyword search. Results are ordered by descending relevance. "
-        "structuredContent.sources is the machine-readable source list: pass it to the UI's "
-        "retrieved-sources panel. The text content is a <context>-delimited block with a "
-        "citation table and [N] excerpt sections: ground your answer on the excerpts and "
-        "cite by [N] — do NOT transcribe the <context> block verbatim into your reply. "
-        "Does NOT synthesise an answer."
-    ),
-    annotations=ToolAnnotations(readOnlyHint=True),
-    inputSchema=_build_mcp_input_schema(_RetrieveArgs),
-    outputSchema=RETRIEVE_OUTPUT_SCHEMA,
-)

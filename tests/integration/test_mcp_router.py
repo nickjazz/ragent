@@ -23,7 +23,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from haystack.dataclasses import Document
 
+from unittest.mock import AsyncMock, MagicMock
+
 from ragent.routers.mcp import create_mcp_router
+from ragent.services.retrieve_v2_service import RetrieveV2Service
 
 pytestmark = pytest.mark.docker
 
@@ -108,8 +111,10 @@ def app(es_store, mock_embedder, mock_doc_repo) -> FastAPI:
         doc_repo=mock_doc_repo,
         join_mode="rrf",
     )
+    svc = MagicMock(spec=RetrieveV2Service)
+    svc.assert_owner = AsyncMock(return_value=None)
     a = FastAPI()
-    a.include_router(create_mcp_router(retrieval_pipeline=pipeline))
+    a.include_router(create_mcp_router(retrieval_pipeline=pipeline, retrieve_v2_service=svc))
     return a
 
 
@@ -192,7 +197,11 @@ def test_mcp_full_handshake_round_trip(client: TestClient, es_store, es_url: str
             "method": "tools/call",
             "params": {
                 "name": tool["name"],  # discovered from tools/list
-                "arguments": {"query": "gradient descent", "top_k": 5},
+                "arguments": {
+                    "query": "gradient descent",
+                    "top_k": 5,
+                    "document_id_list": ["doc-mcp-1", "doc-mcp-2"],
+                },
             },
         },
     )

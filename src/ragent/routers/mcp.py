@@ -1,9 +1,9 @@
 """MCP server router — `POST /mcp/v1` JSON-RPC 2.0 (§3.8, B47).
 
 Methods: initialize / notifications/initialized / tools/list / tools/call / ping.
-Tools: `retrieve` (wraps POST /retrieve/v1) and, when a skill service is
-wired, `create_skill`. The JSON-RPC transport itself lives in
-routers/mcp_transport.py (shared with /mcp/v2).
+Tools: `retrieve` (document-scoped, Anti-IDOR via document_id_list) and, when a
+skill service is wired, `create_skill`. The JSON-RPC transport lives in
+routers/mcp_transport.py.
 """
 
 from __future__ import annotations
@@ -18,55 +18,61 @@ from mcp.types import Tool
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.pipelines.retrieve import (
+    DEFAULT_MIN_SCORE,
     DEFAULT_TOP_K,
     EXCERPT_MAX_CHARS_DEFAULT,
-    build_attachment_exclusion_filter,
-    build_es_filters,
-    combine_filters,
-    dedupe_by_document,
+    build_document_id_filter,
     doc_to_source_entry,
     run_retrieval,
 )
 from ragent.routers.mcp_tools.context_render import render_context_markdown
 from ragent.routers.mcp_tools.create_skill import CREATE_SKILL_TOOL
-from ragent.routers.mcp_tools.retrieve import RETRIEVE_TOOL
+from ragent.routers.mcp_tools.retrieve_documents import RETRIEVE_DOCUMENTS_TOOL
 from ragent.routers.mcp_transport import (
     INVALID_PARAMS,
     TOOL_EXECUTION_FAILED,
+    TOOL_FORBIDDEN,
     McpToolError,
     ToolHandler,
     create_jsonrpc_router,
     validate_against,
 )
+from ragent.services.retrieve_v2_service import DocumentForbidden, RetrieveV2Service
 from ragent.services.skill_service import SkillNameConflictError
 
 logger = structlog.get_logger(__name__)
 
-# Uses the same inputSchema already advertised by tools/list — schema and
-# validation can never drift apart.
-_RETRIEVE_INPUT_VALIDATOR = Draft7Validator(RETRIEVE_TOOL.inputSchema)
+_INPUT_VALIDATOR = Draft7Validator(RETRIEVE_DOCUMENTS_TOOL.inputSchema)
 _CREATE_SKILL_INPUT_VALIDATOR = Draft7Validator(CREATE_SKILL_TOOL.inputSchema)
 
 
 def create_mcp_router(
     retrieval_pipeline: Any,
+    retrieve_v2_service: RetrieveV2Service,
     *,
     skill_service: Any | None = None,
     excerpt_max_chars: int = EXCERPT_MAX_CHARS_DEFAULT,
 ) -> APIRouter:
-    async def _run_retrieve(arguments: dict[str, Any], _user_id: str | None) -> dict[str, Any]:
-        validate_against(_RETRIEVE_INPUT_VALIDATOR, arguments)
+    async def _run_retrieve_documents(
+        arguments: dict[str, Any], user_id: str | None
+    ) -> dict[str, Any]:
+        validate_against(_INPUT_VALIDATOR, arguments)
+        try:
+            await retrieve_v2_service.assert_owner(user_id, arguments["document_id_list"])
+        except DocumentForbidden as exc:
+            raise McpToolError(
+                TOOL_FORBIDDEN,
+                HttpErrorCode.DOCUMENT_FORBIDDEN.value,
+                "one or more document ids are not accessible",
+            ) from exc
         try:
             docs = await run_in_threadpool(
                 run_retrieval,
                 retrieval_pipeline,
                 query=arguments["query"],
-                filters=combine_filters(
-                    build_es_filters(arguments.get("source_app"), arguments.get("source_meta")),
-                    build_attachment_exclusion_filter(),
-                ),
+                filters=build_document_id_filter(arguments["document_id_list"]),
                 top_k=arguments.get("top_k", DEFAULT_TOP_K),
-                min_score=arguments.get("min_score"),
+                min_score=arguments.get("min_score", DEFAULT_MIN_SCORE),
             )
         except Exception as exc:
             logger.exception("mcp.tool.error", tool="retrieve", error_type=type(exc).__name__)
@@ -75,10 +81,11 @@ def create_mcp_router(
                 HttpErrorCode.MCP_TOOL_EXECUTION_FAILED.value,
                 str(exc) or "tool execution failed",
             ) from exc
-        if arguments.get("dedupe"):
-            docs = dedupe_by_document(docs)
+        # Post-filter: _FeedbackMemoryRetriever ignores the Haystack filters argument
+        # and can return chunks from documents outside the requested set.
+        allowed = set(arguments["document_id_list"])
+        docs = [d for d in docs if d.meta and d.meta.get("document_id") in allowed]
         entries = [doc_to_source_entry(d, max_chars=excerpt_max_chars) for d in docs]
-        # Dual channel: sources JSON for the UI, markdown digest for the LLM.
         return {
             "content": [{"type": "text", "text": render_context_markdown(entries)}],
             "structuredContent": {"sources": entries},
@@ -86,9 +93,6 @@ def create_mcp_router(
         }
 
     async def _run_create_skill(arguments: dict[str, Any], user_id: str | None) -> dict[str, Any]:
-        # Owner is the authenticated caller — NEVER a tool argument. Fail closed
-        # when no identity reached the MCP endpoint so a skill can never be
-        # created under an unknown or attacker-chosen owner.
         if not user_id:
             raise McpToolError(
                 INVALID_PARAMS,
@@ -109,8 +113,6 @@ def create_mcp_router(
                 INVALID_PARAMS, HttpErrorCode.SKILL_NAME_CONFLICT.value, str(exc)
             ) from exc
         except Exception as exc:
-            # Mirror _run_retrieve: an unexpected failure (DB down, write error)
-            # surfaces as a JSON-RPC error envelope, not an HTTP 500.
             logger.exception("mcp.tool.error", tool="create_skill", error_type=type(exc).__name__)
             raise McpToolError(
                 TOOL_EXECUTION_FAILED,
@@ -134,8 +136,8 @@ def create_mcp_router(
             "isError": False,
         }
 
-    tools: list[Tool] = [RETRIEVE_TOOL]
-    tool_handlers: dict[str, ToolHandler] = {"retrieve": _run_retrieve}
+    tools: list[Tool] = [RETRIEVE_DOCUMENTS_TOOL]
+    tool_handlers: dict[str, ToolHandler] = {"retrieve": _run_retrieve_documents}
     if skill_service is not None:
         tools.append(CREATE_SKILL_TOOL)
         tool_handlers["create_skill"] = _run_create_skill

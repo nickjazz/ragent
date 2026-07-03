@@ -418,7 +418,7 @@ Same upstream as v2 (`CHATAGENT_API_URL`, `CHATAGENT_AUTH`, rate limit, `CHATAGE
 
 - `threadId` — session id, **server-owned** (Model B): omit it on a brand-new conversation and ragent mints one; the assigned id is echoed back in `RUN_STARTED.threadId` and the client reuses it on every later turn.
 - `messages[].id` — **currently not used by ragent**: the client's optimistic id. The proxy ignores it (only the last `role="user"` message text is forwarded); the upstream assigns the authoritative `messageId` returned in the stream / session history — never key on this value server-side. Rationale: `docs/00_spec.md §3.4.7` (Session id ownership).
-- `attachmentIds` — optional list of previously-uploaded attachment ids (see [Attachments](#attachments-chatagentv3attachments)) to resolve into a metadata-only `<attachments>` block inside the `<hidden>` preamble. The block lists `documentId`/`filename`/`uploadedAt` and instructs the LLM to call the `/mcp/v2` `retrieve` tool for actual content. When omitted, `null`, or empty, the resolver falls back to listing all attachments uploaded in the session (newest-first).
+- `attachmentIds` — optional list of previously-uploaded attachment ids (see [Attachments](#attachments-chatagentv3attachments)) to resolve into a metadata-only `<attachments>` block inside the `<hidden>` preamble. The block lists `documentId`/`filename`/`uploadedAt` and instructs the LLM to call the `/mcp/v1` `retrieve` tool for actual content. When omitted, `null`, or empty, the resolver falls back to listing all attachments uploaded in the session (newest-first).
 
 ```json
 {
@@ -710,7 +710,7 @@ curl -X POST http://localhost:8000/retrieve/v1 \
 
 ### `POST /retrieve/v2` — Document-scoped retrieval (Anti-IDOR)
 
-Same pipeline as `/retrieve/v1` but **document-scoped**: `document_id_list` is mandatory and every id must be owned by the authenticated caller; personal attachment chunks are the primary use-case (surfaced by the `/mcp/v2` `retrieve` tool).
+Same pipeline as `/retrieve/v1` but **document-scoped**: `document_id_list` is mandatory and every id must be owned by the authenticated caller; personal attachment chunks are the primary use-case (surfaced by the `/mcp/v1` `retrieve` tool).
 
 ```bash
 curl -X POST http://localhost:8000/retrieve/v2 \
@@ -854,7 +854,7 @@ Optional `retrieve` arguments (`source_app`, `source_meta`, `min_score`) must be
 
 Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
 
-`POST /mcp/v2` — Document-scoped MCP server (JSON-RPC 2.0). Exposes a single `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block. Designed for chat agents whose retrieval must stay inside a specific document set.
+`POST /mcp/v1` — Document-scoped MCP server (JSON-RPC 2.0). Exposes a single `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block. Designed for chat agents whose retrieval must stay inside a specific document set.
 
 | Method | Purpose |
 |---|---|
