@@ -230,7 +230,11 @@ message shape changes, while the upstream wire contract is untouched.
     included): the current `<hidden>…</hidden>` block **and** the legacy bare
     `<context>…</context>` block that sessions created before v3 carry (backward
     compatibility). This is the **only** place the strip applies (the stream,
-    §3.4.7, never carries the block).
+    §3.4.7, never carries the block). Additionally, due to an upstream agent
+    bug, assistant message content may begin with a spurious tool-response JSON
+    object (`{"sources": …}` or `{"skill": …}`). That leading object is stripped
+    before the wrapper-strip runs; only the keys `sources` and `skill` trigger
+    stripping — any other top-level key is passed through untouched.
 - `PUT` / `DELETE /chatagent/v3/session` — proxied unchanged (rename / delete; no
   message bodies).
 - `POST /chatagent/v3/session/read?session=<id>` — **explicit, client-owned

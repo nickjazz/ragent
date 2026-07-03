@@ -387,3 +387,113 @@ def test_non_string_content_yields_null_attachments_field() -> None:
     out = map_session_payload(payload)
 
     assert out["messages"][0]["attachments"] is None
+
+
+# ---------------------------------------------------------------------------
+# Tool-response prefix stripping
+# ---------------------------------------------------------------------------
+
+
+def test_sources_prefix_is_stripped_from_assistant_content() -> None:
+    # Upstream bug: assistant message content starts with a {"sources": …} JSON
+    # blob before the actual reply text. That prefix must be removed.
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"sources": [{"id": "1", "url": "http://x.com"}]}Here is the answer.',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "Here is the answer."
+
+
+def test_skill_prefix_is_stripped_from_assistant_content() -> None:
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"skill": "some_skill"}The skill result text.',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "The skill result text."
+
+
+def test_tool_response_prefix_with_nested_json_is_stripped() -> None:
+    # Nested objects inside the JSON prefix must not confuse the brace counter.
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"sources": [{"id": "1", "meta": {"key": "val"}}]}Answer here.',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "Answer here."
+
+
+def test_plain_json_object_content_without_known_prefix_key_is_not_stripped() -> None:
+    # Only strip when the top-level key is a known tool-response key.
+    payload = _session(
+        [
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"result": "value"}Some text.',
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == '{"result": "value"}Some text.'
+
+
+def test_content_starting_with_non_json_brace_is_not_modified() -> None:
+    # A plain message that happens to start with a curly brace but is not JSON
+    # must pass through untouched.
+    payload = _session(
+        [{"messageId": "a1", "role": "assistant", "content": "{not json}Some text."}]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "{not json}Some text."
+
+
+def test_tool_response_prefix_stripped_then_hidden_context_stripped() -> None:
+    # Both transforms must compose: tool prefix first, then <hidden> block second.
+    # (In practice the hidden block appears on user turns; this tests the
+    # composition path is wired in the right order and both are applied.)
+    payload = _session(
+        [
+            {
+                "messageId": "u1",
+                "role": "user",
+                "content": "<hidden>\n<context>[]</context>\n</hidden>\n\nQuestion",
+            },
+            {
+                "messageId": "a1",
+                "role": "assistant",
+                "content": '{"sources": []}The answer.',
+            },
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["content"] == "Question"
+    assert out["messages"][1]["content"] == "The answer."
