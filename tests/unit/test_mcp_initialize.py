@@ -19,7 +19,11 @@ from tests.helpers import bypass_retrieve_v2_service
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     app = FastAPI()
-    app.include_router(create_mcp_router(retrieval_pipeline=MagicMock(), retrieve_v2_service=bypass_retrieve_v2_service()))
+    app.include_router(
+        create_mcp_router(
+            retrieval_pipeline=MagicMock(), retrieve_v2_service=bypass_retrieve_v2_service()
+        )
+    )
     with TestClient(app) as c:
         yield c
 

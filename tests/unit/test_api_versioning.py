@@ -39,7 +39,11 @@ def _build_app() -> FastAPI:
     app.include_router(create_ingest_router(svc=MagicMock()))
     app.include_router(create_chat_router(retrieval_pipeline=MagicMock(), llm_client=MagicMock()))
     app.include_router(create_retrieve_router(retrieval_pipeline=MagicMock()))
-    app.include_router(create_mcp_router(retrieval_pipeline=MagicMock(), retrieve_v2_service=bypass_retrieve_v2_service()))
+    app.include_router(
+        create_mcp_router(
+            retrieval_pipeline=MagicMock(), retrieve_v2_service=bypass_retrieve_v2_service()
+        )
+    )
     return app
 
 

@@ -25,7 +25,9 @@ def app() -> FastAPI:
     pipeline = MagicMock()
     a = FastAPI()
     a.include_router(
-        create_mcp_router(retrieval_pipeline=pipeline, retrieve_v2_service=bypass_retrieve_v2_service())
+        create_mcp_router(
+            retrieval_pipeline=pipeline, retrieve_v2_service=bypass_retrieve_v2_service()
+        )
     )
     return a
 

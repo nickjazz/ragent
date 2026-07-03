@@ -7,7 +7,7 @@ against _FeedbackMemoryRetriever leakage, structured output contract.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +16,7 @@ from jsonschema import Draft7Validator
 
 from ragent.routers.mcp import create_mcp_router
 from ragent.routers.mcp_tools.retrieve_documents import RETRIEVE_DOCUMENTS_TOOL
-from ragent.services.retrieve_v2_service import DocumentForbidden, RetrieveV2Service
+from ragent.services.retrieve_v2_service import RetrieveV2Service
 from tests.helpers import bypass_retrieve_v2_service, make_doc_row, make_retrieve_v2_service
 
 
@@ -42,7 +42,9 @@ def _make_app(retrieve_v2_service: RetrieveV2Service | None = None, **kwargs) ->
     a.include_router(
         create_mcp_router(
             retrieval_pipeline=MagicMock(),
-            retrieve_v2_service=retrieve_v2_service if retrieve_v2_service is not None else bypass_retrieve_v2_service(),
+            retrieve_v2_service=retrieve_v2_service
+            if retrieve_v2_service is not None
+            else bypass_retrieve_v2_service(),
             **kwargs,
         )
     )
@@ -196,9 +198,7 @@ def test_tools_call_post_filter_removes_none_meta_chunks(
     no_meta = SimpleNamespace(meta=None, content="x", score=0.5)
     allowed = _make_doc("d1")
 
-    monkeypatch.setattr(
-        "ragent.routers.mcp.run_retrieval", lambda *_a, **_kw: [no_meta, allowed]
-    )
+    monkeypatch.setattr("ragent.routers.mcp.run_retrieval", lambda *_a, **_kw: [no_meta, allowed])
 
     with TestClient(app) as client:
         result = _call_retrieve(client, {"document_id_list": ["d1"]})["result"]
@@ -232,9 +232,9 @@ def test_tools_call_retrieve_returns_text_content_array(client_factory) -> None:
 def test_tools_call_retrieve_structured_content_sources(client_factory) -> None:
     """T-MCP13.2 — structuredContent.sources carries the full source entries."""
     client = client_factory([_make_doc("d1"), _make_doc("d2")])
-    result = _call_retrieve(
-        client, {"query": "q", "top_k": 2, "document_id_list": ["d1", "d2"]}
-    )["result"]
+    result = _call_retrieve(client, {"query": "q", "top_k": 2, "document_id_list": ["d1", "d2"]})[
+        "result"
+    ]
     sources = result["structuredContent"]["sources"]
     assert len(sources) == 2
     assert sources[0] == {
@@ -299,9 +299,9 @@ def test_tools_call_retrieve_respects_excerpt_max_chars(monkeypatch: pytest.Monk
 def test_tools_call_retrieve_text_is_context_wrapped_citation_table(client_factory) -> None:
     """T-MCP13.3 — content[0].text is a <context>-wrapped markdown citation table."""
     client = client_factory([_make_doc("d1"), _make_doc("d2")])
-    text = _call_retrieve(
-        client, {"document_id_list": ["d1", "d2"]}
-    )["result"]["content"][0]["text"]
+    text = _call_retrieve(client, {"document_id_list": ["d1", "d2"]})["result"]["content"][0][
+        "text"
+    ]
     assert text.startswith("<context>\n")
     assert text.endswith("\n</context>")
     assert "| # | 資料來源 | 來源系統 |" in text
