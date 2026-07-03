@@ -83,6 +83,8 @@
 | `EMBEDDER_ERROR`                 | Embedder client raised inside the pipeline step | Worker pipeline |
 | `PIPELINE_UNEXPECTED_ERROR`      | Catch-all for uncategorised pipeline step exceptions | Worker pipeline |
 | `PIPELINE_MAX_ATTEMPTS_EXCEEDED` | Reconciler swept a stuck-PENDING document past max retries | Reconciler |
+| `INGEST_PDF_OCR_PAGES_EXCEEDED`  | Pre-scan found more scanned (image-only) pages than `INGEST_PDF_OCR_MAX_SCANNED_PAGES`; document marked FAILED immediately without running OCR | `_PdfASTSplitter` (worker pipeline) |
+| `ATTACHMENT_FEATURE_DISABLED`    | `attachment.process` worker task picked up with `RAGENT_KEK_BASE64` unset; row would stay `UPLOADED` forever otherwise (T-CAT.W10) | `workers/attachment.py` |
 
 ---
 

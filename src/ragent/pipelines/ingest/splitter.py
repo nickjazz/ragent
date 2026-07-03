@@ -17,13 +17,29 @@ from ragent.errors.codes import TaskErrorCode
 from ragent.pipelines.observability import IngestStepError
 from ragent.schemas.ingest import IngestMime
 from ragent.security.archive_guard import INGEST_MAX_PDF_PAGES
-from ragent.utility.env import float_env
+from ragent.utility.env import bool_env, float_env, int_env
 
 _logger = structlog.get_logger(__name__)
 
 # PDF page margin in points (1 pt ≈ 0.35 mm). Header/footer zones at the
 # top and bottom of each page are excluded from extraction when > 0.
 INGEST_PDF_MARGIN_PTS = float_env("INGEST_PDF_MARGIN_PTS", 0.0)
+
+# OCR controls — all default to off / conservative values so text-only PDFs
+# complete in seconds without any OCR inference.
+_PDF_USE_OCR: bool = bool_env("INGEST_PDF_USE_OCR", False)
+# Pages with fewer extractable chars than this threshold are treated as
+# image-only (scanned) and will be OCR'd when OCR is enabled.
+_PDF_OCR_CHAR_THRESHOLD: int = int_env("INGEST_PDF_OCR_CHAR_THRESHOLD", 50)
+# If more than this many pages need OCR the task is rejected immediately
+# (raises PdfTooManyScannedPagesError → worker writes FAILED + error_code).
+_PDF_OCR_MAX_SCANNED_PAGES: int = int_env("INGEST_PDF_OCR_MAX_SCANNED_PAGES", 10)
+# DPI used when rendering a page pixmap for OCR.  150 gives the same
+# detection quality as 300 (RapidOCR Det resizes to 736px anyway) while
+# making get_pixmap() ~4x faster.
+_PDF_OCR_DPI: int = int_env("INGEST_PDF_OCR_DPI", 150)
+_PDF_PROGRESS_LOG_INTERVAL: int = 5
+
 # PPTX placeholder types to exclude (header=14, footer=15, date=16, slide_number=13).
 # Integer values used so python-pptx stays a lazy import inside run().
 _PPTX_SKIP_PH: frozenset[int] = frozenset({13, 14, 15, 16})
@@ -354,14 +370,22 @@ class _PptxASTSplitter:
 
 @component
 class _PdfASTSplitter:
-    """PDF binary → markdown atoms via pymupdf4llm (RapidOCR auto-selected for image pages).
+    """PDF binary → markdown atoms via pymupdf4llm.
 
-    Per page: ``pymupdf4llm.to_markdown(pdf, pages=[i], use_ocr=True)`` → markdown string
-    → ``_MarkdownASTSplitter`` → structured atoms (headings, paragraphs, tables).
+    Per page: ``pymupdf4llm.to_markdown(pdf, pages=[i], use_ocr=<per-page>)`` →
+    markdown string → ``_MarkdownASTSplitter`` → structured atoms.
     Empty pages produce no atoms. ``meta["page_number"]`` carries the 1-based index.
 
-    ``fitz.TOOLS.store_shrink(100)`` after each page evicts MuPDF's 256 MB LRU cache,
-    bounding peak RSS to one page's worth of intermediate data at a time.
+    OCR behaviour (controlled by env vars):
+    - ``INGEST_PDF_USE_OCR=false`` (default): no OCR; text-layer extraction only.
+    - ``INGEST_PDF_USE_OCR=true``: pre-scans all pages cheaply via ``get_text()``;
+      pages with fewer than ``INGEST_PDF_OCR_CHAR_THRESHOLD`` chars are flagged as
+      scanned and OCR'd individually.  If the scanned-page count exceeds
+      ``INGEST_PDF_OCR_MAX_SCANNED_PAGES`` the task is rejected immediately
+      (``PdfTooManyScannedPagesError``) so the worker can write a typed FAILED row.
+
+    ``fitz.TOOLS.store_shrink(100)`` after each page evicts MuPDF's 256 MB LRU
+    cache, bounding peak RSS to one page's worth of intermediate data at a time.
     """
 
     def __init__(self) -> None:
@@ -371,7 +395,10 @@ class _PdfASTSplitter:
     def run(self, documents: list[Document]) -> dict:
         import fitz
 
-        from ragent.security.archive_guard import assert_safe_pdf_page_count
+        from ragent.security.archive_guard import (
+            PdfTooManyScannedPagesError,
+            assert_safe_pdf_page_count,
+        )
 
         atoms: list[Document] = []
         for doc in documents:
@@ -381,10 +408,44 @@ class _PdfASTSplitter:
             margins = (0, INGEST_PDF_MARGIN_PTS, 0, INGEST_PDF_MARGIN_PTS)
             with fitz.open(stream=raw_bytes, filetype="pdf") as pdf:
                 assert_safe_pdf_page_count(pdf.page_count, max_pages=INGEST_MAX_PDF_PAGES)
+
+                # Cheap pre-scan: get_text("text") avoids pixmap rendering so
+                # the entire page-classification pass costs ~0.01s/page.
+                if _PDF_USE_OCR:
+                    scanned_pages = {
+                        i
+                        for i in range(pdf.page_count)
+                        if len(pdf[i].get_text("text").strip()) < _PDF_OCR_CHAR_THRESHOLD
+                    }
+                    if len(scanned_pages) > _PDF_OCR_MAX_SCANNED_PAGES:
+                        raise PdfTooManyScannedPagesError(
+                            len(scanned_pages), _PDF_OCR_MAX_SCANNED_PAGES
+                        )
+                    _logger.info(
+                        "pdf_ocr_plan",
+                        total_pages=pdf.page_count,
+                        scanned_pages=len(scanned_pages),
+                        ocr_dpi=_PDF_OCR_DPI,
+                    )
+                else:
+                    scanned_pages = set()
+
                 for page_idx in range(pdf.page_count):
+                    if page_idx % _PDF_PROGRESS_LOG_INTERVAL == 0:
+                        _logger.debug(
+                            "pdf_page_progress",
+                            page=page_idx + 1,
+                            total=pdf.page_count,
+                            ocr=page_idx in scanned_pages,
+                        )
+                    page_use_ocr = page_idx in scanned_pages
                     try:
                         md = pymupdf4llm.to_markdown(
-                            pdf, pages=[page_idx], use_ocr=True, margins=margins
+                            pdf,
+                            pages=[page_idx],
+                            use_ocr=page_use_ocr,
+                            ocr_dpi=_PDF_OCR_DPI,
+                            margins=margins,
                         )
                     except Exception:
                         _logger.warning(

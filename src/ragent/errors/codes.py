@@ -159,6 +159,9 @@ class TaskErrorCode(StrEnum):
     # UPLOADED forever with no client-visible signal.
     ATTACHMENT_FEATURE_DISABLED = "ATTACHMENT_FEATURE_DISABLED"
 
+    # PDF OCR gate: too many pages require OCR (INGEST_PDF_OCR_MAX_SCANNED_PAGES).
+    INGEST_PDF_OCR_PAGES_EXCEEDED = "INGEST_PDF_OCR_PAGES_EXCEEDED"
+
 
 class ProbeErrorCode(StrEnum):
     """Codes inside /readyz per-component JSON (NOT problem-details)."""
