@@ -30,6 +30,25 @@ def _publisher(**overrides) -> NatsSessionPublisher:
     return NatsSessionPublisher(**{"servers": "nats://x", **_APP_KWARGS, **overrides})
 
 
+class _FakeNC:
+    """Stand-in for a nats-py connection with the surface the supervisor touches."""
+
+    def __init__(self) -> None:
+        self.is_closed = False
+        self.force_reconnect_calls = 0
+        self.drained = False
+        self.published: list[tuple[str, bytes]] = []
+
+    async def publish(self, subject: str, data: bytes) -> None:
+        self.published.append((subject, data))
+
+    async def drain(self) -> None:
+        self.drained = True
+
+    async def force_reconnect(self) -> None:
+        self.force_reconnect_calls += 1
+
+
 def test_subject_is_per_user_and_template_configurable() -> None:
     pub = _publisher(subject_template="session.{user}.status")
     assert pub.subject("alice") == "session.alice.status"
@@ -170,7 +189,7 @@ async def test_connect_exchanges_jwt_then_opens_connection(monkeypatch) -> None:
     assert isinstance(sig, bytes) and sig  # signs the nonce → non-empty base64
     # The ephemeral public key (U…) was sent to the auth service.
     assert isinstance(opened["public_key"], str) and opened["public_key"].startswith("U")
-    await pub.close()  # stop the refresh task the successful connect spawned
+    await pub.close()  # stop the supervisor the successful connect spawned
 
 
 async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
@@ -182,6 +201,7 @@ async def test_connect_fail_soft_does_not_abort(monkeypatch) -> None:
 
     await pub.connect(asyncio.get_running_loop())  # swallowed
     pub.publish("alice", {"x": 1})  # degraded to no-op, no raise
+    await pub.close()  # connect starts the supervisor even on failure — stop it
 
 
 async def test_connect_is_bounded_by_a_timeout_when_nats_hangs(monkeypatch) -> None:
@@ -205,169 +225,284 @@ async def test_connect_is_bounded_by_a_timeout_when_nats_hangs(monkeypatch) -> N
     assert elapsed < 1.0  # bounded by connect_timeout_seconds, not nats-py's own retry loop
     assert pub._nc is None  # noqa: SLF001 — degraded to snapshot-only
     pub.publish("alice", {"x": 1})  # still a no-op
+    await pub.close()  # connect starts the supervisor even on failure — stop it
 
 
-async def test_reconnect_presents_a_refreshed_jwt(monkeypatch) -> None:
-    # Platform app JWTs expire in ~1 minute. nats-py re-invokes user_jwt_cb on every
-    # (re)connect handshake, so the publisher keeps the stored JWT fresh in a
-    # background task (fresh ephemeral keypair per exchange) — a reconnect after
-    # expiry then self-heals instead of re-presenting the dead boot-time token.
-    jwts = iter(["jwt.v1", "jwt.v2", "jwt.v3", "jwt.v4"])
+async def test_supervisor_force_reconnects_before_expiry_with_a_fresh_jwt(monkeypatch) -> None:
+    # Steady state: the platform JWT expires in ~1 min, so the supervisor proactively
+    # mints a fresh (keypair, jwt) pair and force_reconnects the LIVE connection before
+    # the server can expire the current token — no auth violation, no close.
+    jwts = iter(["jwt.v1", "jwt.v2", "jwt.v3", "jwt.v4", "jwt.v5"])
 
     async def _fake_fetch(self, public_key):  # noqa: ANN001
         return next(jwts)
 
+    nc = _FakeNC()
     opened: dict[str, object] = {}
-
-    class _NC:
-        async def drain(self) -> None: ...
 
     async def _fake_connect(servers, **opts):  # noqa: ANN001
         opened["opts"] = opts
-        return _NC()
+        return nc
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
     pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
     assert opened["opts"]["user_jwt_cb"]() == b"jwt.v1"  # boot-time token first
 
-    await asyncio.sleep(0.05)  # let the refresh task tick
-    assert opened["opts"]["user_jwt_cb"]() != b"jwt.v1"  # reconnects now get a fresh one
-    await pub.close()
-
-
-async def test_jwt_refresh_mints_a_fresh_keypair_per_exchange(monkeypatch) -> None:
-    # The platform auth flow treats each exchange as a one-time key registration
-    # (mirroring the frontend: a NEW ephemeral keypair per exchange) — re-POSTing an
-    # already-registered publicKey is rejected, which would strand the boot-time JWT
-    # and turn every post-TTL reconnect into an auth failure. Each refresh must mint
-    # a fresh keypair and swap (keypair, jwt) as a matched pair.
-    seen_keys: list[str] = []
-
-    async def _fake_fetch(self, public_key):  # noqa: ANN001
-        seen_keys.append(public_key)
-        return f"jwt.for.{public_key[:8]}"
-
-    opened: dict[str, object] = {}
-
-    class _NC:
-        async def drain(self) -> None: ...
-
-    async def _fake_connect(servers, **opts):  # noqa: ANN001
-        opened["opts"] = opts
-        return _NC()
-
-    monkeypatch.setattr("nats.connect", _fake_connect)
-    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
-    pub = _publisher(jwt_refresh_seconds=0.01)
-
-    await pub.connect(asyncio.get_running_loop())
     deadline = time.monotonic() + 2.0
-    while len(seen_keys) < 2 and time.monotonic() < deadline:
+    while nc.force_reconnect_calls < 1 and time.monotonic() < deadline:
         await asyncio.sleep(0.01)
 
-    assert len(set(seen_keys)) == len(seen_keys) >= 2  # every exchange used a new key
-    # The presented credentials stay a matched pair: the served JWT is the one issued
-    # for the keypair that signature_cb currently signs with.
-    current_key = pub._keypair.public_key.decode()  # noqa: SLF001
-    assert current_key == seen_keys[-1]
-    assert opened["opts"]["user_jwt_cb"]() == f"jwt.for.{current_key[:8]}".encode()
-    sig = opened["opts"]["signature_cb"]("nonce")
-    assert isinstance(sig, bytes) and sig
+    assert nc.force_reconnect_calls >= 1  # re-handshook the same live connection
+    assert opened["opts"]["user_jwt_cb"]() != b"jwt.v1"  # ...presenting a fresh token
     await pub.close()
 
 
-async def test_jwt_refresh_failure_keeps_last_good_jwt(monkeypatch) -> None:
-    # A refresh blip (auth service down) must not kill the loop or blank the token:
-    # keep serving the last good JWT and retry next tick, logging the failure.
-    calls = {"n": 0}
-    keys: list[str] = []
-
-    async def _fetch(self, public_key):  # noqa: ANN001
-        calls["n"] += 1
-        keys.append(public_key)
-        if calls["n"] == 1:
-            return "jwt.v1"
-        raise ConnectionError("auth down")
-
-    opened: dict[str, object] = {}
-
-    class _NC:
-        async def drain(self) -> None: ...
+async def test_supervisor_rebuilds_a_brand_new_connection_when_closed(monkeypatch) -> None:
+    # The core fix: when the server closes the connection permanently (auth violation
+    # on JWT expiry → nats-py goes to CLOSED and never reconnects itself), the
+    # supervisor rebuilds a fresh connection instead of dying until pod restart. It is
+    # reason-agnostic: it only checks is_closed, not why.
+    conns: list[_FakeNC] = []
 
     async def _fake_connect(servers, **opts):  # noqa: ANN001
-        opened["opts"] = opts
-        return _NC()
-
-    monkeypatch.setattr("nats.connect", _fake_connect)
-    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
-    pub = _publisher(jwt_refresh_seconds=0.01)
-
-    with structlog.testing.capture_logs() as logs:
-        await pub.connect(asyncio.get_running_loop())
-        deadline = time.monotonic() + 2.0  # poll, not a fixed sleep — no CI-starvation flake
-        while calls["n"] < 3 and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
-
-    assert opened["opts"]["user_jwt_cb"]() == b"jwt.v1"  # last good token survives
-    # The PAIR survives, not just the token: a failed exchange must not swap in the
-    # newly-minted key (that would present a mismatched (new key, old JWT) handshake).
-    assert pub._keypair.public_key.decode() == keys[0]  # noqa: SLF001
-    assert calls["n"] >= 3  # kept retrying after the failure
-    assert any(log.get("event") == "nats.jwt_refresh_failed" for log in logs)
-    await pub.close()
-
-
-async def test_close_stops_the_jwt_refresh_task(monkeypatch) -> None:
-    calls = {"n": 0}
-
-    async def _fetch(self, public_key):  # noqa: ANN001
-        calls["n"] += 1
-        return f"jwt.v{calls['n']}"
-
-    class _NC:
-        async def drain(self) -> None: ...
-
-    async def _fake_connect(servers, **opts):  # noqa: ANN001
-        return _NC()
-
-    monkeypatch.setattr("nats.connect", _fake_connect)
-    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
-    pub = _publisher(jwt_refresh_seconds=0.01)
-
-    await pub.connect(asyncio.get_running_loop())
-    await pub.close()
-    settled = calls["n"]
-    await asyncio.sleep(0.05)
-    assert calls["n"] == settled  # no further exchanges after shutdown
-
-
-async def test_connect_never_gives_up_reconnecting(monkeypatch) -> None:
-    # A backend pod lives for weeks; nats-py's default gives up permanently after
-    # ~60 attempts (~2 min). With the JWT kept fresh, infinite retries are safe and
-    # required — otherwise any outage longer than 2 minutes means snapshot-only
-    # until the pod restarts.
-    opened: dict[str, object] = {}
-
-    class _NC:
-        async def drain(self) -> None: ...
-
-    async def _fake_connect(servers, **opts):  # noqa: ANN001
-        opened["opts"] = opts
-        return _NC()
+        nc = _FakeNC()
+        conns.append(nc)
+        return nc
 
     async def _fake_fetch(self, public_key):  # noqa: ANN001
         return "the.nats.jwt"
 
     monkeypatch.setattr("nats.connect", _fake_connect)
     monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
-    pub = _publisher()
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
+    pub = _publisher(jwt_refresh_seconds=0.01)
 
     await pub.connect(asyncio.get_running_loop())
-    assert opened["opts"]["max_reconnect_attempts"] == -1
+    conns[0].is_closed = True  # simulate the permanent auth-violation close
+
+    deadline = time.monotonic() + 2.0
+    while len(conns) < 2 and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+    assert len(conns) >= 2  # a brand-new connection was built, not force_reconnect
+    assert pub._nc is conns[-1] and pub._nc.is_closed is False  # noqa: SLF001
     await pub.close()
+
+
+async def test_supervisor_recovers_when_the_initial_connect_failed(monkeypatch) -> None:
+    # Boot-time NATS/auth outage degrades to snapshot-only but must NOT be terminal:
+    # the supervisor starts anyway and builds the connection once the outage clears.
+    calls = {"n": 0}
+    conns: list[_FakeNC] = []
+
+    async def _fetch(self, public_key):  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("auth down at boot")
+        return "the.nats.jwt"
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        nc = _FakeNC()
+        conns.append(nc)
+        return nc
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    await pub.connect(asyncio.get_running_loop())
+    assert pub._nc is None  # noqa: SLF001 — boot connect failed, snapshot-only
+
+    deadline = time.monotonic() + 2.0
+    while not conns and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+    assert conns and pub._nc is conns[-1]  # noqa: SLF001 — recovered without a restart
+    await pub.close()
+
+
+async def test_supervisor_exchange_mints_a_fresh_keypair_and_keeps_the_pair_matched(
+    monkeypatch,
+) -> None:
+    # Each auth exchange is a one-time key registration, so every supervisor tick mints
+    # a NEW keypair and swaps (keypair, jwt) as a matched pair; a failed exchange keeps
+    # the last good pair and retries next tick (fail-soft).
+    seen_keys: list[str] = []
+    fail_after = {"n": 0}
+
+    async def _fetch(self, public_key):  # noqa: ANN001
+        fail_after["n"] += 1
+        seen_keys.append(public_key)
+        if fail_after["n"] == 3:  # a mid-stream blip
+            raise ConnectionError("auth down")
+        return f"jwt.for.{public_key[:8]}"
+
+    opened: dict[str, object] = {}
+    nc = _FakeNC()
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return nc
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    with structlog.testing.capture_logs() as logs:
+        await pub.connect(asyncio.get_running_loop())
+        deadline = time.monotonic() + 2.0
+        while fail_after["n"] < 4 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+    assert len(set(seen_keys)) == len(seen_keys)  # every exchange used a fresh key
+    # After the blip, the served (keypair, jwt) is still a matched, non-blank pair.
+    current_key = pub._keypair.public_key.decode()  # noqa: SLF001
+    assert opened["opts"]["user_jwt_cb"]() == f"jwt.for.{current_key[:8]}".encode()
+    assert any(log.get("event") == "nats.reconnect_failed" for log in logs)
+    await pub.close()
+
+
+async def test_close_stops_the_supervisor(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    async def _fetch(self, public_key):  # noqa: ANN001
+        calls["n"] += 1
+        return f"jwt.v{calls['n']}"
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        return _FakeNC()
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fetch)
+    monkeypatch.setattr("ragent.clients.nats_publisher._MIN_RECONNECT_INTERVAL", 0.0)  # tick fast
+    pub = _publisher(jwt_refresh_seconds=0.01)
+
+    await pub.connect(asyncio.get_running_loop())
+    await pub.close()
+    settled = calls["n"]
+    await asyncio.sleep(0.05)
+    assert calls["n"] == settled  # no further exchanges/reconnects after shutdown
+
+
+async def test_connect_wires_lifecycle_callbacks(monkeypatch) -> None:
+    # All four nats-py lifecycle callbacks are wired so a disconnect/close is never
+    # invisible again (the prior design passed none → zero observability).
+    opened: dict[str, object] = {}
+
+    async def _fake_connect(servers, **opts):  # noqa: ANN001
+        opened["opts"] = opts
+        return _FakeNC()
+
+    async def _fake_fetch(self, public_key):  # noqa: ANN001
+        return "the.nats.jwt"
+
+    monkeypatch.setattr("nats.connect", _fake_connect)
+    monkeypatch.setattr(NatsSessionPublisher, "_fetch_app_jwt", _fake_fetch)
+    pub = _publisher()  # default cadence → supervisor won't tick during the test
+
+    await pub.connect(asyncio.get_running_loop())
+    opts = opened["opts"]
+    for cb in ("error_cb", "disconnected_cb", "reconnected_cb", "closed_cb"):
+        assert callable(opts[cb]), cb
+    assert opts["max_reconnect_attempts"] == -1  # transient-drop cover still on
+    with structlog.testing.capture_logs() as logs:
+        await opts["error_cb"](RuntimeError("boom"))
+        await opts["disconnected_cb"]()
+        await opts["reconnected_cb"]()
+        await opts["closed_cb"]()
+    events = {log.get("event") for log in logs}
+    assert {
+        "nats.error",
+        "nats.disconnected",
+        "nats.reconnected",
+        "nats.connection_closed",
+    } <= events
+    await pub.close()
+
+
+async def test_publish_skips_a_known_closed_connection() -> None:
+    # Between supervisor ticks a connection can be CLOSED; publish must not schedule a
+    # doomed send onto the loop (which would just log ConnectionClosedError).
+    pub = _publisher()
+    nc = _FakeNC()
+    nc.is_closed = True
+    pub._nc = nc  # noqa: SLF001
+    pub._loop = asyncio.get_running_loop()  # noqa: SLF001
+
+    pub.publish("alice", {"x": 1})
+
+    assert nc.published == []  # guard short-circuited before scheduling
+
+
+def test_reconnect_interval_prefers_expires_in_over_the_fallback() -> None:
+    # Cadence adapts to the platform TTL (auth response's expiresIn) when present, so a
+    # TTL change doesn't need a redeploy; floored so a tiny/garbage TTL can't hot-loop.
+    pub = _publisher(jwt_refresh_seconds=30.0)
+    assert pub._reconnect_interval() == 30.0  # noqa: SLF001 — no expiresIn yet → fallback
+    pub._token_expires_in = 100.0  # noqa: SLF001
+    assert pub._reconnect_interval() == 80.0  # noqa: SLF001 — 0.8 × TTL
+    pub._token_expires_in = 1.0  # noqa: SLF001
+    assert pub._reconnect_interval() == 5.0  # noqa: SLF001 — floored
+
+
+def test_reconnect_interval_floors_a_misconfigured_tiny_fallback() -> None:
+    # A misconfigured NATS_JWT_REFRESH_SECONDS (0 / negative / sub-floor) must not spin
+    # the supervisor into a hot loop when the auth response omits expiresIn.
+    for tiny in (0.0, -1.0, 0.5):
+        pub = _publisher(jwt_refresh_seconds=tiny)
+        assert pub._reconnect_interval() == 5.0  # noqa: SLF001 — floored to _MIN_RECONNECT_INTERVAL
+
+
+async def test_fetch_app_jwt_coerces_or_drops_a_non_numeric_expires_in(monkeypatch) -> None:
+    # The auth service is external: a string ("120") or garbage expiresIn must be coerced
+    # to float (or dropped to None), never stored raw — _reconnect_interval compares it
+    # with `> 0` OUTSIDE the supervisor's try/except, so a TypeError there would crash the
+    # supervisor permanently (the exact never-recovers failure this whole change prevents).
+    bodies = iter(
+        [
+            {"natsToken": "j", "expiresIn": "120"},  # numeric string → coerced to 120.0
+            {"natsToken": "j", "expiresIn": "banana"},  # garbage → None
+            {"natsToken": "j", "expiresIn": None},  # explicit null → None
+            {"natsToken": "j"},  # absent → None
+        ]
+    )
+
+    class _Resp:
+        def __init__(self, body: dict) -> None:
+            self._body = body
+
+        def raise_for_status(self) -> None: ...
+
+        def json(self) -> dict:
+            return self._body
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+        async def post(self, *args, **kwargs):  # noqa: ANN001
+            return _Resp(next(bodies))
+
+    monkeypatch.setattr("ragent.clients.nats_publisher.httpx.AsyncClient", lambda **k: _Client())
+    pub = _publisher()
+
+    await pub._fetch_app_jwt("UABC")  # noqa: SLF001
+    assert pub._token_expires_in == 120.0  # noqa: SLF001 — numeric string coerced to float
+    pub._reconnect_interval()  # noqa: SLF001 — must not raise on the coerced value
+
+    for _ in range(3):  # garbage / null / absent all drop to None without raising
+        await pub._fetch_app_jwt("UABC")  # noqa: SLF001
+        assert pub._token_expires_in is None  # noqa: SLF001
+        pub._reconnect_interval()  # noqa: SLF001 — never raises
 
 
 async def test_connect_skips_exchange_when_servers_is_whitespace_only(monkeypatch) -> None:
