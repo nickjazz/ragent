@@ -6,7 +6,6 @@ set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null || true)"
 
-# Only intercept git commit invocations.
 if ! printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|])git[[:space:]]+commit([[:space:]]|$)'; then
     exit 0
 fi
@@ -44,10 +43,6 @@ GIT_FLAGS="$(printf '%s' "$CMD" | sed -E 's/-m[[:space:]]+("([^"]|\\")*"|'\''([^
 if printf '%s' "$GIT_FLAGS" | grep -qE '(^|[[:space:]])(--no-verify|--no-gpg-sign)([[:space:]]|$)'; then
     block "--no-verify / --no-gpg-sign are forbidden by 00_rule.md."
 fi
-# Note: pytest-skip enforcement (`-m "not docker"`, `--deselect`) is verified
-# below by parsing the actual `make test` output, not by string-matching the
-# git-commit invocation (which has no pytest semantics).
-
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
 cd "$ROOT"
 

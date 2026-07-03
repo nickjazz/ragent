@@ -14,7 +14,6 @@ set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null || true)"
 
-# Only intercept git push invocations.
 if ! printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|])git[[:space:]]+push([[:space:]]|$)'; then
     exit 0
 fi
@@ -24,7 +23,6 @@ block() {
     exit 2
 }
 
-# Reject hook bypasses on push as well.
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])--no-verify([[:space:]]|$)'; then
     block "--no-verify is forbidden by 00_rule.md."
 fi
@@ -72,8 +70,8 @@ _push_targets_current_branch_only() {
 BASE=""
 if UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
     BASE="$UP"
-elif BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && git rev-parse --verify "origin/$BR" &>/dev/null; then
-    BASE="origin/$BR"
+elif CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && git rev-parse --verify "origin/$CUR_BRANCH" &>/dev/null; then
+    BASE="origin/$CUR_BRANCH"
 elif git rev-parse --verify origin/HEAD &>/dev/null; then
     BASE="origin/HEAD"
 fi
@@ -84,7 +82,7 @@ if [[ -n "$BASE" ]]; then
     CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null || true)"
 fi
 
-CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+CUR_BRANCH="${CUR_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 if [[ -n "$CHANGED" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
     if ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
         printf 'Pre-push gate: markdown-only diff vs %s — skipping all gates (doc-only push).\n' "$BASE" >&2
@@ -112,10 +110,10 @@ _consume_on_success() {
         printf 'Pre-push gate: .pending_full_review consumed — full review satisfied.\n' >&2
     fi
 }
+NOW=$(date +%s)
 if [[ -s "$PENDING" ]]; then
-    FULL_FRESHNESS=3600  # 60 minutes (matches pre-commit gate's window — see 00_rule.md)
-    FULL_NOW=$(date +%s)
-    FULL_CUTOFF=$(( FULL_NOW - FULL_FRESHNESS ))
+    FULL_FRESHNESS=3600  # 60 minutes — see 00_rule.md
+    FULL_CUTOFF=$(( NOW - FULL_FRESHNESS ))
     # The stamp must also be newer than the pending marker (commit time)
     # so a pre-commit full review cannot satisfy a post-commit push gate.
     PENDING_TS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ts",0))' "$PENDING" 2>/dev/null || echo 0)
@@ -176,8 +174,7 @@ fi
 # High-risk commits satisfy this via the full-review stamps above (same sha).
 if [[ -n "$PUSH_DIFF_SHA" ]]; then
     PUSH_FRESHNESS=3600
-    PUSH_NOW=$(date +%s)
-    PUSH_CUTOFF=$(( PUSH_NOW - PUSH_FRESHNESS ))
+    PUSH_CUTOFF=$(( NOW - PUSH_FRESHNESS ))
     PUSH_HITS=$(python3 - "$ROOT/.claude/.stamp_audit.log" "$PUSH_DIFF_SHA" "$PUSH_CUTOFF" <<'PY' 2>/dev/null
 import json, sys
 log, sha, cutoff = sys.argv[1], sys.argv[2], int(sys.argv[3])
