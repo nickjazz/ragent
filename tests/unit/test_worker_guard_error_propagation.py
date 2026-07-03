@@ -1,10 +1,11 @@
 """Worker preserves guard-defined `error_code` when an exception carrying
 `error_code` propagates from the pipeline.
 
-Without this contract, ArchiveBombError / PdfTooManyPagesError (which subclass
-plain Exception, not IngestStepError) collapse to PIPELINE_UNEXPECTED_ERROR on
-documents.error_code — operators investigating "why did this PPTX fail" see
-only the generic code instead of INGEST_ARCHIVE_UNSAFE / INGEST_PDF_TOO_MANY_PAGES.
+Without this contract, ArchiveBombError / PdfTooManyPagesError / PdfTooManyScannedPagesError
+(which subclass plain Exception, not IngestStepError) collapse to PIPELINE_UNEXPECTED_ERROR on
+documents.error_code — operators investigating "why did this PDF fail" see
+only the generic code instead of INGEST_ARCHIVE_UNSAFE / INGEST_PDF_TOO_MANY_PAGES /
+INGEST_PDF_OCR_PAGES_EXCEEDED.
 """
 
 from __future__ import annotations
@@ -13,10 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ragent.errors.codes import HttpErrorCode
+from ragent.errors.codes import HttpErrorCode, TaskErrorCode
 from ragent.repositories.document_repository import DocumentRow
 from ragent.schemas.ingest import IngestMime
-from ragent.security.archive_guard import ArchiveBombError, ArchiveBombReason, PdfTooManyPagesError
+from ragent.security.archive_guard import (
+    ArchiveBombError,
+    ArchiveBombReason,
+    PdfTooManyPagesError,
+    PdfTooManyScannedPagesError,
+)
 
 
 def _doc(mime_type: str) -> MagicMock:
@@ -81,3 +87,19 @@ async def test_pdf_too_many_pages_error_preserves_error_code_on_failed_row() -> 
     call_kwargs = container.doc_repo.update_status.call_args.kwargs
     assert call_kwargs["to_status"] == "FAILED"
     assert call_kwargs["error_code"] == HttpErrorCode.INGEST_PDF_TOO_MANY_PAGES
+
+
+@pytest.mark.asyncio
+async def test_pdf_too_many_scanned_pages_error_preserves_error_code_on_failed_row() -> None:
+    doc = _doc(mime_type=IngestMime.PDF)
+    exc = PdfTooManyScannedPagesError(scanned=15, cap=10)
+    container = _container_that_raises(doc, exc)
+
+    from ragent.workers import ingest as worker_mod
+
+    with patch("ragent.bootstrap.composition.get_container", return_value=container):
+        await worker_mod.ingest_pipeline_task("DOC-PROP-1")
+
+    call_kwargs = container.doc_repo.update_status.call_args.kwargs
+    assert call_kwargs["to_status"] == "FAILED"
+    assert call_kwargs["error_code"] == TaskErrorCode.INGEST_PDF_OCR_PAGES_EXCEEDED

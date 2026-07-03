@@ -80,7 +80,7 @@ stores such as ES chunks; they do not delete MinIO bytes.
 >    ├ text/html     → _HtmlASTSplitter (selectolax; drops script/style/nav/aside/footer/header)
 >    ├ docx          → _DocxASTSplitter (python-docx; paragraphs + tables)
 >    ├ pptx          → _PptxASTSplitter (python-pptx; one atom per slide)
->    ├ pdf           → _PdfASTSplitter (pymupdf4llm; per-page markdown; RapidOCR for image pages)
+>    ├ pdf           → _PdfASTSplitter (pymupdf4llm; two-phase OCR; per-page selective markdown; INGEST_PDF_USE_OCR gate)
 >    └ else          → _RaiseUnroutable (worker → FAILED + PIPELINE_UNROUTABLE)
 > → _BudgetChunker (1000 target / 1500 max / 100 overlap, mime-agnostic)
 > → DocumentEmbedder (bge-m3 batched; embeds + bulk-writes to ES via DuplicatePolicy.OVERWRITE)
@@ -431,12 +431,12 @@ All non-2xx responses use **RFC 9457 Problem Details** (`Content-Type: applicati
 | `.md`   | `MarkdownToDocument`     | `text/markdown`           | front-matter stripped | **P1** |
 | `.html` | `HTMLToDocument`         | `text/html`               | visible text, script/style stripped | **P1** |
 | `.csv`  | `CSVToDocument`          | `text/csv`                | row-as-document; rows packed by `RowMerger` to ~2 000 chars (B24); removed from P1 allow-list (§3.1) — deferred | Deferred |
-| `.pdf`  | `_PdfASTSplitter`        | `application/pdf`         | per-page `pymupdf4llm.to_markdown` → `_MarkdownASTSplitter`; RapidOCR auto-selected for image-bearing pages; structured atoms (headings, tables, paragraphs); `INGEST_PDF_MARGIN_PTS` clips header/footer zones | **P1** |
+| `.pdf`  | `_PdfASTSplitter`        | `application/pdf`         | two-phase OCR: cheap `get_text()` pre-scan classifies pages; selective per-page `pymupdf4llm.to_markdown(use_ocr=<bool>)` → `_MarkdownASTSplitter`; `INGEST_PDF_USE_OCR=false` (default) skips OCR entirely; when enabled, documents with more than `INGEST_PDF_OCR_MAX_SCANNED_PAGES` image-only pages are rejected immediately with `INGEST_PDF_OCR_PAGES_EXCEEDED`; `INGEST_PDF_MARGIN_PTS` clips header/footer zones | **P1** |
 | `.docx` | `_DocxASTSplitter`       | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | paragraphs + tables (python-docx) | **P1** |
 | `.pptx` | `_PptxASTSplitter`       | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | one atom per slide (python-pptx); footer/date/slide-number placeholders excluded | **P1** |
 | `.xlsx` | `XLSXToDocument`         | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | active sheets | P2 |
 
-> 415 on unsupported MIME; 413 on > 50 MB. PDF ingest uses `pymupdf4llm.to_markdown` per page to produce structured markdown atoms (headings, tables, paragraphs); `rapidocr-onnxruntime` is auto-selected by pymupdf4llm for image-bearing pages (no OS-level dependency). If `to_markdown` raises, the splitter falls back to `page.get_text("text")` and logs a warning — the page is still ingested as plain text. `INGEST_PDF_MARGIN_PTS` (default `0`) clips that many PDF points from the top and bottom of each page, excluding header/footer zones. PPTX footer, date, and slide-number placeholders are always excluded regardless of setting.
+> 415 on unsupported MIME; 413 on > 50 MB. PDF ingest uses a two-phase approach: (1) cheap `fitz.Page.get_text("text")` pre-scan classifies every page as text or scanned (< `INGEST_PDF_OCR_CHAR_THRESHOLD` chars); (2) per-page `pymupdf4llm.to_markdown(use_ocr=<bool>, ocr_dpi=INGEST_PDF_OCR_DPI)` produces structured markdown atoms. `INGEST_PDF_USE_OCR=false` (default) skips OCR entirely — text PDFs complete in seconds. When OCR is enabled and the pre-scan finds more than `INGEST_PDF_OCR_MAX_SCANNED_PAGES` image-only pages the task is rejected immediately with `INGEST_PDF_OCR_PAGES_EXCEEDED` on `documents.error_code`; the document is marked FAILED without running OCR. The RapidOCR ONNX engine is patched once at worker startup (`_patch_rapidocr`) using `INGEST_PDF_OCR_THREADS` threads. If `to_markdown` raises, the splitter falls back to `page.get_text("text")` and logs a warning — the page is still ingested as plain text. `INGEST_PDF_MARGIN_PTS` (default `0`) clips that many PDF points from the top and bottom of each page, excluding header/footer zones. PPTX footer, date, and slide-number placeholders are always excluded regardless of setting.
 
 ### 4.3 Pipeline Catalog
 
