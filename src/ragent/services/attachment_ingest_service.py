@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from ragent.schemas.attachments import AttachmentMime
+from ragent.schemas.attachments import ATTACHMENT_SOURCE_APP, AttachmentMime
 from ragent.schemas.ingest import IngestMime
 from ragent.utility.id_gen import new_id
 
@@ -30,10 +30,6 @@ logger = structlog.get_logger(__name__)
 # Spec default; composition.py reads ATTACHMENT_MAX_SIZE_BYTES env and passes
 # the runtime value via constructor kwarg.
 ATTACHMENT_MAX_SIZE_BYTES_DEFAULT = 50 * 1024 * 1024
-
-# Constant source_app keeps attachment documents filterable (and excludable)
-# in corpus-wide retrieval surfaces.
-ATTACHMENT_SOURCE_APP = "chat_attachment"
 
 # Explicit wire→ingest MIME mapping. Values are identical today, but the two
 # enums evolve independently (ingest also accepts CSV); the lockstep unit test

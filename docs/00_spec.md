@@ -372,7 +372,7 @@ All business paths carry a `/v<N>` version segment (§API Endpoint Naming, `00_r
 | POST   | `/ingest/v1/{id}/rerun`    | `X-User-Id` | — | `202 { document_id }` — manual re-dispatch of `ingest.pipeline` for non-READY/non-DELETING rows; `404 INGEST_NOT_FOUND` / `409 INGEST_NOT_RERUNNABLE` per S41. |
 | POST   | `/ingest/v1/upload`        | `X-User-Id` | `multipart/form-data` (server stages to `__default__` MinIO; identical downstream to inline) | `202 { document_id }` |
 | POST   | `/retrieve/v1`             | `X-User-Id` | §3.4.4 schema (`query` required; rest default) | `200 { chunks[] }` per §3.4.4 |
-| POST   | `/retrieve/v2`             | `X-User-Id` | `{ query, document_id_list: [str, …] (min 1), top_k?, min_score? }` | `200 { chunks[] }` — document-scoped retrieval; `403 DOCUMENT_FORBIDDEN` if any id is unknown or not owned by the caller; `422` if `document_id_list` absent/empty; unauthenticated → `403 DOCUMENT_FORBIDDEN`. |
+| POST   | `/retrieve/v2`             | `X-User-Id` | `{ query, document_id_list: [str, …] (1–100, required), top_k?, min_score? }` | `200 { chunks[] }` — document-scoped retrieval; `403 DOCUMENT_FORBIDDEN` if any id is unknown or not owned by the caller; `422` if `document_id_list` absent/empty/over 100; unauthenticated → `403 DOCUMENT_FORBIDDEN`. |
 | POST   | `/chat/v1`                 | `X-User-Id` | §3.4.1 schema (`messages` required; rest default) | `200 application/json` per §3.4.2 |
 | POST   | `/chat/v1/stream`          | `X-User-Id` | §3.4.1 schema | `text/event-stream` per §3.4.3 (`data: {type:delta\|done\|error}`) |
 | POST   | `/feedback/v1`             | `X-User-Id` | §3.4.5 schema | `204` on success; `401`/`410`/`422` `application/problem+json` per §3.4.5. |

@@ -210,3 +210,97 @@ def test_v2_rejects_missing_document_id_list_422():
         resp = client.post("/retrieve/v2", json={"query": "q"}, headers={"X-User-Id": "alice"})
 
     assert resp.status_code == 422
+
+
+def test_v2_rejects_document_id_list_over_100():
+    with pytest.raises(ValidationError):
+        RetrieveV2Request(query="q", document_id_list=[f"ID{i}" for i in range(101)])
+
+
+def test_v2_post_filters_out_chunks_with_none_meta(monkeypatch):
+    """Chunks with d.meta=None (e.g. from a pipeline branch that omits meta) are dropped."""
+    from types import SimpleNamespace
+
+    svc = _svc({"ID1": _doc("ID1", "alice")})
+    app = _build_app(svc)
+
+    def _run(*_a, **kw):
+        no_meta = SimpleNamespace(meta=None, content="text", score=0.5)
+        return [_make_doc("ID1"), no_meta]
+
+    monkeypatch.setattr("ragent.routers.retrieve_v2.run_retrieval", _run)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/retrieve/v2",
+            json={"query": "q", "document_id_list": ["ID1"]},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 200
+    chunks = resp.json()["chunks"]
+    assert len(chunks) == 1
+    assert chunks[0]["document_id"] == "ID1"
+
+
+def test_v2_post_filters_out_cross_owner_chunks_from_feedback_retriever(monkeypatch):
+    """Post-filter ensures no chunk whose document_id is outside the requested
+    list leaks through (e.g. from the feedback retriever which ignores the
+    terms filter)."""
+    svc = _svc({"ID1": _doc("ID1", "alice")})
+    app = _build_app(svc)
+
+    def _run(*_a, **kw):
+        # Simulate the feedback retriever adding a chunk from an unrelated document.
+        return [_make_doc("ID1"), _make_doc("ID_OTHER")]
+
+    monkeypatch.setattr("ragent.routers.retrieve_v2.run_retrieval", _run)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/retrieve/v2",
+            json={"query": "q", "document_id_list": ["ID1"]},
+            headers={"X-User-Id": "alice"},
+        )
+
+    assert resp.status_code == 200
+    chunks = resp.json()["chunks"]
+    assert len(chunks) == 1
+    assert chunks[0]["document_id"] == "ID1"
+
+
+# ---------------------------------------------------------------------------
+# Joiner helpers
+# ---------------------------------------------------------------------------
+
+
+def test_build_attachment_exclusion_filter():
+    from ragent.pipelines.retrieve import build_attachment_exclusion_filter
+
+    f = build_attachment_exclusion_filter()
+    assert f == {"field": "source_app", "operator": "!=", "value": "chat_attachment"}
+
+
+def test_combine_filters_with_none_base():
+    from ragent.pipelines.retrieve import build_attachment_exclusion_filter, combine_filters
+
+    result = combine_filters(None, build_attachment_exclusion_filter())
+    assert result == {"field": "source_app", "operator": "!=", "value": "chat_attachment"}
+
+
+def test_combine_filters_with_existing_base():
+    from ragent.pipelines.retrieve import (
+        build_attachment_exclusion_filter,
+        build_es_filters,
+        combine_filters,
+    )
+
+    base = build_es_filters("my_app", None)
+    result = combine_filters(base, build_attachment_exclusion_filter())
+    assert result == {
+        "operator": "AND",
+        "conditions": [
+            {"field": "source_app", "operator": "==", "value": "my_app"},
+            {"field": "source_app", "operator": "!=", "value": "chat_attachment"},
+        ],
+    }

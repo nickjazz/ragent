@@ -36,6 +36,10 @@ class AttachmentMime(StrEnum):
         return _EXTENSION_TO_MIME.get(ext_lower)
 
 
+# source_app tag written to ES chunks so corpus-wide retrieval can exclude them
+# (anti-IDOR: personal files must only be retrieved via /retrieve/v2).
+ATTACHMENT_SOURCE_APP = "chat_attachment"
+
 MIME_EXTENSIONS: dict[AttachmentMime, str] = {
     AttachmentMime.TEXT_PLAIN: "txt",
     AttachmentMime.TEXT_MARKDOWN: "md",

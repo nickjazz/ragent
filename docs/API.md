@@ -708,6 +708,23 @@ curl -X POST http://localhost:8000/retrieve/v1 \
 
 ---
 
+### `POST /retrieve/v2` — Document-scoped retrieval (Anti-IDOR)
+
+Same pipeline as `/retrieve/v1` but **document-scoped**: `document_id_list` is mandatory and every id must be owned by the authenticated caller; personal attachment chunks are the primary use-case (surfaced by the `/mcp/v2` `retrieve` tool).
+
+```bash
+curl -X POST http://localhost:8000/retrieve/v2 \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user-123" \
+  -d '{"query": "summary", "document_id_list": ["01J9AAA", "01J9BBB"]}'
+```
+
+**Request:** `query` (required), `document_id_list` (1–100 ids, required), `top_k`, `min_score`.
+
+**Responses:** `200 { chunks[] }` — same chunk shape as `/retrieve/v1`. `403 DOCUMENT_FORBIDDEN` if any id is unknown, not owned by the caller, or the caller is unauthenticated. `422` if `document_id_list` is absent, empty, or over 100 ids.
+
+---
+
 ## Feedback
 
 ### `POST /feedback/v1` — Record a vote against a chat source
@@ -836,6 +853,16 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 Optional `retrieve` arguments (`source_app`, `source_meta`, `min_score`) must be **omitted** to skip filtering — do not send `null`. The `inputSchema` does not advertise `default: null` for these fields; sending explicit `null` returns `-32602`. For `source_app`, use the exact value returned in a prior `retrieve` result's `source_app` metadata field — omit on the first call to search across all sources.
 
 Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
+
+`POST /mcp/v2` — Document-scoped MCP server (JSON-RPC 2.0). Exposes a single `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block. Designed for chat agents whose retrieval must stay inside a specific document set.
+
+| Method | Purpose |
+|---|---|
+| `initialize` | Capability negotiation (shared transport, same as `/mcp/v1`). |
+| `tools/list` | Returns exactly one tool: `retrieve` (name, `inputSchema` with required `query` + `document_id_list` [1–100 ids], `additionalProperties:false`). |
+| `tools/call retrieve` | Anti-IDOR ownership check before ES access; returns `structuredContent.sources` + `content[0].text` markdown digest. |
+
+**Error codes:** `DOCUMENT_FORBIDDEN` → `{code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}` (any id unknown or not owned by caller; unauthenticated caller). Missing/empty `document_id_list` → `{code:-32602, data:{error_code:"MCP_TOOL_INPUT_INVALID"}}`. Unknown tool → `{code:-32602, data:{error_code:"MCP_TOOL_NOT_FOUND"}}`.
 
 ## Embedding Model Lifecycle (admin)
 

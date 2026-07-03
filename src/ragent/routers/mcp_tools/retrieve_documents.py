@@ -26,7 +26,9 @@ def _v2_input_schema() -> dict:
     # Pydantic emits minLength for list min_length on some versions; pin the
     # JSON-Schema array keyword explicitly so clients see minItems.
     schema["properties"]["document_id_list"].pop("minLength", None)
+    schema["properties"]["document_id_list"].pop("maxLength", None)
     schema["properties"]["document_id_list"]["minItems"] = 1
+    schema["properties"]["document_id_list"]["maxItems"] = 100
     return schema
 
 

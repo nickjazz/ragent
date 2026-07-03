@@ -20,7 +20,9 @@ from ragent.errors.codes import HttpErrorCode
 from ragent.pipelines.retrieve import (
     DEFAULT_TOP_K,
     EXCERPT_MAX_CHARS_DEFAULT,
+    build_attachment_exclusion_filter,
     build_es_filters,
+    combine_filters,
     dedupe_by_document,
     doc_to_source_entry,
     run_retrieval,
@@ -59,7 +61,10 @@ def create_mcp_router(
                 run_retrieval,
                 retrieval_pipeline,
                 query=arguments["query"],
-                filters=build_es_filters(arguments.get("source_app"), arguments.get("source_meta")),
+                filters=combine_filters(
+                    build_es_filters(arguments.get("source_app"), arguments.get("source_meta")),
+                    build_attachment_exclusion_filter(),
+                ),
                 top_k=arguments.get("top_k", DEFAULT_TOP_K),
                 min_score=arguments.get("min_score"),
             )

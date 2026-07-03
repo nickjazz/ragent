@@ -34,6 +34,7 @@ INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 TOOL_EXECUTION_FAILED = -32001
+TOOL_FORBIDDEN = -32002  # ownership / authorization failure (not a schema error)
 
 
 class McpToolError(Exception):

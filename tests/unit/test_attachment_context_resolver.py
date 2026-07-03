@@ -111,6 +111,22 @@ async def test_explicit_ids_all_foreign_returns_none():
     assert ctx is None
 
 
+@pytest.mark.asyncio
+async def test_explicit_ids_cross_session_attachment_is_rejected():
+    """An attachment the same user uploaded in a DIFFERENT session must not be
+    injected into this session's <attachments> block (session-scope filter)."""
+    # The link exists (same owner) but belongs to 'other-thread', not 'thread-1'.
+    other_thread_link = _link(document_id=_DOC_A, session_id="other-thread")
+    resolver, _, _ = _resolver(
+        links_by_doc={_DOC_A: other_thread_link},
+        docs={_DOC_A: _doc()},
+    )
+
+    ctx = await resolver.resolve(session_id="thread-1", user_id="alice", attachment_ids=[_DOC_A])
+
+    assert ctx is None
+
+
 # ---------------------------------------------------------------------------
 # Session fallback (no attachment_ids)
 # ---------------------------------------------------------------------------

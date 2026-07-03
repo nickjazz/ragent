@@ -112,8 +112,9 @@ class RetrieveV2Request(BaseModel):
     document_id_list: list[str] = Field(
         ...,
         min_length=1,
+        max_length=100,
         description=(
-            "Document ids to search within (required, non-empty). Every id "
+            "Document ids to search within (1–100, required). Every id "
             "must belong to the authenticated caller; any foreign or unknown "
             "id rejects the whole request with 403."
         ),

@@ -68,6 +68,10 @@ def create_retrieve_v2_router(
                     top_k=body.top_k,
                     min_score=body.min_score,
                 )
+                # Post-filter: some pipeline branches ignore the terms filter;
+                # enforce document scope here so no cross-owner chunk leaks.
+                allowed = set(body.document_id_list)
+                docs = [d for d in docs if d.meta and d.meta.get("document_id") in allowed]
                 p_span.set_attribute("result_count", len(docs))
                 logger.info(
                     "retrieve_v2.pipeline",

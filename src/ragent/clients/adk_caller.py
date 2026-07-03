@@ -251,13 +251,9 @@ def _compose_message(
     still read it.
     """
     user_message = _last_user_message(request.messages)
-    preamble = _context_preamble(request.context, request.state, attachments)
-    # The attachment instruction rides immediately after the </hidden> block —
-    # it instructs the agent (use the retrieve tool, never guess file content)
-    # and must stay outside the wrapper the frontend strips. Emitted only when
-    # an <attachments> section actually exists.
-    if preamble and attachments and attachments_instruction:
-        preamble = f"{preamble}\n{attachments_instruction}"
+    preamble = _context_preamble(
+        request.context, request.state, attachments, attachments_instruction
+    )
     if not preamble:
         return user_message
     if not user_message:
@@ -271,7 +267,9 @@ def _compose_message(
 # A lenient stripper also honours whitespace/attributes (`</hidden >`,
 # `<hidden attr="1">`), so those forms are neutralized too — anything a relaxed
 # HTML/XML parser would accept as one of our wrapper tags.
-_WRAPPER_TAG_RE = re.compile(r"<(/?\s*(?:hidden|context|state)(?:\s+[^>]*)?)>", re.IGNORECASE)
+_WRAPPER_TAG_RE = re.compile(
+    r"<(/?\s*(?:hidden|context|state|instruction)(?:\s+[^>]*)?)>", re.IGNORECASE
+)
 
 
 def _neutralize_wrapper_tags(value: str) -> str:
@@ -279,11 +277,18 @@ def _neutralize_wrapper_tags(value: str) -> str:
 
 
 def _context_preamble(
-    context: list[ContextItem], state: object, attachments: str | None = None
+    context: list[ContextItem],
+    state: object,
+    attachments: str | None = None,
+    attachments_instruction: str | None = None,
 ) -> str:
     sections: list[str] = []
     if attachments:
         sections.append(f"<attachments>{_neutralize_wrapper_tags(attachments)}</attachments>")
+        if attachments_instruction:
+            # Inside <hidden> so strip_machine_context removes it from session
+            # history; the upstream agent still reads it as machine context.
+            sections.append(f"<instruction>{attachments_instruction}</instruction>")
     if context:
         context_json = json.dumps(
             [item.model_dump(by_alias=True) for item in context],

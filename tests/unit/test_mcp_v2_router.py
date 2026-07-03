@@ -136,6 +136,7 @@ def test_tools_call_foreign_id_returns_jsonrpc_error_not_500(app_factory, monkey
 
     assert resp.status_code == 200
     error = resp.json()["error"]
+    assert error["code"] == -32002  # TOOL_FORBIDDEN — distinct from INVALID_PARAMS (-32602)
     assert error["data"]["error_code"] == "DOCUMENT_FORBIDDEN"
     run.assert_not_called()
 
@@ -153,6 +154,7 @@ def test_tools_call_without_user_identity_fails_closed(app_factory, monkeypatch)
         )
 
     error = resp.json()["error"]
+    assert error["code"] == -32002  # TOOL_FORBIDDEN
     assert error["data"]["error_code"] == "DOCUMENT_FORBIDDEN"
     run.assert_not_called()
 

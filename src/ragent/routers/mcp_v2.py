@@ -18,6 +18,7 @@ from jsonschema import Draft7Validator
 
 from ragent.errors.codes import HttpErrorCode
 from ragent.pipelines.retrieve import (
+    DEFAULT_MIN_SCORE,
     DEFAULT_TOP_K,
     EXCERPT_MAX_CHARS_DEFAULT,
     build_document_id_filter,
@@ -27,8 +28,8 @@ from ragent.pipelines.retrieve import (
 from ragent.routers.mcp_tools.context_render import render_context_markdown
 from ragent.routers.mcp_tools.retrieve_documents import RETRIEVE_DOCUMENTS_TOOL
 from ragent.routers.mcp_transport import (
-    INVALID_PARAMS,
     TOOL_EXECUTION_FAILED,
+    TOOL_FORBIDDEN,
     McpToolError,
     create_jsonrpc_router,
     validate_against,
@@ -56,7 +57,7 @@ def create_mcp_v2_router(
             await retrieve_v2_service.assert_owner(user_id, arguments["document_id_list"])
         except DocumentForbidden as exc:
             raise McpToolError(
-                INVALID_PARAMS,
+                TOOL_FORBIDDEN,
                 HttpErrorCode.DOCUMENT_FORBIDDEN.value,
                 "one or more document ids are not accessible",
             ) from exc
@@ -67,7 +68,7 @@ def create_mcp_v2_router(
                 query=arguments["query"],
                 filters=build_document_id_filter(arguments["document_id_list"]),
                 top_k=arguments.get("top_k", DEFAULT_TOP_K),
-                min_score=arguments.get("min_score"),
+                min_score=arguments.get("min_score", DEFAULT_MIN_SCORE),
             )
         except Exception as exc:
             logger.exception("mcp.tool.error", tool="retrieve_v2", error_type=type(exc).__name__)

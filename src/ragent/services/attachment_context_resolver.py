@@ -74,15 +74,18 @@ class AttachmentContextResolver:
         limit: int | None = None,
     ) -> AttachmentContext | None:
         if attachment_ids:
-            return await self._resolve_explicit(user_id, attachment_ids)
+            return await self._resolve_explicit(session_id, user_id, attachment_ids)
         return await self._resolve_session(session_id, user_id, limit=limit)
 
     async def _resolve_explicit(
-        self, user_id: str, attachment_ids: list[str]
+        self, session_id: str, user_id: str, attachment_ids: list[str]
     ) -> AttachmentContext | None:
         # Batch-fetch all links in one query; unknown/foreign ids produce no row
         # (ownership encoded in the WHERE clause — no existence oracle leak).
         found = await self._session_docs.get_by_documents(attachment_ids, create_user=user_id)
+        # Filter to the current session: an id valid in another thread must not
+        # be injected into a different conversation's <attachments> block.
+        found = [link for link in found if link.session_id == session_id]
         found_ids = {link.document_id for link in found}
         for att_id in attachment_ids:
             if att_id not in found_ids:
