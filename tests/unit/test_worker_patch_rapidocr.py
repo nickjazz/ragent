@@ -29,7 +29,7 @@ def test_patch_rapidocr_noop_when_ocr_disabled() -> None:
     ):
         _call_patch(use_ocr=False)
 
-    fake_rapidocr_api.assert_not_called()
+    assert "ENGINE" not in vars(fake_rapidocr_api)
 
 
 def test_patch_rapidocr_replaces_engine_when_ocr_enabled() -> None:

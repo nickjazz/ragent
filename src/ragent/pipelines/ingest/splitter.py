@@ -28,15 +28,10 @@ INGEST_PDF_MARGIN_PTS = float_env("INGEST_PDF_MARGIN_PTS", 0.0)
 # OCR controls — all default to off / conservative values so text-only PDFs
 # complete in seconds without any OCR inference.
 _PDF_USE_OCR: bool = bool_env("INGEST_PDF_USE_OCR", False)
-# Pages with fewer extractable chars than this threshold are treated as
-# image-only (scanned) and will be OCR'd when OCR is enabled.
 _PDF_OCR_CHAR_THRESHOLD: int = int_env("INGEST_PDF_OCR_CHAR_THRESHOLD", 50)
-# If more than this many pages need OCR the task is rejected immediately
-# (raises PdfTooManyScannedPagesError → worker writes FAILED + error_code).
 _PDF_OCR_MAX_SCANNED_PAGES: int = int_env("INGEST_PDF_OCR_MAX_SCANNED_PAGES", 10)
-# DPI used when rendering a page pixmap for OCR.  150 gives the same
-# detection quality as 300 (RapidOCR Det resizes to 736px anyway) while
-# making get_pixmap() ~4x faster.
+# 150 DPI gives the same detection quality as 300 (RapidOCR Det resizes to
+# 736px anyway) while making get_pixmap() ~4x faster.
 _PDF_OCR_DPI: int = int_env("INGEST_PDF_OCR_DPI", 150)
 _PDF_PROGRESS_LOG_INTERVAL: int = 5
 
@@ -431,14 +426,14 @@ class _PdfASTSplitter:
                     scanned_pages = set()
 
                 for page_idx in range(pdf.page_count):
+                    page_use_ocr = page_idx in scanned_pages
                     if page_idx % _PDF_PROGRESS_LOG_INTERVAL == 0:
                         _logger.debug(
                             "pdf_page_progress",
                             page=page_idx + 1,
                             total=pdf.page_count,
-                            ocr=page_idx in scanned_pages,
+                            ocr=page_use_ocr,
                         )
-                    page_use_ocr = page_idx in scanned_pages
                     try:
                         md = pymupdf4llm.to_markdown(
                             pdf,

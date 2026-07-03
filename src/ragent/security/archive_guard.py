@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import io
 import zipfile
-from typing import Final
+from typing import ClassVar, Final
 
 from ragent.bootstrap.metrics import record_ingest_rejection
 from ragent.errors.codes import HttpErrorCode, TaskErrorCode
@@ -49,8 +49,8 @@ class ArchiveBombReason(StrEnum):
 class ArchiveBombError(Exception):
     """Zip preflight rejected the archive."""
 
-    http_status: int = 413
-    error_code: str = HttpErrorCode.INGEST_ARCHIVE_UNSAFE
+    http_status: ClassVar[int] = 413
+    error_code: ClassVar[str] = HttpErrorCode.INGEST_ARCHIVE_UNSAFE
 
     def __init__(self, reason: ArchiveBombReason, detail: str) -> None:
         super().__init__(f"{reason.value}: {detail}")
@@ -121,8 +121,8 @@ def assert_safe_zip(
 class PdfTooManyPagesError(Exception):
     """PDF page count exceeds the configured cap."""
 
-    http_status: int = 413
-    error_code: str = HttpErrorCode.INGEST_PDF_TOO_MANY_PAGES
+    http_status: ClassVar[int] = 413
+    error_code: ClassVar[str] = HttpErrorCode.INGEST_PDF_TOO_MANY_PAGES
 
     def __init__(self, page_count: int, cap: int) -> None:
         super().__init__(f"PDF has {page_count} pages, cap is {cap}")
@@ -133,7 +133,7 @@ class PdfTooManyPagesError(Exception):
 class PdfTooManyScannedPagesError(Exception):
     """PDF has more scanned (image-only) pages than the OCR page cap."""
 
-    error_code: str = TaskErrorCode.INGEST_PDF_OCR_PAGES_EXCEEDED
+    error_code: ClassVar[str] = TaskErrorCode.INGEST_PDF_OCR_PAGES_EXCEEDED
 
     def __init__(self, scanned: int, cap: int) -> None:
         super().__init__(f"PDF has {scanned} pages requiring OCR, cap is {cap}")
