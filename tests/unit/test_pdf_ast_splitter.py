@@ -232,6 +232,16 @@ def test_pdf_margins_default_zero():
 # ---------------------------------------------------------------------------
 
 
+def _ocr_collector(received: list[bool]):
+    """Return a fake to_markdown that appends use_ocr to received."""
+
+    def fake(pdf, *, pages, use_ocr, **kwargs):
+        received.append(use_ocr)
+        return "content\n"
+
+    return fake
+
+
 def test_pdf_ocr_disabled_passes_use_ocr_false_to_every_page(monkeypatch):
     """When INGEST_PDF_USE_OCR=false (default), every page gets use_ocr=False."""
     from unittest.mock import patch
@@ -241,12 +251,8 @@ def test_pdf_ocr_disabled_passes_use_ocr_false_to_every_page(monkeypatch):
     monkeypatch.setattr(splitter_mod, "_PDF_USE_OCR", False)
     received: list[bool] = []
 
-    def fake_to_markdown(pdf, *, pages, use_ocr, **kwargs):
-        received.append(use_ocr)
-        return "content\n"
-
     with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
-        mock_module.to_markdown.side_effect = fake_to_markdown
+        mock_module.to_markdown.side_effect = _ocr_collector(received)
         data = _make_pdf_bytes(["Text page", "Another page"])
         _run_splitter(data)
 
@@ -264,12 +270,8 @@ def test_pdf_ocr_enabled_text_pages_get_use_ocr_false(monkeypatch):
     monkeypatch.setattr(splitter_mod, "_PDF_OCR_MAX_SCANNED_PAGES", 10)
     received: list[bool] = []
 
-    def fake_to_markdown(pdf, *, pages, use_ocr, **kwargs):
-        received.append(use_ocr)
-        return "content\n"
-
     with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
-        mock_module.to_markdown.side_effect = fake_to_markdown
+        mock_module.to_markdown.side_effect = _ocr_collector(received)
         # "Hello World" is 11 chars > threshold=5 → not scanned
         data = _make_pdf_bytes(["Hello World"])
         _run_splitter(data)
@@ -289,12 +291,8 @@ def test_pdf_ocr_enabled_scanned_page_gets_use_ocr_true(monkeypatch):
     monkeypatch.setattr(splitter_mod, "_PDF_OCR_MAX_SCANNED_PAGES", 10)
     received: list[bool] = []
 
-    def fake_to_markdown(pdf, *, pages, use_ocr, **kwargs):
-        received.append(use_ocr)
-        return "content\n"
-
     with patch("ragent.pipelines.ingest.splitter.pymupdf4llm") as mock_module:
-        mock_module.to_markdown.side_effect = fake_to_markdown
+        mock_module.to_markdown.side_effect = _ocr_collector(received)
         data = _make_pdf_bytes(["Hello"])
         _run_splitter(data)
 
@@ -344,13 +342,14 @@ def test_pdf_ocr_too_many_scanned_pages_raises(monkeypatch):
     monkeypatch.setattr(splitter_mod, "_PDF_OCR_CHAR_THRESHOLD", 10000)
     monkeypatch.setattr(splitter_mod, "_PDF_OCR_MAX_SCANNED_PAGES", 1)
 
-    data = _make_pdf_bytes(["A", "B", "C"])  # 3 scanned pages > cap of 1
+    # pre-scan exits early: raises after finding cap+1=2 scanned pages, not all 3
+    data = _make_pdf_bytes(["A", "B", "C"])
 
     with pytest.raises(PdfTooManyScannedPagesError) as exc_info:
         _run_splitter(data)
 
     exc = exc_info.value
-    assert exc.scanned == 3
+    assert exc.scanned == 2  # cap+1: early exit stops at first violation
     assert exc.cap == 1
     assert exc.error_code == TaskErrorCode.INGEST_PDF_OCR_PAGES_EXCEEDED
 

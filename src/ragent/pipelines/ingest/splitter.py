@@ -404,18 +404,18 @@ class _PdfASTSplitter:
             with fitz.open(stream=raw_bytes, filetype="pdf") as pdf:
                 assert_safe_pdf_page_count(pdf.page_count, max_pages=INGEST_MAX_PDF_PAGES)
 
-                # Cheap pre-scan: get_text("text") avoids pixmap rendering so
-                # the entire page-classification pass costs ~0.01s/page.
+                # Cheap pre-scan: get_text("text") avoids pixmap rendering
+                # (~0.01 s/page). Stops as soon as the cap is exceeded so large
+                # fully-scanned PDFs are rejected after cap+1 pages, not all N.
                 if _PDF_USE_OCR:
-                    scanned_pages = {
-                        i
-                        for i in range(pdf.page_count)
-                        if len(pdf[i].get_text("text").strip()) < _PDF_OCR_CHAR_THRESHOLD
-                    }
-                    if len(scanned_pages) > _PDF_OCR_MAX_SCANNED_PAGES:
-                        raise PdfTooManyScannedPagesError(
-                            len(scanned_pages), _PDF_OCR_MAX_SCANNED_PAGES
-                        )
+                    scanned_pages: set[int] = set()
+                    for i in range(pdf.page_count):
+                        if len(pdf[i].get_text("text").strip()) < _PDF_OCR_CHAR_THRESHOLD:
+                            scanned_pages.add(i)
+                            if len(scanned_pages) > _PDF_OCR_MAX_SCANNED_PAGES:
+                                raise PdfTooManyScannedPagesError(
+                                    len(scanned_pages), _PDF_OCR_MAX_SCANNED_PAGES
+                                )
                     _logger.info(
                         "pdf_ocr_plan",
                         total_pages=pdf.page_count,
