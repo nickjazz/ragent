@@ -439,9 +439,7 @@ def test_push_gate_cache_busted_when_pyproject_changes(push_gate_repo):
     # A push that only changes pyproject.toml must not hit the unit test cache
     # even when src/ and tests/unit/ Python content is unchanged.
     (push_gate_repo / "pyproject.toml").write_text("[project]\nname='x'\n")
-    subprocess.run(
-        ["git", "add", "pyproject.toml"], cwd=push_gate_repo, check=True
-    )
+    subprocess.run(["git", "add", "pyproject.toml"], cwd=push_gate_repo, check=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "add pyproject"],
         cwd=push_gate_repo,
