@@ -61,11 +61,11 @@ def test_verify_and_get_chain_matches_disk(env):
         assert Path(item["down_path"]).exists()
 
 
-def test_chain_head_is_015_session_documents(env):
+def test_chain_head_is_016_documents_deleted(env):
     head = env.MIGRATION_CHAIN[-1]
-    assert head["version"] == 15
-    assert head["upgrade"] == "015_session_documents.sql"
-    assert head["downgrade"] == "015_session_documents.sql"
+    assert head["version"] == 16
+    assert head["upgrade"] == "016_documents_deleted.sql"
+    assert head["downgrade"] == "016_documents_deleted.sql"
 
 
 def test_015_upgrade_drops_attachment_tables_and_creates_session_documents(env):
@@ -85,10 +85,26 @@ def test_015_downgrade_restores_previous_head(env):
     assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" in sql
 
 
-def test_schema_snapshot_reflects_015():
+def test_016_upgrade_creates_documents_deleted(env):
+    sql = (env.UPGRADE_DIR / "016_documents_deleted.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS documents_deleted" in sql
+    assert "deleted_at" in sql
+    assert "AUTO_INCREMENT" in sql
+    assert "PRIMARY KEY (id)" in sql
+    assert "UNIQUE KEY uq_document_id (document_id)" in sql
+
+
+def test_016_downgrade_drops_documents_deleted(env):
+    sql = (env.DOWNGRADE_DIR / "016_documents_deleted.sql").read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS documents_deleted" in sql
+
+
+def test_schema_snapshot_reflects_016():
     """migrations/schema.sql is updated in lockstep with the chain head."""
     schema = (ENV_PY.parents[1] / "migrations" / "schema.sql").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS session_documents" in schema
+    assert "CREATE TABLE IF NOT EXISTS documents_deleted" in schema
+    assert "deleted_at" in schema
     assert "CREATE TABLE IF NOT EXISTS chat_attachments" not in schema
     assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" not in schema
     assert "size_bytes" in schema
@@ -177,11 +193,12 @@ def test_get_and_update_db_version_round_trip(env, sqlite_conn):
     assert env.get_current_db_version(conn) == 0
 
 
-def test_get_current_db_version_squash_marker_resolves_to_head(env, sqlite_conn):
+def test_get_current_db_version_squash_marker_resolves_to_legacy_version(env, sqlite_conn):
+    # squash covered v1-v15; pinned to 15 so migrations > 15 still run on these DBs.
     conn = sqlite_conn
     conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
     conn.execute(text("INSERT INTO alembic_version VALUES ('squash')"))
-    assert env.get_current_db_version(conn) == len(env.MIGRATION_CHAIN)
+    assert env.get_current_db_version(conn) == 15
 
 
 def test_get_current_db_version_garbage_value_raises(env, sqlite_conn):
@@ -192,10 +209,13 @@ def test_get_current_db_version_garbage_value_raises(env, sqlite_conn):
         env.get_current_db_version(conn)
 
 
-def test_get_current_db_version_no_row_but_schema_exists_resolves_to_head(env, sqlite_conn):
+def test_get_current_db_version_no_row_but_schema_exists_resolves_to_legacy_version(
+    env, sqlite_conn
+):
+    # schema.sql bootstrap without tracking row was at v15; pin so migrations > 15 still run.
     conn = sqlite_conn
     conn.execute(text("CREATE TABLE documents (id INTEGER PRIMARY KEY)"))
-    assert env.get_current_db_version(conn) == len(env.MIGRATION_CHAIN)
+    assert env.get_current_db_version(conn) == 15
 
 
 @pytest.mark.parametrize(

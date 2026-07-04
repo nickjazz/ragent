@@ -361,11 +361,25 @@ async def test_list_source_id_and_source_app_combined():
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_executes_delete_sql():
+async def test_delete_inserts_to_audit_table_then_deletes():
     engine, conn = _mock_engine(rowcount=1)
     repo = DocumentRepository(engine)
     await repo.delete("ID1")
-    conn.execute.assert_called()
+    assert conn.execute.call_count == 2
+    first_sql = str(conn.execute.call_args_list[0].args[0])
+    second_sql = str(conn.execute.call_args_list[1].args[0])
+    assert "documents_deleted" in first_sql
+    assert "DELETE FROM documents" in second_sql
+
+
+async def test_delete_is_atomic_on_insert_failure():
+    """If the INSERT into documents_deleted fails, DELETE must not execute."""
+    engine, conn = _mock_engine(rowcount=1)
+    conn.execute = AsyncMock(side_effect=Exception("insert failed"))
+    repo = DocumentRepository(engine)
+    with pytest.raises(Exception, match="insert failed"):
+        await repo.delete("ID1")
+    assert conn.execute.call_count == 1
 
 
 # ---------------------------------------------------------------------------
