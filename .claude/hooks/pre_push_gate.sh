@@ -14,7 +14,6 @@ set -uo pipefail
 INPUT="$(cat)"
 CMD="$(printf '%s' "$INPUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null || true)"
 
-# Only intercept git push invocations.
 if ! printf '%s' "$CMD" | grep -qE '(^|[[:space:];&|])git[[:space:]]+push([[:space:]]|$)'; then
     exit 0
 fi
@@ -24,7 +23,6 @@ block() {
     exit 2
 }
 
-# Reject hook bypasses on push as well.
 if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])--no-verify([[:space:]]|$)'; then
     block "--no-verify is forbidden by 00_rule.md."
 fi
@@ -72,18 +70,27 @@ _push_targets_current_branch_only() {
 BASE=""
 if UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
     BASE="$UP"
-elif BR="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && git rev-parse --verify "origin/$BR" &>/dev/null; then
-    BASE="origin/$BR"
+elif CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" && git rev-parse --verify "origin/$CUR_BRANCH" &>/dev/null; then
+    BASE="origin/$CUR_BRANCH"
 elif git rev-parse --verify origin/HEAD &>/dev/null; then
     BASE="origin/HEAD"
 fi
 
-CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if [[ -n "$BASE" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
+# Compute changed files once; reused for markdown bypass and format+lint below.
+CHANGED=""
+if [[ -n "$BASE" ]]; then
     CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null || true)"
-    if [[ -n "$CHANGED" ]] && ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
-        printf 'Pre-push gate: markdown-only diff vs %s — skipping full-review gate, docker + test-gate (fast-mode review is sufficient for doc-only pushes).\n' "$BASE" >&2
-        exit 0
+fi
+
+CUR_BRANCH="${CUR_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+if [[ -n "$CHANGED" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
+    if ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
+        # Contract docs (spec/plan) alter behaviour contracts — still require review
+        # even in a markdown-only push; only skip for pure non-contract doc changes.
+        if ! printf '%s\n' "$CHANGED" | grep -qE '^docs/00_(spec|plan)\.md$'; then
+            printf 'Pre-push gate: markdown-only diff vs %s — skipping all gates (doc-only push).\n' "$BASE" >&2
+            exit 0
+        fi
     fi
 fi
 
@@ -97,7 +104,7 @@ fi
 #
 # Marker consumption: deferred until ALL pre-push checks pass via an EXIT
 # trap. If tests fail and the push is blocked the marker remains, so the
-# next retry still requires full review (fix for review finding P1: consume).
+# next retry still requires review (fix for review finding P1: consume).
 PENDING="$ROOT/.claude/.pending_full_review"
 _CONSUME_PENDING=0
 _consume_on_success() {
@@ -107,10 +114,10 @@ _consume_on_success() {
         printf 'Pre-push gate: .pending_full_review consumed — full review satisfied.\n' >&2
     fi
 }
+NOW=$(date +%s)
 if [[ -s "$PENDING" ]]; then
-    FULL_FRESHNESS=3600  # 60 minutes (matches pre-commit gate's window — see 00_rule.md)
-    FULL_NOW=$(date +%s)
-    FULL_CUTOFF=$(( FULL_NOW - FULL_FRESHNESS ))
+    FULL_FRESHNESS=3600  # 60 minutes — see 00_rule.md
+    FULL_CUTOFF=$(( NOW - FULL_FRESHNESS ))
     # The stamp must also be newer than the pending marker (commit time)
     # so a pre-commit full review cannot satisfy a post-commit push gate.
     PENDING_TS=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ts",0))' "$PENDING" 2>/dev/null || echo 0)
@@ -128,9 +135,9 @@ try:
                 # Must be within freshness window AND after the pending marker
                 if ts >= cutoff and ts > pending_ts:
                     by = row.get("by", "")
-                    if by in ("simplify:full", "simplify"):
+                    if by == "simplify" or by.startswith("simplify:"):
                         hits["simplify"] = "yes"
-                    elif by in ("review:full", "review"):
+                    elif by == "review" or by.startswith("review:"):
                         hits["review"] = "yes"
             except Exception:
                 continue
@@ -139,37 +146,108 @@ except FileNotFoundError:
 print(hits["simplify"], hits["review"])
 PY
 ) || FULL_HITS="no no"
-    read -r SIM_FULL REV_FULL <<<"$FULL_HITS"
-    if [[ "$SIM_FULL" != yes || "$REV_FULL" != yes ]]; then
+    read -r HR_SIM HR_REV <<<"$FULL_HITS"
+    if [[ "$HR_SIM" != yes || "$HR_REV" != yes ]]; then
         REASON=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("reason","?"))' "$PENDING" 2>/dev/null || echo "?")
-        block "high-risk full-review gate: .pending_full_review exists (reason: ${REASON}).
-  Before pushing, run BOTH skills AFTER your last high-risk commit:
-    /simplify --mode full
-    /review --mode full
-  (stamps must be within 60 min and newer than the commit). Got simplify:full=${SIM_FULL} review:full=${REV_FULL}."
+        block "high-risk review gate: .pending_full_review exists (reason: ${REASON}, pending_ts=${PENDING_TS}).
+  Run BOTH skills IN ORDER after your last commit, then git push:
+    1. /simplify   (context: git diff ${BASE}...HEAD)
+    2. /review     (same context)
+  Stamps must be within 60 min AND newer than pending_ts=${PENDING_TS}.
+  Got simplify=${HR_SIM} review=${HR_REV}."
     fi
     # Mark for consumption — actual rm happens in the EXIT trap after all
     # remaining pre-push checks (markdown/tests) also pass.
     _CONSUME_PENDING=1
-    printf 'Pre-push gate: full-review requirement satisfied — proceeding to test gate.\n' >&2
+    printf 'Pre-push gate: high-risk review satisfied — proceeding to test gate.\n' >&2
+fi
+
+# Push-range diff sha — computed after the high-risk gate to avoid the full
+# content hash on pushes already blocked above.
+# Empty when no upstream base could be resolved; gate is skipped with a warning.
+PUSH_DIFF_SHA=""
+if [[ -n "$BASE" ]]; then
+    PUSH_DIFF_SHA="$(git diff "${BASE}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+fi
+if [[ -z "$PUSH_DIFF_SHA" ]]; then
+    printf 'Pre-push gate: no upstream base resolved — per-push review gate skipped.\n' >&2
+fi
+
+# Per-push review gate — every push requires /simplify + /review stamps bound to
+# the push-range diff sha (set via RAGENT_DIFF_SHA in the skill stamp step).
+# High-risk commits satisfy this via the full-review stamps above (same sha).
+if [[ -n "$PUSH_DIFF_SHA" ]]; then
+    PUSH_FRESHNESS=3600
+    PUSH_CUTOFF=$(( NOW - PUSH_FRESHNESS ))
+    PUSH_HITS=$(python3 - "$ROOT/.claude/.stamp_audit.log" "$PUSH_DIFF_SHA" "$PUSH_CUTOFF" <<'PY' 2>/dev/null
+import json, sys
+log, sha, cutoff = sys.argv[1], sys.argv[2], int(sys.argv[3])
+hits = {"simplify": "no", "review": "no"}
+try:
+    with open(log) as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+                if row.get("diff_sha") == sha and int(row.get("ts", 0)) >= cutoff:
+                    by = row.get("by", "")
+                    if by == "simplify" or by.startswith("simplify:"):
+                        hits["simplify"] = "yes"
+                    elif by == "review" or by.startswith("review:"):
+                        hits["review"] = "yes"
+            except Exception:
+                continue
+except FileNotFoundError:
+    pass
+print(hits["simplify"], hits["review"])
+PY
+    ) || PUSH_HITS="no no"
+    read -r PUSH_SIM PUSH_REV <<<"$PUSH_HITS"
+    if [[ "$PUSH_SIM" != yes || "$PUSH_REV" != yes ]]; then
+        block "per-push review gate: push-range diff not yet reviewed (sha=${PUSH_DIFF_SHA:0:12}…, base=${BASE}).
+  Run BOTH skills IN ORDER, then git push:
+    1. /simplify   (context: git diff ${BASE}...HEAD)
+    2. /review     (same context)
+  Got simplify=${PUSH_SIM} review=${PUSH_REV}."
+    fi
 fi
 
 LOG_DIR="$(mktemp -d -t ragent-prepush-XXXXXX)"
+_save_log() { local keep="$ROOT/.claude/logs"; mkdir -p "$keep"; cp "$LOG_DIR/$1" "$keep/$1" 2>/dev/null || true; }
 # Combine cleanup: remove temp dir AND conditionally consume pending marker.
 trap '_consume_on_success; rm -rf "$LOG_DIR"' EXIT
 
 FULL="${RAGENT_PREPUSH_FULL:-}"
 
 if [[ -z "$FULL" ]]; then
-    # Fast path: unit tests only. No docker, no testcontainers.
+    # Format + lint: check-only on push-range .py files that still exist (AM filter
+    # excludes deletions — ruff exits 2 for missing files, blocking valid delete pushes).
+    _PY=($(git diff --name-only --diff-filter=AM "${BASE}...HEAD" 2>/dev/null | grep '\.py$' || true))
+    if [[ ${#_PY[@]} -gt 0 ]]; then
+        if ! uv run ruff format --check "${_PY[@]}" >"$LOG_DIR/format.log" 2>&1; then
+            _save_log format.log
+            block "format check failed — run: uv run ruff format ${_PY[*]}
+  Re-commit the formatted files, then push. See .claude/logs/format.log"
+        fi
+        if ! uv run ruff check "${_PY[@]}" >"$LOG_DIR/lint.log" 2>&1; then
+            _save_log lint.log
+            block "lint check failed — run: uv run ruff check --fix ${_PY[*]}
+  Re-commit the fixed files, then push. See .claude/logs/lint.log"
+        fi
+    fi
+    # Unit test cache: skip if src/ + tests/unit/ content hash unchanged since last passing run.
+    CACHE_FILE="$ROOT/.claude/.unit_test_cache"
+    CACHE_HASH="$( (find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null; sha256sum pyproject.toml 2>/dev/null) | sha256sum | cut -d' ' -f1 || true)"
+    if [[ -n "$CACHE_HASH" && -s "$CACHE_FILE" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
+        printf 'Pre-push gate: unit test cache hit (%s…) — skipping unit tests.\n' "${CACHE_HASH:0:12}" >&2
+        exit 0
+    fi
     if ! uv run pytest tests/unit >"$LOG_DIR/test.log" 2>&1; then
-        keep="$ROOT/.claude/logs"
-        mkdir -p "$keep"
-        cp "$LOG_DIR/test.log" "$keep/test.log" 2>/dev/null || true
+        _save_log test.log
         block "unit tests failed — see .claude/logs/test.log
   Integration + e2e are opt-in: re-run with \`RAGENT_PREPUSH_FULL=1 git push ...\`
   (set RAGENT_PREPUSH_FULL=e2e to also include tests/e2e)."
     fi
+    echo "$CACHE_HASH" > "$CACHE_FILE"
     exit 0
 fi
 
@@ -186,9 +264,7 @@ else
 fi
 
 if ! make "$TARGET" >"$LOG_DIR/test.log" 2>&1; then
-    keep="$ROOT/.claude/logs"
-    mkdir -p "$keep"
-    cp "$LOG_DIR/test.log" "$keep/test.log" 2>/dev/null || true
+    _save_log test.log
     block "$TARGET failed — see .claude/logs/test.log"
 fi
 

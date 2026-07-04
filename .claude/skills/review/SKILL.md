@@ -4,20 +4,36 @@ Perform a review of the current staged changes covering plan compliance, spec al
 
 ## Mode selection
 
-This skill accepts an optional `--mode fast|full` argument (default: `full`).
+This skill accepts an optional `--mode fast|full` argument (default: **`fast`**).
 
 | Mode | When to use | What runs |
 |------|-------------|-----------|
-| `--mode fast` | Pre-commit fast gate on low-risk or high-risk staged diffs | Focused single-pass check of the four compliance dimensions |
-| `--mode full` | Pre-push full gate on high-risk commits; default when no mode given | Three parallel sub-agents (Plan & Spec · Domain Boundaries · Tests & Quality) |
+| `--mode fast` | Standard push gate (default) | Focused single-pass check of the four compliance dimensions |
+| `--mode full` | Manual deep review on explicit request | Three parallel sub-agents (Plan & Spec · Domain Boundaries · Tests & Quality) |
 
-**Stamp used:** `review:fast` or `review:full` (see Stamp step).
+**Stamp used:** `review:fast` (default) or `review:full` (see Stamp step).
 
 ---
 
-## fast mode
+## Phase 1: Context guard (run before any review)
 
-1. Run `git diff --cached` to get the staged diff.
+```bash
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    # push context — abort if working tree is dirty (stamp would bind to stale SHA after commit)
+    if [[ -n "$(git diff 2>/dev/null)" ]]; then
+        echo "ERROR: working-tree has uncommitted changes in push context." >&2
+        echo "Commit your changes first, then re-run /review." >&2
+        exit 1
+    fi
+fi
+```
+
+---
+
+## fast mode (default)
+
+1. Run `git diff` (push context) or `git diff --cached` (commit context) to get the diff.
 2. In a single response, check all four dimensions:
    - **Plan compliance**: do the staged changes complete the next unmarked `[ ]` item in `docs/00_plan.md`? Any obvious gaps?
    - **Spec alignment**: do HTTP shapes, error codes, DB schema, env-var names match `docs/00_spec.md`? Spot-check the most relevant sections for the diff.
@@ -25,19 +41,15 @@ This skill accepts an optional `--mode fast|full` argument (default: `full`).
    - **Code quality**: no obvious duplication, no dead code, no commented-out code.
 3. Report LGTM or list findings. Fix any that are clear-cut and re-stage.
 
-Then stamp:
-
-```bash
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh review:fast
-```
+Then run the **Stamp** section below with `review:fast`.
 
 ---
 
-## full mode (default)
+## full mode
 
 > **MANDATORY — no exceptions:** ALWAYS launch all three sub-agents below even if the diff appears small, focused, or surgical. The phrase *"diff is small/focused/inline review sufficient"* is a process violation — see journal Process 2026-05-17 "Inline /simplify rationalization". The fan-out **is** the review; skipping it means skipping the review.
 
-1. Run `git diff --cached` (or `git diff origin/<branch>..HEAD` if triggered from the pre-push gate for a high-risk commit) to get the diff.
+1. Run `git diff` (push context) or `git diff --cached` (commit context) to get the diff.
 2. Use the Agent tool to launch all three agents below concurrently in a single message. Pass each agent the full diff plus the doc(s) named in its section — each agent reads only what its dimension needs, not all three docs.
 
 ### Agent 1: Plan & Spec Compliance
@@ -59,8 +71,33 @@ RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh 
 3. Wait for all three agents to complete. Aggregate their findings; if any require fixes, make them and re-stage.
 4. Report LGTM or list findings.
 
-Then stamp:
+Then run the **Stamp** section below with `review:full`.
+
+---
+
+## Stamp (mandatory final step)
+
+Auto-detects push vs commit context; binds stamp to the appropriate diff sha.
 
 ```bash
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh review:full
+# Mirror the gate's full base-fallback chain so the stamp SHA always matches
+# what the push gate computes (upstream → origin/<branch> → origin/HEAD).
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -z "$_UP" ]]; then
+    _CB="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -n "$_CB" ]] && git rev-parse --verify "origin/$_CB" &>/dev/null 2>&1; then
+        _UP="origin/$_CB"
+    elif git rev-parse --verify origin/HEAD &>/dev/null 2>&1; then
+        _UP="origin/HEAD"
+    fi
+fi
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    _SHA="$(git diff "${_UP}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+else
+    _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
+fi
+# Default (fast mode):
+RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:fast
+# Only when --mode full was explicitly requested:
+# RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh review:full
 ```

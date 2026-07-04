@@ -4,21 +4,34 @@ Review all changed files for reuse, quality, and efficiency. Fix any issues foun
 
 ## Mode selection
 
-This skill accepts an optional `--mode fast|full` argument (default: `full`).
+This skill accepts an optional `--mode fast|full` argument (default: **`fast`**).
 
 | Mode | When to use | What runs |
 |------|-------------|-----------|
-| `--mode fast` | Pre-commit fast gate on low-risk or high-risk staged diffs | Single inline pass — reuse, quality, efficiency in one response |
-| `--mode full` | Pre-push full gate on high-risk commits; default when no mode given | Three parallel sub-agents (Reuse · Quality · Efficiency) |
+| `--mode fast` | Standard push gate (default) | Single inline pass — reuse, quality, efficiency in one response |
+| `--mode full` | Manual deep review on explicit request | Three parallel sub-agents (Reuse · Quality · Efficiency) |
 
-**Stamp used:** `simplify:fast` or `simplify:full` (see Phase 4).
+**Stamp used:** `simplify:fast` (default) or `simplify:full` (see Phase 4).
 
 ---
 
 ## Phase 1: Identify Changes
 
-If `--mode full` (or no mode): run `git diff` (or `git diff HEAD` if staged changes exist).  
-If `--mode fast` and there are staged changes: run `git diff --cached`.  
+First, detect context and guard against stale stamps:
+
+```bash
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    # push context — abort if working tree is dirty (stamp would bind to stale SHA after commit)
+    if [[ -n "$(git diff 2>/dev/null)" ]]; then
+        echo "ERROR: working-tree has uncommitted changes in push context." >&2
+        echo "Commit your changes first, then re-run /simplify." >&2
+        exit 1
+    fi
+fi
+```
+
+Then run `git diff` (push context, no staged changes) or `git diff --cached` (commit context, staged changes exist).  
 If no git changes in either case, review the most recently modified files mentioned by the user or edited in this conversation.
 
 ---
@@ -80,7 +93,23 @@ Review the same changes for efficiency:
 
 ## Phase 3: Fix Issues
 
-Wait for all agents to complete (full mode) or finish the inline scan (fast mode). Aggregate findings and fix each issue directly. If a finding is a false positive or not worth addressing, note it and move on.
+Aggregate findings and fix each issue directly. If a finding is a false positive, note and skip.
+
+In **commit context** (staged changes exist), run format + lint on changed `.py` files and re-stage so the commit is clean:
+
+```bash
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -z "$_UP" ]] || ! git diff --cached --quiet 2>/dev/null; then
+    _PY=($(git diff --cached --name-only 2>/dev/null | grep '\.py$' || true))
+    if [[ ${#_PY[@]} -gt 0 ]]; then
+        uv run ruff format "${_PY[@]}"
+        uv run ruff check --fix "${_PY[@]}"
+        git add "${_PY[@]}"
+    fi
+fi
+```
+
+In **push context** (no staged changes, upstream set), format is checked by the push gate itself — do not run it here, as any fixes would be uncommitted and not part of the pushed commits. If format issues exist they will be caught and must be committed before pushing.
 
 Briefly summarize what was fixed (or confirm the code was already clean).
 
@@ -88,12 +117,29 @@ Briefly summarize what was fixed (or confirm the code was already clean).
 
 ## Phase 4: Stamp (mandatory final step)
 
-After summarizing findings, run the stamp command matching the mode used:
+Auto-detects push vs commit context; binds stamp to the appropriate diff sha.
 
 ```bash
-# fast mode:
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh simplify:fast
+# Mirror the gate's full base-fallback chain so the stamp SHA always matches
+# what the push gate computes (upstream → origin/<branch> → origin/HEAD).
+_UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -z "$_UP" ]]; then
+    _CB="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -n "$_CB" ]] && git rev-parse --verify "origin/$_CB" &>/dev/null 2>&1; then
+        _UP="origin/$_CB"
+    elif git rev-parse --verify origin/HEAD &>/dev/null 2>&1; then
+        _UP="origin/HEAD"
+    fi
+fi
+if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
+    _SHA="$(git diff "${_UP}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+else
+    _SHA="$(git diff --cached 2>/dev/null | sha256sum | cut -d' ' -f1)"
+fi
 
-# full mode (or no --mode argument):
-RAGENT_SKILL_INVOCATION_TOKEN=1 bash .claude/hooks/stamp_pre_commit_approved.sh simplify:full
+# Default (fast mode):
+RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh simplify:fast
+
+# Only when --mode full was explicitly requested:
+# RAGENT_SKILL_INVOCATION_TOKEN=1 RAGENT_DIFF_SHA="$_SHA" bash .claude/hooks/stamp_pre_commit_approved.sh simplify:full
 ```

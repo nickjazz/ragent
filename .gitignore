@@ -221,3 +221,4 @@ __marimo__/
 .claude/.pre_commit_approved
 .claude/.pending_full_review
 .claude/.stamp_audit.log
+.claude/.unit_test_cache
