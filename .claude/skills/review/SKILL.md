@@ -80,7 +80,17 @@ Then run the **Stamp** section below with `review:full`.
 Auto-detects push vs commit context; binds stamp to the appropriate diff sha.
 
 ```bash
+# Mirror the gate's full base-fallback chain so the stamp SHA always matches
+# what the push gate computes (upstream → origin/<branch> → origin/HEAD).
 _UP="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
+if [[ -z "$_UP" ]]; then
+    _CB="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -n "$_CB" ]] && git rev-parse --verify "origin/$_CB" &>/dev/null 2>&1; then
+        _UP="origin/$_CB"
+    elif git rev-parse --verify origin/HEAD &>/dev/null 2>&1; then
+        _UP="origin/HEAD"
+    fi
+fi
 if [[ -n "$_UP" ]] && git diff --cached --quiet 2>/dev/null; then
     _SHA="$(git diff "${_UP}...HEAD" 2>/dev/null | sha256sum | cut -d' ' -f1)"
 else

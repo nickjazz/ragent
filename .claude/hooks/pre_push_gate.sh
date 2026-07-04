@@ -85,8 +85,12 @@ fi
 CUR_BRANCH="${CUR_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 if [[ -n "$CHANGED" ]] && _push_targets_current_branch_only "$CMD" "$CUR_BRANCH"; then
     if ! printf '%s\n' "$CHANGED" | grep -qvE '\.md$'; then
-        printf 'Pre-push gate: markdown-only diff vs %s — skipping all gates (doc-only push).\n' "$BASE" >&2
-        exit 0
+        # Contract docs (spec/plan) alter behaviour contracts — still require review
+        # even in a markdown-only push; only skip for pure non-contract doc changes.
+        if ! printf '%s\n' "$CHANGED" | grep -qE '^docs/00_(spec|plan)\.md$'; then
+            printf 'Pre-push gate: markdown-only diff vs %s — skipping all gates (doc-only push).\n' "$BASE" >&2
+            exit 0
+        fi
     fi
 fi
 
@@ -215,8 +219,9 @@ trap '_consume_on_success; rm -rf "$LOG_DIR"' EXIT
 FULL="${RAGENT_PREPUSH_FULL:-}"
 
 if [[ -z "$FULL" ]]; then
-    # Format + lint: check-only on push-range .py files (reuses CHANGED from above).
-    _PY=($(printf '%s\n' "$CHANGED" | grep '\.py$' || true))
+    # Format + lint: check-only on push-range .py files that still exist (AM filter
+    # excludes deletions — ruff exits 2 for missing files, blocking valid delete pushes).
+    _PY=($(git diff --name-only --diff-filter=AM "${BASE}...HEAD" 2>/dev/null | grep '\.py$' || true))
     if [[ ${#_PY[@]} -gt 0 ]]; then
         if ! uv run ruff format --check "${_PY[@]}" >"$LOG_DIR/format.log" 2>&1; then
             _save_log format.log
@@ -231,7 +236,7 @@ if [[ -z "$FULL" ]]; then
     fi
     # Unit test cache: skip if src/ + tests/unit/ content hash unchanged since last passing run.
     CACHE_FILE="$ROOT/.claude/.unit_test_cache"
-    CACHE_HASH="$(find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+    CACHE_HASH="$( (find src/ragent tests/unit -name '*.py' -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null; sha256sum pyproject.toml 2>/dev/null) | sha256sum | cut -d' ' -f1 || true)"
     if [[ -n "$CACHE_HASH" && -s "$CACHE_FILE" && "$(cat "$CACHE_FILE" 2>/dev/null)" == "$CACHE_HASH" ]]; then
         printf 'Pre-push gate: unit test cache hit (%s…) — skipping unit tests.\n' "${CACHE_HASH:0:12}" >&2
         exit 0

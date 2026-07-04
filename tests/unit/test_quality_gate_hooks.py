@@ -342,3 +342,118 @@ def test_push_gate_passes_review_check_when_both_skills_stamped(push_gate_repo):
     append_audit(push_gate_repo, sha, now, REVIEW_FULL)
     result = run_push_hook(push_gate_repo)
     assert "per-push review gate" not in result.stderr
+
+
+# --- pre_push_gate.sh: markdown bypass excludes contract docs ------------------
+
+
+def test_push_gate_bypasses_non_contract_markdown(push_gate_repo):
+    # A push whose entire diff is a non-contract .md file must skip all gates.
+    # Sync origin to current HEAD first so the push range is markdown-only.
+    subprocess.run(
+        ["git", "push", "-q", "origin", "HEAD:main"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=push_gate_repo, check=True)
+    (push_gate_repo / "NOTES.md").write_text("notes\n")
+    subprocess.run(["git", "add", "NOTES.md"], cwd=push_gate_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add notes"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    result = run_push_hook(push_gate_repo)
+    assert "markdown-only diff" in result.stderr
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("contract_doc", ["docs/00_spec.md", "docs/00_plan.md"])
+def test_push_gate_does_not_bypass_contract_markdown(push_gate_repo, contract_doc):
+    # Pushes that include a contract doc must not bypass the review gate even if
+    # the rest of the diff is pure markdown.
+    # Sync origin so the push range is markdown-only (no change.txt noise).
+    subprocess.run(
+        ["git", "push", "-q", "origin", "HEAD:main"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=push_gate_repo, check=True)
+    path = push_gate_repo / contract_doc
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# spec\n")
+    subprocess.run(["git", "add", contract_doc], cwd=push_gate_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "update spec"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    result = run_push_hook(push_gate_repo)
+    assert "markdown-only diff" not in result.stderr
+    assert result.returncode == 2
+    assert "per-push review gate" in result.stderr
+
+
+# --- pre_push_gate.sh: deleted Python files do not fail ruff ------------------
+
+
+def test_push_gate_does_not_run_ruff_on_deleted_py_file(push_gate_repo):
+    # When the push range deletes a .py file, the gate must not pass that path
+    # to ruff (ruff exits 2 for missing files, which would block a valid push).
+    # Seed a .py file in the base commit already pushed to origin.
+    py_file = push_gate_repo / "todelete.py"
+    py_file.write_text("x = 1\n")
+    subprocess.run(["git", "add", "todelete.py"], cwd=push_gate_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add py"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "origin", "HEAD:main"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    subprocess.run(["git", "fetch", "-q", "origin"], cwd=push_gate_repo, check=True)
+    # Now delete it in a new commit (the push range).
+    py_file.unlink()
+    subprocess.run(["git", "rm", "-q", "todelete.py"], cwd=push_gate_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "delete py"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    sha = push_range_sha(push_gate_repo)
+    now = int(time.time())
+    append_audit(push_gate_repo, sha, now, SIMPLIFY_FULL)
+    append_audit(push_gate_repo, sha, now, REVIEW_FULL)
+    result = run_push_hook(push_gate_repo)
+    assert "format check failed" not in result.stderr
+    assert "per-push review gate" not in result.stderr
+
+
+# --- pre_push_gate.sh: pyproject.toml busts unit test cache -------------------
+
+
+def test_push_gate_cache_busted_when_pyproject_changes(push_gate_repo):
+    # A push that only changes pyproject.toml must not hit the unit test cache
+    # even when src/ and tests/unit/ Python content is unchanged.
+    (push_gate_repo / "pyproject.toml").write_text("[project]\nname='x'\n")
+    subprocess.run(
+        ["git", "add", "pyproject.toml"], cwd=push_gate_repo, check=True
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add pyproject"],
+        cwd=push_gate_repo,
+        check=True,
+    )
+    # Write a cache file that would match src/ragent + tests/unit hash (empty here)
+    # but NOT account for pyproject.toml — so the gate must recompute and miss.
+    stale_hash = "deadbeef"
+    (push_gate_repo / ".claude" / ".unit_test_cache").write_text(stale_hash)
+    sha = push_range_sha(push_gate_repo)
+    now = int(time.time())
+    append_audit(push_gate_repo, sha, now, SIMPLIFY_FULL)
+    append_audit(push_gate_repo, sha, now, REVIEW_FULL)
+    result = run_push_hook(push_gate_repo)
+    assert "cache hit" not in result.stderr
