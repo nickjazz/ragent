@@ -28,9 +28,27 @@ from ragent.pipelines.observability import bind_ingest_context, log_ingest_step
 from ragent.schemas.ingest import BINARY_MIMES, MIME_EXTENSIONS, IngestMime
 from ragent.utility.state_machine import IllegalStateTransition
 from ragent.workers.heartbeat import run_heartbeat
+from ragent.workers.maintenance import run_maintenance_cycle
 from ragent.workers.startup_sweep import run_startup_sweep
 
 logger = structlog.get_logger(__name__)
+
+
+async def _maintenance_loop(container: object) -> None:
+    while True:
+        await asyncio.sleep(container.maintenance_interval_seconds)
+        try:
+            await run_maintenance_cycle(
+                repo=container.doc_repo,
+                registry=container.registry,
+                dispatcher=container.dispatcher,
+                pending_stale_seconds=container.pending_stale_seconds,
+                uploaded_stale_seconds=container.uploaded_stale_seconds,
+                deleting_stale_seconds=container.deleting_stale_seconds,
+                max_attempts=container.max_attempts,
+            )
+        except Exception:
+            logger.exception("maintenance.loop_error")
 
 
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
@@ -45,6 +63,7 @@ async def _on_worker_startup(state: object) -> None:
         uploaded_stale_seconds=container.uploaded_stale_seconds,
         max_attempts=container.max_attempts,
     )
+    asyncio.create_task(_maintenance_loop(container))
 
 
 DEFAULT_MIME = "text/plain"
@@ -79,7 +98,11 @@ async def ingest_pipeline_task(document_id: str) -> None:
     repo = container.doc_repo
     registry = container.minio_registry
 
-    doc = await repo.claim_for_processing(document_id)
+    doc = await repo.claim_for_processing(
+        document_id,
+        max_attempts=container.max_attempts,
+        fresh_within_seconds=container.pending_stale_seconds,
+    )
     if doc is None:
         # Row is terminal (READY/FAILED/DELETING) or missing — another worker
         # already advanced it past PENDING, or it was deleted. Either way the
@@ -241,6 +264,27 @@ async def _run_ingest(document_id, doc, container, repo, registry):  # noqa: ANN
             return
 
         elapsed = time.monotonic() - started
+        if chunks_total == 0:
+            reason = "pipeline wrote 0 chunks"
+            log_ingest_step.failed(
+                document_id=document_id,
+                reason=reason,
+                error_code=TaskErrorCode.PIPELINE_UNEXPECTED_ERROR,
+            )
+            observe_pipeline_duration(
+                source_app=doc.source_app, mime_type=doc.mime_type, seconds=elapsed
+            )
+            await repo.update_status(
+                document_id,
+                from_status="PENDING",
+                to_status="FAILED",
+                error_code=TaskErrorCode.PIPELINE_UNEXPECTED_ERROR,
+                error_reason=reason,
+            )
+            record_pipeline_outcome(
+                source_app=doc.source_app, mime_type=doc.mime_type, outcome="failed"
+            )
+            return
         log_ingest_step.ready(
             document_id=document_id,
             chunks_total=chunks_total,

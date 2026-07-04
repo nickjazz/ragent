@@ -111,6 +111,7 @@
 | `RECONCILER_PENDING_STALE_SECONDS`    | `300`            | Re-dispatch threshold for `PENDING` rows whose heartbeat aged past this. The default of 300 s is pre-heartbeat compensation; once the worker heartbeat is wired, recommended value is 30 s (≥ 3× `WORKER_HEARTBEAT_INTERVAL_SECONDS`). |
 | `RECONCILER_UPLOADED_STALE_SECONDS`   | `300`            | Re-kiq threshold for `UPLOADED` orphans (R1: TaskIQ message lost / broker outage at POST). |
 | `RECONCILER_DELETING_STALE_SECONDS`   | `300`            | Resume threshold for stuck `DELETING` cascades. |
+| `WORKER_MAINTENANCE_INTERVAL_SECONDS` | `300`            | Sleep interval between worker-embedded maintenance cycles (mark exceeded FAILED, resume DELETING, redispatch stale). |
 
 #### 4.6.6 Pipeline & chat tunables
 

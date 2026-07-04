@@ -436,6 +436,67 @@ async def test_claim_for_processing_returns_none_on_toctou_race():
 
 
 # ---------------------------------------------------------------------------
+# claim_for_processing — attempt guard (Layer 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_claim_for_processing_blocked_when_attempt_at_limit():
+    """attempt >= max_attempts → None; row stays unclaimed."""
+    row = _row(status="PENDING", attempt=5)
+    engine, _ = _mock_engine(rows=[row], rowcount=1)
+    repo = DocumentRepository(engine)
+    doc = await repo.claim_for_processing("ID1", max_attempts=5)
+    assert doc is None
+
+
+async def test_claim_for_processing_allowed_when_attempt_below_limit():
+    """attempt < max_attempts → row claimed normally."""
+    row = _row(status="PENDING", attempt=4)
+    engine, _ = _mock_engine(rows=[row], rowcount=1)
+    repo = DocumentRepository(engine)
+    doc = await repo.claim_for_processing("ID1", max_attempts=5)
+    assert doc is not None
+
+
+# ---------------------------------------------------------------------------
+# claim_for_processing — fresh_within guard (Layer 2)
+# ---------------------------------------------------------------------------
+
+
+_NOW = datetime.datetime.now(datetime.timezone.utc)
+
+
+async def test_claim_for_processing_blocked_when_pending_fresh():
+    """PENDING + heartbeat updated 5 s ago (within 30 s threshold) → None."""
+    fresh_updated = _NOW - datetime.timedelta(seconds=5)
+    row = _row(status="PENDING", attempt=1, updated_at=fresh_updated)
+    engine, _ = _mock_engine(rows=[row], rowcount=1)
+    repo = DocumentRepository(engine)
+    doc = await repo.claim_for_processing("ID1", fresh_within_seconds=30)
+    assert doc is None
+
+
+async def test_claim_for_processing_allowed_when_pending_stale():
+    """PENDING + updated 60 s ago (exceeds 30 s threshold) → claimable."""
+    stale_updated = _NOW - datetime.timedelta(seconds=60)
+    row = _row(status="PENDING", attempt=1, updated_at=stale_updated)
+    engine, _ = _mock_engine(rows=[row], rowcount=1)
+    repo = DocumentRepository(engine)
+    doc = await repo.claim_for_processing("ID1", fresh_within_seconds=30)
+    assert doc is not None
+
+
+async def test_claim_for_processing_uploaded_always_claimable():
+    """UPLOADED is claimable even when updated_at is recent (no heartbeat yet)."""
+    fresh_updated = _NOW - datetime.timedelta(seconds=5)
+    row = _row(status="UPLOADED", attempt=0, updated_at=fresh_updated)
+    engine, _ = _mock_engine(rows=[row], rowcount=1)
+    repo = DocumentRepository(engine)
+    doc = await repo.claim_for_processing("ID1", fresh_within_seconds=30)
+    assert doc is not None
+
+
+# ---------------------------------------------------------------------------
 # claim_for_deletion — atomic conditional UPDATE + post-state SELECT
 # ---------------------------------------------------------------------------
 

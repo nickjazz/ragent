@@ -16,21 +16,30 @@ import pytest
 
 
 def test_container_has_startup_sweep_fields() -> None:
-    """Container must declare all four startup-sweep fields."""
+    """Container must declare all startup-sweep and maintenance-loop fields."""
     from ragent.bootstrap.composition import Container
 
     field_names = {f.name for f in dataclasses.fields(Container)}
-    for name in ("pending_stale_seconds", "uploaded_stale_seconds", "max_attempts", "dispatcher"):
+    for name in (
+        "pending_stale_seconds",
+        "uploaded_stale_seconds",
+        "deleting_stale_seconds",
+        "max_attempts",
+        "maintenance_interval_seconds",
+        "dispatcher",
+    ):
         assert name in field_names, f"Container must have {name} field"
 
 
 def test_container_startup_sweep_defaults() -> None:
-    """Default values for startup-sweep thresholds must match spec."""
+    """Default values for startup-sweep / maintenance-loop thresholds must match spec."""
     from ragent.bootstrap.composition import Container
 
     assert Container.pending_stale_seconds == 300
     assert Container.uploaded_stale_seconds == 300
+    assert Container.deleting_stale_seconds == 300
     assert Container.max_attempts == 5
+    assert Container.maintenance_interval_seconds == 300
     assert Container.dispatcher is None
 
 
