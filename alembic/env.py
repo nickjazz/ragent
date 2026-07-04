@@ -81,14 +81,27 @@ def _sync_dsn() -> str:
 def get_current_db_version(connection) -> int:
     """從資料庫取得目前版號，若無 tracking 表則自動建立。
 
-    Two pre-chain legacy states must resolve to "already at head" instead of
-    "version 0", or a later `upgrade head` would replay DDL against tables
-    that already exist:
+    Two pre-chain legacy states must resolve to a *pinned* version rather than
+    len(MIGRATION_CHAIN), so that new migrations added after the squash/schema
+    baseline are still applied to those databases:
+
     - a `version_num = 'squash'` row left by the deleted single-revision
-      `alembic/versions/000_squash.py`;
+      `alembic/versions/000_squash.py` — that squash covered exactly v1–v15;
     - no tracking row at all because the DB was bootstrapped directly from
-      `migrations/schema.sql` (boot auto-init, B3), which never wrote one.
+      `migrations/schema.sql` (boot auto-init, B3), which never wrote one —
+      the schema.sql at that bootstrap point corresponded to v15.
+
+    Pinning to _LEGACY_VERSION means these DBs will run any migration > 15
+    (including 016_documents_deleted.sql and future ones). All new migrations
+    MUST be idempotent (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS,
+    etc.) to tolerate replay on a DB that was bootstrapped from a newer
+    schema.sql snapshot that already includes those objects.
     """
+    # Last migration number present in schema.sql when the squash and
+    # no-tracking-row legacy paths were established. Do NOT change to
+    # len(MIGRATION_CHAIN) — new migrations must still run on these DBs.
+    _LEGACY_VERSION = 15
+
     connection.execute(
         text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) PRIMARY KEY)")
     )
@@ -97,11 +110,11 @@ def get_current_db_version(connection) -> int:
         if result.isdigit():
             return int(result)
         if result == "squash":
-            return len(MIGRATION_CHAIN)
+            return _LEGACY_VERSION
         raise ValueError(f"alembic_version.version_num has unexpected value: {result!r}")
 
     has_schema = inspect(connection).has_table("documents")
-    return len(MIGRATION_CHAIN) if has_schema else 0
+    return _LEGACY_VERSION if has_schema else 0
 
 
 def update_db_version(connection, version: int) -> None:

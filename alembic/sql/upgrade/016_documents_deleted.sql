@@ -7,14 +7,17 @@
 -- schema and all existing SELECT queries are untouched.
 --
 -- Design notes:
+--   - Surrogate id PK + uq_document_id per docs/00_rule.md "Mandatory Surrogate
+--     PK + Business Unique Key": storage identity is id; business identity is
+--     document_id (a document is deleted at most once).
 --   - status is VARCHAR(16) not ENUM: the audit table never drives a state
 --     machine, and widening the live ENUM would require a paired migration here.
---   - document_id is PRIMARY KEY: a document is deleted at most once.
 --   - error_reason is TEXT (vs VARCHAR(255) on documents): the audit copy
 --     has no write-path size pressure, so TEXT avoids silent truncation.
 --   - No physical FK on document_id (docs/00_rule.md "No Physical Foreign Keys").
 
 CREATE TABLE IF NOT EXISTS documents_deleted (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   document_id  CHAR(26)      NOT NULL,
   create_user  VARCHAR(64)   NOT NULL,
   source_id    VARCHAR(128)  NOT NULL,
@@ -34,7 +37,8 @@ CREATE TABLE IF NOT EXISTS documents_deleted (
   created_at   DATETIME(6)   NOT NULL,
   updated_at   DATETIME(6)   NOT NULL,
   deleted_at   DATETIME(6)   NOT NULL,
-  PRIMARY KEY (document_id),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_document_id (document_id),
   INDEX idx_deleted_at (deleted_at),
   INDEX idx_create_user (create_user)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS session_documents (
 -- document_repository.delete() INSERT-SELECTs into this table (capturing
 -- deleted_at) then hard-DELETEs from documents in the same transaction.
 CREATE TABLE IF NOT EXISTS documents_deleted (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   document_id  CHAR(26)      NOT NULL,
   create_user  VARCHAR(64)   NOT NULL,
   source_id    VARCHAR(128)  NOT NULL,
@@ -133,7 +134,8 @@ CREATE TABLE IF NOT EXISTS documents_deleted (
   created_at   DATETIME(6)   NOT NULL,
   updated_at   DATETIME(6)   NOT NULL,
   deleted_at   DATETIME(6)   NOT NULL,
-  PRIMARY KEY (document_id),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_document_id (document_id),
   INDEX idx_deleted_at (deleted_at),
   INDEX idx_create_user (create_user)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

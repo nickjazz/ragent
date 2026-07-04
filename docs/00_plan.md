@@ -261,20 +261,6 @@
 
 ---
 
-## Track T-AUD — Document Deletion Audit Table
-
-> Source: 2026-07-04 request. Goal: preserve a permanent audit record when a
-> document row is hard-deleted, without touching any existing SELECT queries on
-> the `documents` table.
-
-**Counter: 完成 1 / 未完成 0 / descope 0**
-
-| # | Category | Task | Commit | Status | Owner |
-|---|---|---|:-:|:-:|---|
-| T-AUD.1 | Behavioral | • **Achieve:** Replace hard-delete-only `document_repository.delete()` with an atomic INSERT-SELECT into `documents_deleted` + hard-DELETE from `documents` in the same transaction. All existing `documents` SELECT queries are untouched — no `deleted_at IS NULL` filters needed. `documents_deleted` stores the full row snapshot plus `deleted_at DATETIME(6)` for forensics.<br>• **Deliver:** `alembic/sql/upgrade/016_documents_deleted.sql` (CREATE TABLE); `alembic/sql/downgrade/016_documents_deleted.sql` (DROP TABLE); `alembic/env.py` (chain entry 16); `migrations/schema.sql` (table added); `src/ragent/repositories/document_repository.py` (`delete()` rewritten); `tests/unit/test_document_repository.py` (two new tests); `tests/unit/test_alembic_migration_chain.py` (chain-head + content tests updated).<br>• **Success criteria:** `pytest tests/unit/` green (1986 tests); INSERT fails → DELETE never executes; no change to any document SELECT path. | TBD | [x] | Dev |
-
----
-
 ## Track T-SK — User Skill Presets (per-user CRUD + /chatagent/v3 injection)
 
 > Source: 2026-06-24 request. Goal: each user manages their own reusable
