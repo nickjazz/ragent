@@ -59,8 +59,11 @@ MIGRATION_CHAIN = [
         "upgrade": "015_session_documents.sql",
         "downgrade": "015_session_documents.sql",
     },
-    # 未來擴充直接於此追加，例如：
-    # {"version": 16, "upgrade": "016_add_index.sql", "downgrade": "016_drop_index.sql"},
+    {
+        "version": 16,
+        "upgrade": "016_documents_deleted.sql",
+        "downgrade": "016_documents_deleted.sql",
+    },
 ]
 
 BASE_DIR = Path(__file__).resolve().parent

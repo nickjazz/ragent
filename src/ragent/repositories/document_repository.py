@@ -643,10 +643,29 @@ class DocumentRepository:
     # ------------------------------------------------------------------
 
     async def delete(self, document_id: str) -> None:
-        await self._execute(
-            text("DELETE FROM documents WHERE document_id = :id"),
-            {"id": document_id},
-        )
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO documents_deleted"
+                    " (document_id, create_user, source_id, source_app,"
+                    "  source_title, source_meta, source_url, object_key,"
+                    "  ingest_type, minio_site, mime_type, size_bytes,"
+                    "  status, attempt, error_code, error_reason,"
+                    "  created_at, updated_at, deleted_at)"
+                    " SELECT"
+                    "  document_id, create_user, source_id, source_app,"
+                    "  source_title, source_meta, source_url, object_key,"
+                    "  ingest_type, minio_site, mime_type, size_bytes,"
+                    "  status, attempt, error_code, error_reason,"
+                    "  created_at, updated_at, NOW(6)"
+                    " FROM documents WHERE document_id = :id"
+                ),
+                {"id": document_id},
+            )
+            await conn.execute(
+                text("DELETE FROM documents WHERE document_id = :id"),
+                {"id": document_id},
+            )
 
     # ------------------------------------------------------------------
     # Supersede helpers

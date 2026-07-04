@@ -68,6 +68,8 @@ stores such as ES chunks; they do not delete MinIO bytes.
 
 **Delete flow:** atomic claim -> DELETING -> outside-tx cascade: `fan_out_delete` -> `delete_by_document_id` -> delete row -> `204`. Mid-cascade failure: Reconciler resumes idempotently. MinIO objects are retained.
 
+**Audit trail:** `document_repository.delete()` wraps the final row removal in a single transaction: it first INSERT-SELECTs the full `documents` row (plus `deleted_at = NOW(6)`) into `documents_deleted`, then hard-DELETEs from `documents`. The `documents_deleted` table is append-only and never read by any hot path; it exists solely for audit/forensics. `status` is stored as `VARCHAR(16)` (not ENUM) so the audit schema is decoupled from the live state machine.
+
 ---
 
 ### 3.2 Indexing Pipeline

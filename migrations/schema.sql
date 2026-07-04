@@ -1,5 +1,5 @@
 -- schema.sql — consolidated snapshot reflecting alembic head (spec B3).
--- Latest migration folded in: 015_session_documents.sql
+-- Latest migration folded in: 016_documents_deleted.sql
 -- Updated in lockstep with every NNN_*.sql migration file.
 -- Apply directly: mysql -u user -p ragent < schema.sql
 -- Or via Alembic:  alembic upgrade head  (produces identical schema)
@@ -108,6 +108,34 @@ CREATE TABLE IF NOT EXISTS session_documents (
   INDEX idx_session_created (session_id, create_date),
   INDEX idx_document (document_id),
   INDEX idx_create_user (create_user, session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 016_documents_deleted.sql: append-only audit log for hard-deleted documents.
+-- document_repository.delete() INSERT-SELECTs into this table (capturing
+-- deleted_at) then hard-DELETEs from documents in the same transaction.
+CREATE TABLE IF NOT EXISTS documents_deleted (
+  document_id  CHAR(26)      NOT NULL,
+  create_user  VARCHAR(64)   NOT NULL,
+  source_id    VARCHAR(128)  NOT NULL,
+  source_app   VARCHAR(64)   NOT NULL,
+  source_title VARCHAR(256)  NOT NULL,
+  source_meta  VARCHAR(1024) NULL,
+  source_url   VARCHAR(2048) NULL,
+  object_key   VARCHAR(256)  NOT NULL,
+  ingest_type  VARCHAR(16)   NOT NULL DEFAULT 'inline',
+  minio_site   VARCHAR(64)   NULL,
+  mime_type    VARCHAR(128)  NULL,
+  size_bytes   BIGINT UNSIGNED NULL,
+  status       VARCHAR(16)   NOT NULL,
+  attempt      INT           NOT NULL DEFAULT 0,
+  error_code   VARCHAR(64)   NULL,
+  error_reason TEXT          NULL,
+  created_at   DATETIME(6)   NOT NULL,
+  updated_at   DATETIME(6)   NOT NULL,
+  deleted_at   DATETIME(6)   NOT NULL,
+  PRIMARY KEY (document_id),
+  INDEX idx_deleted_at (deleted_at),
+  INDEX idx_create_user (create_user)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 013_skills.sql: per-user reusable instruction/prompt presets ("skills").

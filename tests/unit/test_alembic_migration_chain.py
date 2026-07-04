@@ -61,11 +61,11 @@ def test_verify_and_get_chain_matches_disk(env):
         assert Path(item["down_path"]).exists()
 
 
-def test_chain_head_is_015_session_documents(env):
+def test_chain_head_is_016_documents_deleted(env):
     head = env.MIGRATION_CHAIN[-1]
-    assert head["version"] == 15
-    assert head["upgrade"] == "015_session_documents.sql"
-    assert head["downgrade"] == "015_session_documents.sql"
+    assert head["version"] == 16
+    assert head["upgrade"] == "016_documents_deleted.sql"
+    assert head["downgrade"] == "016_documents_deleted.sql"
 
 
 def test_015_upgrade_drops_attachment_tables_and_creates_session_documents(env):
@@ -85,10 +85,24 @@ def test_015_downgrade_restores_previous_head(env):
     assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" in sql
 
 
-def test_schema_snapshot_reflects_015():
+def test_016_upgrade_creates_documents_deleted(env):
+    sql = (env.UPGRADE_DIR / "016_documents_deleted.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS documents_deleted" in sql
+    assert "deleted_at" in sql
+    assert "PRIMARY KEY (document_id)" in sql
+
+
+def test_016_downgrade_drops_documents_deleted(env):
+    sql = (env.DOWNGRADE_DIR / "016_documents_deleted.sql").read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS documents_deleted" in sql
+
+
+def test_schema_snapshot_reflects_016():
     """migrations/schema.sql is updated in lockstep with the chain head."""
     schema = (ENV_PY.parents[1] / "migrations" / "schema.sql").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS session_documents" in schema
+    assert "CREATE TABLE IF NOT EXISTS documents_deleted" in schema
+    assert "deleted_at" in schema
     assert "CREATE TABLE IF NOT EXISTS chat_attachments" not in schema
     assert "CREATE TABLE IF NOT EXISTS chat_attachment_artifacts" not in schema
     assert "size_bytes" in schema
