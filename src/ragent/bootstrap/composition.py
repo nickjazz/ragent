@@ -92,6 +92,11 @@ class Container:
     # to avoid cross-loop issues when the thread starts its own event loop.
     heartbeat_tick: Any = None  # Callable[[str], None]
     heartbeat_interval: float = 10.0
+    # Startup sweep thresholds — passed to run_startup_sweep on WORKER_STARTUP.
+    pending_stale_seconds: int = 300
+    uploaded_stale_seconds: int = 300
+    max_attempts: int = 5
+    dispatcher: Any = None  # TaskiqDispatcher — used by startup sweep
 
 
 def _build_chatagent_agent_factory(
@@ -289,6 +294,14 @@ def build_container() -> Container:
     )
     heartbeat_tick = _make_heartbeat_tick(_sync_engine)
     heartbeat_interval = _float_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 10.0)
+    pending_stale_seconds = _int_env("RECONCILER_PENDING_STALE_SECONDS", 300)
+    uploaded_stale_seconds = _int_env("RECONCILER_UPLOADED_STALE_SECONDS", 300)
+    max_attempts = _int_env("WORKER_MAX_ATTEMPTS", 5)
+
+    from ragent.bootstrap.broker import broker as _broker
+    from ragent.bootstrap.dispatcher import TaskiqDispatcher
+
+    dispatcher = TaskiqDispatcher(broker=_broker)
 
     doc_repo = DocumentRepository(engine=engine)
 
@@ -548,6 +561,10 @@ def build_container() -> Container:
         attachment_max_files=attachment_max_files,
         heartbeat_tick=heartbeat_tick,
         heartbeat_interval=heartbeat_interval,
+        pending_stale_seconds=pending_stale_seconds,
+        uploaded_stale_seconds=uploaded_stale_seconds,
+        max_attempts=max_attempts,
+        dispatcher=dispatcher,
     )
 
 

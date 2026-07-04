@@ -19,6 +19,7 @@ import time
 
 import structlog
 from anyio import to_thread
+from taskiq import TaskiqEvents
 
 from ragent.bootstrap.broker import broker
 from ragent.bootstrap.metrics import observe_pipeline_duration, record_pipeline_outcome
@@ -27,8 +28,24 @@ from ragent.pipelines.observability import bind_ingest_context, log_ingest_step
 from ragent.schemas.ingest import BINARY_MIMES, MIME_EXTENSIONS, IngestMime
 from ragent.utility.state_machine import IllegalStateTransition
 from ragent.workers.heartbeat import run_heartbeat
+from ragent.workers.startup_sweep import run_startup_sweep
 
 logger = structlog.get_logger(__name__)
+
+
+@broker.on_event(TaskiqEvents.WORKER_STARTUP)
+async def _on_worker_startup(state: object) -> None:
+    from ragent.bootstrap.composition import get_container
+
+    container = get_container()
+    await run_startup_sweep(
+        repo=container.doc_repo,
+        dispatcher=container.dispatcher,
+        pending_stale_seconds=container.pending_stale_seconds,
+        uploaded_stale_seconds=container.uploaded_stale_seconds,
+        max_attempts=container.max_attempts,
+    )
+
 
 DEFAULT_MIME = "text/plain"
 
