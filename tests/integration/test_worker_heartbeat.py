@@ -3,7 +3,7 @@
 import datetime
 import threading
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,17 +11,18 @@ pytestmark = pytest.mark.docker
 
 
 def test_heartbeat_updates_updated_at_periodically():
-    """Worker heartbeat calls update_heartbeat every interval while pipeline runs."""
+    """Worker heartbeat calls tick every interval while pipeline runs."""
     from ragent.workers.heartbeat import run_heartbeat
 
     heartbeat_calls: list[float] = []
-    repo = AsyncMock()
-    repo.update_heartbeat.side_effect = lambda doc_id: heartbeat_calls.append(time.monotonic())
+
+    def tick(doc_id: str) -> None:
+        heartbeat_calls.append(time.monotonic())
 
     stop = threading.Event()
     thread = threading.Thread(
         target=run_heartbeat,
-        kwargs={"document_id": "DOC001", "repo": repo, "stop": stop, "interval": 0.05},
+        kwargs={"document_id": "DOC001", "tick": tick, "stop": stop, "interval": 0.05},
         daemon=True,
     )
     thread.start()
@@ -29,9 +30,8 @@ def test_heartbeat_updates_updated_at_periodically():
     stop.set()
     thread.join(timeout=1)
 
-    assert repo.update_heartbeat.call_count >= 2, (
-        f"Expected ≥2 heartbeat calls in 0.2s at 0.05s interval, "
-        f"got {repo.update_heartbeat.call_count}"
+    assert len(heartbeat_calls) >= 2, (
+        f"Expected ≥2 heartbeat calls in 0.2s at 0.05s interval, got {len(heartbeat_calls)}"
     )
 
 
@@ -39,11 +39,11 @@ def test_heartbeat_stops_when_event_set():
     """Heartbeat thread terminates promptly when stop event is set."""
     from ragent.workers.heartbeat import run_heartbeat
 
-    repo = AsyncMock()
+    tick = MagicMock()
     stop = threading.Event()
     thread = threading.Thread(
         target=run_heartbeat,
-        kwargs={"document_id": "DOC001", "repo": repo, "stop": stop, "interval": 0.1},
+        kwargs={"document_id": "DOC001", "tick": tick, "stop": stop, "interval": 0.1},
         daemon=True,
     )
     thread.start()

@@ -161,6 +161,8 @@ def make_ingest_container(
     # to pick up cutover/rollback without restart (B50 T-EM.21).
     container.embedding_registry = MagicMock()
     container.embedding_registry.refresh = AsyncMock()
+    container.heartbeat_tick = MagicMock()
+    container.heartbeat_interval = 60.0  # long interval so it never fires during tests
     return container
 
 

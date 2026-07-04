@@ -173,7 +173,7 @@ def init_minio_buckets() -> None:
             raise
 
 
-def _to_sync_dsn(dsn: str) -> str:
+def to_sync_dsn(dsn: str) -> str:
     return dsn.replace("mysql+aiomysql://", "mysql+pymysql://")
 
 
@@ -207,7 +207,7 @@ def patch_aiomysql_ping(engine: object) -> None:
 def auto_init(db_url: str, es_url: str) -> None:
     from sqlalchemy import create_engine
 
-    engine = create_engine(_to_sync_dsn(db_url))
+    engine = create_engine(to_sync_dsn(db_url))
     init_mariadb(engine)
     init_es(es_url)
     init_minio_buckets()

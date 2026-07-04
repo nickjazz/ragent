@@ -15,7 +15,7 @@ import asyncio
 import pytest
 from sqlalchemy import text
 
-from ragent.bootstrap.init_schema import _to_sync_dsn, init_mariadb
+from ragent.bootstrap.init_schema import init_mariadb, to_sync_dsn
 from ragent.repositories.document_repository import DocumentRepository
 
 pytestmark = pytest.mark.docker
@@ -39,7 +39,7 @@ def fresh_engine(mariadb_dsn: str):
     from sqlalchemy import create_engine
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    sync_dsn = _to_sync_dsn(mariadb_dsn)
+    sync_dsn = to_sync_dsn(mariadb_dsn)
     sync_engine = create_engine(sync_dsn)
     init_mariadb(sync_engine)
     # Tests in this module own the documents table — wipe between cases so

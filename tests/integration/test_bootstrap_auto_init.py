@@ -2,7 +2,7 @@
 
 import pytest
 
-from ragent.bootstrap.init_schema import _to_sync_dsn, auto_init, init_mariadb
+from ragent.bootstrap.init_schema import auto_init, init_mariadb, to_sync_dsn
 
 pytestmark = pytest.mark.docker
 
@@ -12,7 +12,7 @@ def test_first_boot_creates_mariadb_tables(mariadb_dsn: str) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy import inspect as sa_inspect
 
-    sync_dsn = _to_sync_dsn(mariadb_dsn)
+    sync_dsn = to_sync_dsn(mariadb_dsn)
     init_mariadb(create_engine(sync_dsn))
     insp = sa_inspect(sqlalchemy.create_engine(sync_dsn))
     assert "documents" in insp.get_table_names()
@@ -96,7 +96,7 @@ def test_mariadb_tables_have_expected_columns(mariadb_dsn: str) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy import inspect as sa_inspect
 
-    sync_dsn = _to_sync_dsn(mariadb_dsn)
+    sync_dsn = to_sync_dsn(mariadb_dsn)
     init_mariadb(create_engine(sync_dsn))
     insp = sa_inspect(sqlalchemy.create_engine(sync_dsn))
     doc_cols = {c["name"] for c in insp.get_columns("documents")}

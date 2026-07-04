@@ -138,12 +138,11 @@ def _make_heartbeat_tick(sync_engine: Any) -> Any:
     from sqlalchemy import text
 
     def tick(document_id: str) -> None:
-        with sync_engine.connect() as conn:
+        with sync_engine.begin() as conn:
             conn.execute(
                 text("UPDATE documents SET updated_at=NOW(6) WHERE document_id=:id"),
                 {"id": document_id},
             )
-            conn.commit()
 
     return tick
 
@@ -267,7 +266,7 @@ def build_container() -> Container:
     )
 
     # MARIADB_DSN may use either pymysql:// or aiomysql:// — async engine needs aiomysql.
-    from ragent.bootstrap.init_schema import _to_sync_dsn, patch_aiomysql_ping, to_async_dsn
+    from ragent.bootstrap.init_schema import patch_aiomysql_ping, to_async_dsn, to_sync_dsn
 
     # pool_pre_ping reconnects transparently when the server closed an idle
     # connection; pool_recycle must stay below the server-side wait_timeout.
@@ -284,7 +283,7 @@ def build_container() -> Container:
     from sqlalchemy import create_engine as _create_sync_engine
 
     _sync_engine = _create_sync_engine(
-        _to_sync_dsn(_require("MARIADB_DSN")),
+        to_sync_dsn(_require("MARIADB_DSN")),
         pool_pre_ping=True,
         pool_recycle=_int_env("MARIADB_POOL_RECYCLE_SECONDS", 280),
     )

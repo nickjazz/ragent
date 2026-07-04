@@ -48,6 +48,8 @@ def _container(doc: MagicMock, *, minio_content_type: str | None) -> MagicMock:
     container.unprotect_client = None
     # Worker awaits embedding_registry.refresh() per task (B50 T-EM.21).
     container.embedding_registry.refresh = AsyncMock()
+    container.heartbeat_tick = MagicMock()
+    container.heartbeat_interval = 60.0
     return container
 
 

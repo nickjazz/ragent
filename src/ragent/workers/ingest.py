@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 
 import structlog
@@ -25,6 +26,7 @@ from ragent.errors.codes import TaskErrorCode
 from ragent.pipelines.observability import bind_ingest_context, log_ingest_step
 from ragent.schemas.ingest import BINARY_MIMES, MIME_EXTENSIONS, IngestMime
 from ragent.utility.state_machine import IllegalStateTransition
+from ragent.workers.heartbeat import run_heartbeat
 
 logger = structlog.get_logger(__name__)
 
@@ -68,6 +70,20 @@ async def ingest_pipeline_task(document_id: str) -> None:
         logger.info("ingest.claim_skipped", document_id=document_id)
         return
 
+    _hb_stop = threading.Event()
+    threading.Thread(
+        target=run_heartbeat,
+        args=(document_id, container.heartbeat_tick, _hb_stop),
+        kwargs={"interval": container.heartbeat_interval},
+        daemon=True,
+    ).start()
+    try:
+        await _run_ingest(document_id, doc, container, repo, registry)
+    finally:
+        _hb_stop.set()
+
+
+async def _run_ingest(document_id, doc, container, repo, registry):  # noqa: ANN001
     logger.info(
         "ingest.task.started",
         document_id=document_id,

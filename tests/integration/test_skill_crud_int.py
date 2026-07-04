@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from ragent.bootstrap.init_schema import _to_sync_dsn, init_mariadb
+from ragent.bootstrap.init_schema import init_mariadb, to_sync_dsn
 from ragent.repositories.skill_repository import SkillRepository
 from ragent.services.skill_service import (
     SkillNameConflictError,
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.docker
 
 @pytest.fixture
 async def repo(mariadb_dsn: str):
-    init_mariadb(create_engine(_to_sync_dsn(mariadb_dsn)))
+    init_mariadb(create_engine(to_sync_dsn(mariadb_dsn)))
     engine = create_async_engine(mariadb_dsn)
     try:
         yield SkillRepository(engine)
