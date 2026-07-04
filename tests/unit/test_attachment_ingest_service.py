@@ -290,3 +290,46 @@ async def test_delete_by_session_continues_after_one_failure():
     await svc.delete_by_session("thread-1")  # must not raise
 
     assert ingest.delete.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# retry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_delegates_to_ingest_rerun_on_success():
+    """retry() must call ingest.rerun(document_id) when the caller owns the link."""
+    svc, ingest, session_docs, _ = _service()
+    session_docs.get_by_document.return_value = _link_row()
+
+    await svc.retry(_DOC_ID, create_user="alice")
+
+    ingest.rerun.assert_awaited_once_with(_DOC_ID)
+
+
+@pytest.mark.asyncio
+async def test_retry_raises_attachment_not_found_when_link_missing():
+    """retry() must raise AttachmentNotFound when the caller doesn't own the attachment."""
+    from ragent.services.attachment_ingest_service import AttachmentNotFound
+
+    svc, ingest, session_docs, _ = _service()
+    session_docs.get_by_document.return_value = None
+
+    with pytest.raises(AttachmentNotFound):
+        await svc.retry(_DOC_ID, create_user="mallory")
+
+    ingest.rerun.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_propagates_document_not_rerunnable():
+    """retry() must let DocumentNotRerunnable bubble up when status is READY/DELETING."""
+    from ragent.services.ingest_service import DocumentNotRerunnable
+
+    svc, ingest, session_docs, _ = _service()
+    session_docs.get_by_document.return_value = _link_row()
+    ingest.rerun.side_effect = DocumentNotRerunnable(_DOC_ID)
+
+    with pytest.raises(DocumentNotRerunnable):
+        await svc.retry(_DOC_ID, create_user="alice")
