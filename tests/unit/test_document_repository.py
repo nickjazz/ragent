@@ -463,12 +463,10 @@ async def test_claim_for_processing_allowed_when_attempt_below_limit():
 # ---------------------------------------------------------------------------
 
 
-_NOW = datetime.datetime.now(datetime.timezone.utc)
-
-
 async def test_claim_for_processing_blocked_when_pending_fresh():
     """PENDING + heartbeat updated 5 s ago (within 30 s threshold) → None."""
-    fresh_updated = _NOW - datetime.timedelta(seconds=5)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    fresh_updated = now - datetime.timedelta(seconds=5)
     row = _row(status="PENDING", attempt=1, updated_at=fresh_updated)
     engine, _ = _mock_engine(rows=[row], rowcount=1)
     repo = DocumentRepository(engine)
@@ -478,7 +476,8 @@ async def test_claim_for_processing_blocked_when_pending_fresh():
 
 async def test_claim_for_processing_allowed_when_pending_stale():
     """PENDING + updated 60 s ago (exceeds 30 s threshold) → claimable."""
-    stale_updated = _NOW - datetime.timedelta(seconds=60)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale_updated = now - datetime.timedelta(seconds=60)
     row = _row(status="PENDING", attempt=1, updated_at=stale_updated)
     engine, _ = _mock_engine(rows=[row], rowcount=1)
     repo = DocumentRepository(engine)
@@ -488,7 +487,8 @@ async def test_claim_for_processing_allowed_when_pending_stale():
 
 async def test_claim_for_processing_uploaded_always_claimable():
     """UPLOADED is claimable even when updated_at is recent (no heartbeat yet)."""
-    fresh_updated = _NOW - datetime.timedelta(seconds=5)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    fresh_updated = now - datetime.timedelta(seconds=5)
     row = _row(status="UPLOADED", attempt=0, updated_at=fresh_updated)
     engine, _ = _mock_engine(rows=[row], rowcount=1)
     repo = DocumentRepository(engine)
