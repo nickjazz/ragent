@@ -433,6 +433,8 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
             container.chatagent_api_url,
             container.chatagent_sessionlist_api_url,
             container.chatagent_session_api_url,
+            container.chatagent_memory_api_url,
+            container.chatagent_projects_api_url,
         ]
     ):
         app.include_router(
@@ -463,12 +465,31 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
             )
         )
+    # v3 registers whenever a backend agent is wired — the legacy ADK upstream
+    # (CHATAGENT_API_URL) or the ragent-brain service (BRAIN_URL). Kept outside
+    # the any([chatagent_*_url]) gate above so a brain-only deploy still gets v3.
+    if container.chatagent_agent_factory is not None or any(
+        [
+            container.chatagent_api_url,
+            container.chatagent_sessionlist_api_url,
+            container.chatagent_session_api_url,
+            container.chatagent_memory_api_url,
+            container.chatagent_projects_api_url,
+        ]
+    ):
         app.include_router(
             create_chatagent_v3_router(
                 http_client=container.http,
                 chatagent_ap_name=container.chatagent_ap_name,
                 chatagent_auth=container.chatagent_auth,
+                brain_key=container.brain_key,
                 chatagent_api_url=container.chatagent_api_url,
+                chatagent_memory_api_url=container.chatagent_memory_api_url,
+                chatagent_projects_api_url=container.chatagent_projects_api_url,
+                chatagent_skills_api_url=container.chatagent_skills_api_url,
+                chatagent_artifacts_api_url=container.chatagent_artifacts_api_url,
+                chatagent_schedules_api_url=container.chatagent_schedules_api_url,
+                chatagent_preferences_api_url=container.chatagent_preferences_api_url,
                 chatagent_sessionlist_api_url=container.chatagent_sessionlist_api_url,
                 chatagent_session_api_url=container.chatagent_session_api_url,
                 agent_factory=container.chatagent_agent_factory,
@@ -478,6 +499,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 rate_limit_window=container.rate_limit_window,
                 jwt_header=str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER),
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
+                sources_timeout=_float_env("CHATAGENT_SOURCES_TIMEOUT_SECONDS", 120.0),
                 chat_stream_store=container.chat_stream_store,
                 stream_idle_timeout=_float_env("CHATAGENT_STREAM_IDLE_TIMEOUT_SECONDS", 30.0),
                 document_artifact_resolver=container.document_artifact_resolver,

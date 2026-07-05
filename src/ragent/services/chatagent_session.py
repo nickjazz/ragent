@@ -131,15 +131,23 @@ def _map_message(raw: dict[str, Any]) -> dict[str, Any]:
     unwrapped = _unwrap_json_string(content) if isinstance(content, str) else None
     # `or "assistant"`: a present-but-null `role` must fall back too, not just a
     # missing key — keeps a non-empty string for node_to_role.
-    return {
+    #
+    # Spread-passthrough: unknown upstream fields survive by default (cards,
+    # reasoning metadata, whatever the brain adds next) and the transform only
+    # OVERRIDES what it must rename or clean. A hardcoded field whitelist here
+    # silently dropped `cards` and the `reasoning` role once each — never again.
+    mapped = {
+        **raw,
         "id": raw.get("messageId") or "",
         "role": node_to_role(raw.get("role") or "assistant", langgraph_node),
         "content": strip_machine_context(unwrapped) if unwrapped is not None else content,
-        # Pass the upstream persistence timestamps through so the client can
-        # render per-message create/update times (null when upstream omits them).
+        # Persistence timestamps: normalized names for the client (null when
+        # upstream omits them).
         "createTime": raw.get("createTime"),
         "updateTime": raw.get("updateTime"),
         "attachments": _extract_attachments_from_hidden(unwrapped)
         if unwrapped is not None
         else None,
     }
+    mapped.pop("messageId", None)  # renamed to `id` above
+    return mapped

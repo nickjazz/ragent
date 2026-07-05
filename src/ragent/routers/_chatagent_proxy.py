@@ -41,11 +41,18 @@ async def proxy_get(
     timeout: float,
     log_prefix: str,
     transform: Callable[[Any], Any] | None = None,
+    passthrough_4xx: bool = False,
 ) -> Response:
     try:
         resp = await run_in_threadpool(
             http_client.get, url, params=params, headers=headers, timeout=timeout
         )
+        if passthrough_4xx and 400 <= resp.status_code < 500:
+            return Response(
+                status_code=resp.status_code,
+                content=resp.content,
+                media_type="application/json",
+            )
         resp.raise_for_status()
         payload = resp.json()
         if transform is not None:
@@ -70,11 +77,22 @@ async def proxy_write(
     headers: dict[str, str],
     timeout: float,
     log_prefix: str,
+    passthrough_4xx: bool = False,
 ) -> Response:
+    """POST/PUT proxy. With `passthrough_4xx`, an upstream 4xx is forwarded
+    verbatim (status + JSON body) instead of collapsing to 502 — for upstreams
+    whose 4xx are intentional, structured responses the client renders (e.g.
+    422 project_limit_reached)."""
     try:
         resp = await run_in_threadpool(
             http_client.request, method, url, json=payload, headers=headers, timeout=timeout
         )
+        if passthrough_4xx and 400 <= resp.status_code < 500:
+            return Response(
+                status_code=resp.status_code,
+                content=resp.content,
+                media_type="application/json",
+            )
         resp.raise_for_status()
         if resp.status_code == 204 or not resp.content:
             return Response(status_code=resp.status_code)
@@ -85,3 +103,31 @@ async def proxy_write(
     except (httpx.HTTPStatusError, httpx.RequestError, ValueError):
         logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
         return upstream_error()
+
+
+async def proxy_delete(
+    *,
+    http_client: httpx.Client,
+    url: str,
+    params: dict[str, str],
+    headers: dict[str, str],
+    timeout: float,
+    log_prefix: str,
+) -> Response:
+    """DELETE proxy with the same timeout→504 / error→502 mapping as the
+    read/write helpers; upstream status + JSON body pass through."""
+    try:
+        resp = await run_in_threadpool(
+            http_client.delete, url, params=params, headers=headers, timeout=timeout
+        )
+    except httpx.TimeoutException:
+        logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
+        return timeout_error()
+    except httpx.RequestError:
+        logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
+        return upstream_error()
+    return Response(
+        status_code=resp.status_code,
+        content=resp.content,
+        media_type="application/json" if resp.content else None,
+    )

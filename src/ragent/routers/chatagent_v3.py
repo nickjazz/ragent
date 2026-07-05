@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from twp_ai.agent import Agent
 from twp_ai.events import RunErrorEvent, UserMessageEvent, to_sse
@@ -25,7 +26,8 @@ from ragent.auth.deps import get_user_id
 from ragent.clients.chat_stream_store import ChatStreamStore
 from ragent.clients.rate_limiter import RateLimiter
 from ragent.errors.codes import HttpErrorCode
-from ragent.routers._chatagent_proxy import proxy_get, proxy_write
+from ragent.errors.problem import problem
+from ragent.routers._chatagent_proxy import proxy_delete, proxy_get, proxy_write
 from ragent.schemas.chatagent import SessionDeleteRequest, SessionRenameRequest
 from ragent.services.chatagent_session import map_session_list_payload, map_session_payload
 from ragent.services.skill_service import SkillNotFoundError, SkillService
@@ -44,6 +46,20 @@ _SKILL_CONTEXT_DESCRIPTION = (
 
 logger = structlog.get_logger(__name__)
 
+
+async def _json_body(request: Request) -> dict | None:
+    """Parse a JSON object body; None for malformed/non-object payloads so the
+    caller can 422 instead of leaking an unhandled 500."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — any parse failure is the client's fault
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _invalid_body() -> Response:
+    return problem(422, HttpErrorCode.INGEST_VALIDATION, "request body must be a JSON object")
+
 # (user_id, user_token, attachments) -> Agent. Built once in the composition
 # root (closing over the upstream http_client/api_url/ap_name/auth/timeout)
 # and called per request, since the underlying caller carries per-request
@@ -59,9 +75,16 @@ def create_chatagent_v3_router(
     chatagent_ap_name: str,
     chatagent_auth: str | None = None,
     chatagent_api_url: str | None = None,
+    chatagent_memory_api_url: str | None = None,
+    chatagent_projects_api_url: str | None = None,
+    chatagent_skills_api_url: str | None = None,
+    chatagent_artifacts_api_url: str | None = None,
+    chatagent_schedules_api_url: str | None = None,
+    chatagent_preferences_api_url: str | None = None,
     chatagent_sessionlist_api_url: str | None = None,
     chatagent_session_api_url: str | None = None,
     *,
+    brain_key: str | None = None,
     agent_factory: AgentFactory | None = None,
     skill_service: SkillService | None = None,
     rate_limiter: RateLimiter | None = None,
@@ -69,6 +92,7 @@ def create_chatagent_v3_router(
     rate_limit_window: int = 60,
     jwt_header: str = "X-Auth-Token",
     timeout: float = 30.0,
+    sources_timeout: float = 120.0,
     chat_stream_store: ChatStreamStore | None = None,
     stream_idle_timeout: float = 30.0,
     stream_poll_interval: float = 0.05,
@@ -90,6 +114,10 @@ def create_chatagent_v3_router(
     )
 
     _headers: dict[str, str] = {"Authorization": chatagent_auth} if chatagent_auth else {}
+    if brain_key:
+        # Service-to-service auth: the brain enforces X-Brain-Key on every
+        # /upstream/* call once BRAIN_KEY is configured on both sides.
+        _headers["X-Brain-Key"] = brain_key
 
     def _rate_limited(user_id: str | None) -> bool:
         if rate_limiter is None or user_id is None:
@@ -99,7 +127,9 @@ def create_chatagent_v3_router(
         )
         return not result.allowed
 
-    if chatagent_api_url is not None:
+    # POST /run registers whenever a backend agent is wired — either the legacy
+    # ADK upstream (CHATAGENT_API_URL) or the ragent-brain service (BRAIN_URL).
+    if agent_factory is not None:
 
         @router.post("")
         async def chatagent_v3_post(
@@ -288,6 +318,605 @@ def create_chatagent_v3_router(
                 media_type="text/event-stream",
             )
 
+    # Memory/preference management surface — proxied to the brain's
+    # /upstream/memory endpoints (same server-to-server pattern as sessions:
+    # the authenticated user id travels as the `user` param, never from the
+    # client body).
+    if chatagent_memory_api_url is not None:
+
+        @router.get("/memory")
+        async def chatagent_v3_memory(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_memory_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.memory",
+            )
+
+        @router.put("/memory/core")
+        async def chatagent_v3_memory_core(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=chatagent_memory_api_url + "/core",
+                payload={
+                    "user": user_id,
+                    "block": str(body.get("block") or ""),
+                    "content": str(body.get("content") or ""),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.memory.core",
+                passthrough_4xx=True,
+            )
+
+        @router.post("/memory/archival")
+        async def chatagent_v3_memory_archival_add(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=chatagent_memory_api_url + "/archival",
+                payload={
+                    "user": user_id,
+                    "content": str(body.get("content") or ""),
+                    "tags": body.get("tags") or [],
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.memory.archival.add",
+                passthrough_4xx=True,
+            )
+
+        @router.delete("/memory/archival/{mem_id}")
+        async def chatagent_v3_memory_archival_delete(
+            mem_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_memory_api_url}/archival/{mem_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.memory.archival.delete",
+            )
+
+
+
+
+    # Schedules surface — proxied to the brain's /upstream/schedules.
+    if chatagent_schedules_api_url is not None:
+
+        @router.get("/schedules")
+        async def chatagent_v3_schedules(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_schedules_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules",
+            )
+
+        @router.post("/schedules")
+        async def chatagent_v3_schedules_create(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=chatagent_schedules_api_url,
+                payload={
+                    "user": user_id,
+                    "title": str(body.get("title") or ""),
+                    "prompt": str(body.get("prompt") or ""),
+                    "cron": str(body.get("cron") or ""),
+                    "timezone": str(body.get("timezone") or "Asia/Taipei"),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.create",
+                passthrough_4xx=True,
+            )
+
+        @router.put("/schedules/{schedule_id}/enabled")
+        async def chatagent_v3_schedules_enabled(
+            schedule_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=f"{chatagent_schedules_api_url}/{schedule_id}/enabled",
+                payload={"user": user_id, "enabled": bool(body.get("enabled", True))},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.enabled",
+                passthrough_4xx=True,
+            )
+
+        @router.delete("/schedules/{schedule_id}")
+        async def chatagent_v3_schedules_delete(
+            schedule_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_schedules_api_url}/{schedule_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.delete",
+            )
+
+        @router.put("/schedules/{schedule_id}")
+        async def chatagent_v3_schedules_update(
+            schedule_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            # Patch: forward only the fields present (brain treats absent as
+            # "leave unchanged").
+            payload: dict[str, object] = {"user": user_id}
+            for key in ("title", "prompt", "cron", "timezone"):
+                if key in body:
+                    payload[key] = body[key]
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=f"{chatagent_schedules_api_url}/{schedule_id}",
+                payload=payload,
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.update",
+                passthrough_4xx=True,
+            )
+
+        @router.get("/schedules/{schedule_id}/runs")
+        async def chatagent_v3_schedules_runs(
+            schedule_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=f"{chatagent_schedules_api_url}/{schedule_id}/runs",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.runs",
+            )
+
+        @router.post("/schedules/{schedule_id}/run")
+        async def chatagent_v3_schedules_run_now(
+            schedule_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=f"{chatagent_schedules_api_url}/{schedule_id}/run",
+                payload={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.schedules.run",
+                passthrough_4xx=True,
+            )
+
+    # Artifacts surface — file bodies live in an external storage team's
+    # service; the brain keeps metadata only. Download proxies raw bytes.
+    if chatagent_artifacts_api_url is not None:
+
+        @router.get("/artifacts")
+        async def chatagent_v3_artifacts(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_artifacts_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.artifacts",
+            )
+
+        @router.post("/artifacts")
+        async def chatagent_v3_artifacts_create(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=chatagent_artifacts_api_url,
+                payload={
+                    "user": user_id,
+                    "filename": str(body.get("filename") or ""),
+                    "contentBase64": str(body.get("contentBase64") or ""),
+                    "contentType": str(body.get("contentType") or ""),
+                    "threadId": str(body.get("threadId") or ""),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.artifacts.create",
+                passthrough_4xx=True,
+            )
+
+        @router.get("/artifacts/{artifact_id}")
+        async def chatagent_v3_artifacts_download(
+            artifact_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            try:
+                resp = await run_in_threadpool(
+                    http_client.get,
+                    f"{chatagent_artifacts_api_url}/{artifact_id}",
+                    params={"user": user_id},
+                    headers=_headers,
+                    timeout=timeout,
+                )
+            except Exception:  # noqa: BLE001
+                return Response(
+                    content='{"error": "artifact upstream failed"}',
+                    status_code=502,
+                    media_type="application/json",
+                )
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                media_type=resp.headers.get("content-type", "application/octet-stream"),
+                headers={
+                    k: v
+                    for k, v in resp.headers.items()
+                    if k.lower() == "content-disposition"
+                },
+            )
+
+        @router.delete("/artifacts/{artifact_id}")
+        async def chatagent_v3_artifacts_delete(
+            artifact_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_artifacts_api_url}/{artifact_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.artifacts.delete",
+            )
+
+    # Skills surface — proxied to the brain's /upstream/skills (per-user skill
+    # catalog: builtin toggles + custom CRUD). Same server-to-server pattern.
+    if chatagent_preferences_api_url is not None:
+
+        @router.get("/preferences/candidates")
+        async def chatagent_v3_pref_candidates(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_preferences_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.preferences",
+            )
+
+        @router.post("/preferences/candidates/{candidate_id}")
+        async def chatagent_v3_pref_resolve(
+            candidate_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=f"{chatagent_preferences_api_url}/{candidate_id}",
+                payload={"user": user_id, "action": str(body.get("action") or "")},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.preferences.resolve",
+                passthrough_4xx=True,
+            )
+
+    if chatagent_skills_api_url is not None:
+
+        @router.get("/skills")
+        async def chatagent_v3_skills(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_skills_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.skills",
+            )
+
+        @router.post("/skills")
+        async def chatagent_v3_skills_create(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=chatagent_skills_api_url,
+                payload={
+                    "user": user_id,
+                    "name": str(body.get("name") or ""),
+                    "description": str(body.get("description") or ""),
+                    "instructions": str(body.get("instructions") or ""),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.skills.create",
+                passthrough_4xx=True,
+            )
+
+        @router.put("/skills/{skill_id}")
+        async def chatagent_v3_skills_update(
+            skill_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=f"{chatagent_skills_api_url}/{skill_id}",
+                payload={
+                    "user": user_id,
+                    "name": str(body.get("name") or ""),
+                    "description": str(body.get("description") or ""),
+                    "instructions": str(body.get("instructions") or ""),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.skills.update",
+                passthrough_4xx=True,
+            )
+
+        @router.put("/skills/{skill_id}/enabled")
+        async def chatagent_v3_skills_enabled(
+            skill_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=f"{chatagent_skills_api_url}/{skill_id}/enabled",
+                payload={"user": user_id, "enabled": bool(body.get("enabled", True))},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.skills.enabled",
+                passthrough_4xx=True,
+            )
+
+        @router.delete("/skills/{skill_id}")
+        async def chatagent_v3_skills_delete(
+            skill_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_skills_api_url}/{skill_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.skills.delete",
+            )
+
+    # Projects surface — proxied to the brain's /upstream/projects (same
+    # server-to-server pattern as memory: the authenticated user id travels as
+    # the `user` param, never trusted from the client body).
+    if chatagent_projects_api_url is not None:
+
+        @router.get("/projects")
+        async def chatagent_v3_projects(
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=chatagent_projects_api_url,
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects",
+            )
+
+        @router.post("/projects")
+        async def chatagent_v3_projects_create(
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=chatagent_projects_api_url,
+                payload={
+                    "user": user_id,
+                    "name": str(body.get("name") or ""),
+                    "instructions": str(body.get("instructions") or ""),
+                    "memoryMode": str(body.get("memoryMode") or "shared"),
+                },
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects.create",
+                passthrough_4xx=True,
+            )
+
+        @router.put("/projects/{project_id}")
+        async def chatagent_v3_projects_update(
+            project_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            payload: dict = {"user": user_id}
+            # Whitelisted, string-coerced: arbitrary JSON types must not reach
+            # the brain's store layer.
+            for key in ("name", "instructions", "memoryMode", "icon", "color"):
+                if key in body:
+                    payload[key] = str(body[key])
+            return await proxy_write(
+                http_client=http_client,
+                method="PUT",
+                url=f"{chatagent_projects_api_url}/{project_id}",
+                payload=payload,
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects.update",
+                passthrough_4xx=True,
+            )
+
+        @router.delete("/projects/{project_id}")
+        async def chatagent_v3_projects_delete(
+            project_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_projects_api_url}/{project_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects.delete",
+            )
+
+        @router.get("/projects/{project_id}/sources")
+        async def chatagent_v3_sources_list(
+            project_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_get(
+                http_client=http_client,
+                url=f"{chatagent_projects_api_url}/{project_id}/sources",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects.sources",
+                passthrough_4xx=True,
+            )
+
+        @router.post("/projects/{project_id}/sources")
+        async def chatagent_v3_sources_add(
+            project_id: str,
+            request: Request,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            body = await _json_body(request)
+            if body is None:
+                return _invalid_body()
+            return await proxy_write(
+                http_client=http_client,
+                method="POST",
+                url=f"{chatagent_projects_api_url}/{project_id}/sources",
+                payload={
+                    "user": user_id,
+                    "filename": str(body.get("filename") or ""),
+                    "text": str(body.get("text") or ""),
+                },
+                headers=_headers,
+                timeout=sources_timeout,
+                log_prefix="v3.projects.sources.add",
+                passthrough_4xx=True,
+            )
+
+        @router.delete("/projects/{project_id}/sources/{doc_id}")
+        async def chatagent_v3_sources_delete(
+            project_id: str,
+            doc_id: str,
+            x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        ) -> Response:
+            user_id = x_user_id or "anonymous"
+            return await proxy_delete(
+                http_client=http_client,
+                url=f"{chatagent_projects_api_url}/{project_id}/sources/{doc_id}",
+                params={"user": user_id},
+                headers=_headers,
+                timeout=timeout,
+                log_prefix="v3.projects.sources.delete",
+            )
+
     if chatagent_sessionlist_api_url is not None:
 
         @router.get("/sessionList")
@@ -295,6 +924,7 @@ def create_chatagent_v3_router(
             x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
             startTime: str | None = None,
             endTime: str | None = None,
+            project: str | None = None,
         ) -> Response:
             user_id = x_user_id or "anonymous"
             params: dict[str, str] = {"user": user_id, "apName": chatagent_ap_name}
@@ -302,6 +932,8 @@ def create_chatagent_v3_router(
                 params["startTime"] = startTime
             if endTime:
                 params["endTime"] = endTime
+            if project:
+                params["project"] = project
             # strip the machine-context wrapper from each session title.
             return await proxy_get(
                 http_client=http_client,

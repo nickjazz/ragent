@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import os
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -73,8 +77,17 @@ class Container:
     chatagent_api_url: str | None = None
     chatagent_sessionlist_api_url: str | None = None
     chatagent_session_api_url: str | None = None
+    chatagent_memory_api_url: str | None = None
+    chatagent_projects_api_url: str | None = None
+    chatagent_skills_api_url: str | None = None
+    chatagent_artifacts_api_url: str | None = None
+    chatagent_schedules_api_url: str | None = None
+    chatagent_preferences_api_url: str | None = None
     chatagent_ap_name: str = "ragent"
     chatagent_auth: str | None = None
+    # Service-to-service key sent to the brain as X-Brain-Key on every proxy
+    # call and /run. None = header omitted (brain not enforcing).
+    brain_key: str | None = None
     # T-CAv3R — resumable v3 stream buffer (Redis Stream). None disables
     # resumability (the v3 POST falls back to a connection-bound stream).
     chat_stream_store: Any = None
@@ -130,6 +143,39 @@ def _build_chatagent_agent_factory(
             attachments=attachments,
         )
         return ADKAgent(caller)
+
+    return factory
+
+
+def _build_brain_agent_factory(
+    http_client: Any,
+    *,
+    brain_url: str,
+    brain_key: str | None = None,
+    timeout: float,
+) -> AgentFactory:
+    """Assemble the (user_id, user_token) -> Agent closure for the brain backend.
+
+    The ragent-brain service speaks twp-ai SSE natively, so BrainAgent is a thin
+    pass-through. Like ADKCaller it carries per-request user/token state, so it
+    is built per request rather than as a singleton.
+    """
+    from ragent.clients.brain_agent import BrainAgent
+
+    def factory(user_id: str, user_token: str, attachments: str | None = None):
+        if attachments:
+            # The brain /run contract has no attachments channel yet; dropping
+            # them silently would read as "the model ignored my file".
+            logger.warning("brain agent: attachments not yet supported, dropping",
+                           user_id=user_id)
+        return BrainAgent(
+            http_client=http_client,
+            brain_url=brain_url,
+            brain_key=brain_key,
+            user_id=user_id,
+            user_token=user_token,
+            timeout=timeout,
+        )
 
     return factory
 
@@ -484,22 +530,56 @@ def build_container() -> Container:
     chatagent_api_url = os.environ.get("CHATAGENT_API_URL") or None
     chatagent_sessionlist_api_url = os.environ.get("CHATAGENT_SESSIONLIST_API_URL") or None
     chatagent_session_api_url = os.environ.get("CHATAGENT_SESSION_API_URL") or None
+    chatagent_memory_api_url = os.environ.get("CHATAGENT_MEMORY_API_URL") or None
+    chatagent_projects_api_url = os.environ.get("CHATAGENT_PROJECTS_API_URL") or None
+    chatagent_skills_api_url = os.environ.get("CHATAGENT_SKILLS_API_URL") or (
+        chatagent_projects_api_url.replace("/projects", "/skills")
+        if chatagent_projects_api_url
+        else None
+    )
+    chatagent_artifacts_api_url = os.environ.get("CHATAGENT_ARTIFACTS_API_URL") or (
+        chatagent_projects_api_url.replace("/projects", "/artifacts")
+        if chatagent_projects_api_url
+        else None
+    )
+    chatagent_schedules_api_url = os.environ.get("CHATAGENT_SCHEDULES_API_URL") or (
+        chatagent_projects_api_url.replace("/projects", "/schedules")
+        if chatagent_projects_api_url
+        else None
+    )
+    chatagent_preferences_api_url = (
+        chatagent_projects_api_url.replace("/projects", "/preferences/candidates")
+        if chatagent_projects_api_url
+        else None
+    )
     chatagent_ap_name = os.environ.get("CHATAGENT_AP_NAME", "ragent")
     chatagent_auth = os.environ.get("CHATAGENT_AUTH") or None
-    # Only stand up the resumable-stream buffer when v3 is configured.
+    # BRAIN_URL routes /chatagent/v3 to the ragent-brain service (twp-ai native).
+    # When set it takes precedence over the legacy ADK upstream.
+    brain_url = os.environ.get("BRAIN_URL") or None
+    brain_key = os.environ.get("BRAIN_KEY") or None
+    # Only stand up the resumable-stream buffer when v3 is configured (either backend).
     chat_stream_store = None
     chatagent_agent_factory = None
-    if chatagent_api_url is not None:
+    if brain_url is not None or chatagent_api_url is not None:
         from ragent.clients.chat_stream_store import ChatStreamStore
 
         chat_stream_store = ChatStreamStore.from_env()
-        chatagent_agent_factory = _build_chatagent_agent_factory(
-            http,
-            api_url=chatagent_api_url,
-            ap_name=chatagent_ap_name,
-            auth=chatagent_auth,
-            timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
-        )
+        if brain_url is not None:
+            chatagent_agent_factory = _build_brain_agent_factory(
+                http,
+                brain_url=brain_url,
+                brain_key=brain_key,
+                timeout=_float_env("BRAIN_TIMEOUT_SECONDS", 300.0),
+            )
+        else:
+            chatagent_agent_factory = _build_chatagent_agent_factory(
+                http,
+                api_url=chatagent_api_url,
+                ap_name=chatagent_ap_name,
+                auth=chatagent_auth,
+                timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
+            )
 
     return Container(
         token_managers=(llm_tm, embedding_tm, rerank_tm),
@@ -536,8 +616,15 @@ def build_container() -> Container:
         chatagent_api_url=chatagent_api_url,
         chatagent_sessionlist_api_url=chatagent_sessionlist_api_url,
         chatagent_session_api_url=chatagent_session_api_url,
+        chatagent_memory_api_url=chatagent_memory_api_url,
+        chatagent_projects_api_url=chatagent_projects_api_url,
+        chatagent_skills_api_url=chatagent_skills_api_url,
+        chatagent_artifacts_api_url=chatagent_artifacts_api_url,
+        chatagent_schedules_api_url=chatagent_schedules_api_url,
+        chatagent_preferences_api_url=chatagent_preferences_api_url,
         chatagent_ap_name=chatagent_ap_name,
         chatagent_auth=chatagent_auth,
+        brain_key=brain_key,
         chat_stream_store=chat_stream_store,
         chatagent_agent_factory=chatagent_agent_factory,
         attachment_repository=attachment_repository,

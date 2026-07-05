@@ -18,13 +18,21 @@ through ``_x_user_id_middleware`` which populates the scope key first.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import Request
 
 from ragent.middleware.logging import _USER_ID_HEADER, SCOPE_USER_ID_KEY
 
+# Strict identifier charset (letters/digits/@._-, max 64). In trust-header
+# mode the id is client-asserted and flows into downstream storage keys and
+# SQL scoping — reject anything shaped like a path or injection here, at the
+# single choke point every route resolves the user through.
+_USER_ID_RE = re.compile(r"^[A-Za-z0-9@._-]{1,64}$")
+
 
 async def get_user_id(request: Request) -> str | None:
-    scoped = request.scope.get(SCOPE_USER_ID_KEY)
-    if scoped:
-        return scoped
-    return request.headers.get(_USER_ID_HEADER) or None
+    value = request.scope.get(SCOPE_USER_ID_KEY) or request.headers.get(_USER_ID_HEADER)
+    if value and _USER_ID_RE.fullmatch(value):
+        return value
+    return None

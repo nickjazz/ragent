@@ -29,6 +29,11 @@ def node_to_role(upstream_role: str, langgraph_node: str | None) -> TwpAiRole:
         return "user"
     if upstream_role == "tool":
         return "tool"
+    if upstream_role == "reasoning":
+        # Persisted thinking traces (the brain stores tool-turn reasoning as
+        # its own role) pass through — collapsing them into `assistant` would
+        # render the trace as a visible answer bubble on reload.
+        return "reasoning"
     if langgraph_node == REASONING_NODE:
         return "reasoning"
     return "assistant"

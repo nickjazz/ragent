@@ -338,3 +338,40 @@ def test_non_string_content_yields_null_attachments_field() -> None:
     out = map_session_payload(payload)
 
     assert out["messages"][0]["attachments"] is None
+
+
+def test_unknown_message_fields_survive_the_transform() -> None:
+    # Contract: the mapper is spread-passthrough. A hardcoded field whitelist
+    # silently dropped `cards` and the `reasoning` role once each — any field
+    # the brain adds tomorrow must reach the client without touching this file.
+    payload = _session(
+        [
+            {
+                "messageId": "m1",
+                "role": "assistant",
+                "content": "hi",
+                "cards": [{"kind": "sources", "items": []}],
+                "someFutureField": {"a": 1},
+                "anotherOne": [1, 2, 3],
+            }
+        ]
+    )
+
+    out = map_session_payload(payload)
+
+    msg = out["messages"][0]
+    assert msg["id"] == "m1"
+    assert msg["cards"] == [{"kind": "sources", "items": []}]
+    assert msg["someFutureField"] == {"a": 1}
+    assert msg["anotherOne"] == [1, 2, 3]
+    assert "messageId" not in msg  # renamed to id, not duplicated
+
+
+def test_persisted_reasoning_role_passes_through() -> None:
+    # The brain persists final twp-ai roles; the mapper must not reclassify
+    # them back to assistant.
+    payload = _session([{"messageId": "m1", "role": "reasoning", "content": "thinking"}])
+
+    out = map_session_payload(payload)
+
+    assert out["messages"][0]["role"] == "reasoning"
