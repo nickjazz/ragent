@@ -141,6 +141,12 @@ def _build_dev_env(
         "MARIADB_DSN": mariadb_dsn,
         "REDIS_BROKER_URL": f"{redis_url}/0",
         "REDIS_RATELIMIT_URL": f"{redis_url}/1",
+        # Keep the worker maintenance loop aggressive so stuck UPLOADED docs
+        # are rescued within ~60s instead of the 600s default (300s interval
+        # + 300s stale threshold).
+        "WORKER_MAINTENANCE_INTERVAL_SECONDS": "30",
+        "RECONCILER_UPLOADED_STALE_SECONDS": "30",
+        "RECONCILER_PENDING_STALE_SECONDS": "30",
     }
     external_defaults = {
         "AI_LLM_API_J1_TOKEN": "test-llm-j1",
