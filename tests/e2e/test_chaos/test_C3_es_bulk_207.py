@@ -106,8 +106,8 @@ def test_C3_es_bulk_partial_failure_retries_failed_items(dev_env) -> None:
         f"expected 'es.bulk_partial_failure' in log events, got: {log_events}"
     )
 
-    # Assert: embedder returns empty documents list (registry mode)
-    assert result == {"documents": []}
+    # Assert: embedder returns empty documents list plus actual written count (registry mode)
+    assert result == {"documents": [], "documents_written": n_docs}
 
     # Record drill outcome
     chaos_drill_outcome_total.labels(case="C3", outcome="pass").inc()
@@ -195,5 +195,5 @@ def test_C3b_es_bulk_retry_also_fails_logs_retry_partial_failure(dev_env) -> Non
     assert "es.bulk_retry_partial_failure" in log_events, (
         f"expected 'es.bulk_retry_partial_failure' in log events, got: {log_events}"
     )
-    # Embedder still returns normally (graceful degradation — alert, don't raise)
-    assert result == {"documents": []}
+    # Embedder returns with actual written count (10 - 3 permanently failed = 7)
+    assert result == {"documents": [], "documents_written": n_docs - 3}

@@ -101,7 +101,7 @@ def test_fresh_pending_not_redispatched():
 def test_list_pending_stale_called_with_attempt_le(monkeypatch: pytest.MonkeyPatch):
     """list_pending_stale receives attempt_le = WORKER_MAX_ATTEMPTS (default 5)."""
     monkeypatch.setenv("WORKER_MAX_ATTEMPTS", "5")
-    monkeypatch.setenv("RECONCILER_PENDING_STALE_SECONDS", "300")
+    monkeypatch.setenv("MAINTENANCE_PENDING_STALE_SECONDS", "300")
 
     repo = _default_repo()
     broker = AsyncMock()

@@ -88,6 +88,17 @@ class Container:
     # T-CAT.W16 — cap on how many attachment_ids a single /chatagent/v3 turn
     # may resolve (one DB round-trip per id in AttachmentContextResolver).
     attachment_max_files: int = 10
+    # Heartbeat uses a sync callable + separate sync engine (not the AsyncEngine)
+    # to avoid cross-loop issues when the thread starts its own event loop.
+    heartbeat_tick: Any = None  # Callable[[str], None]
+    heartbeat_interval: float = 10.0
+    # Startup sweep + maintenance loop thresholds.
+    pending_stale_seconds: int = 300
+    uploaded_stale_seconds: int = 300
+    deleting_stale_seconds: int = 300
+    max_attempts: int = 5
+    maintenance_interval_seconds: int = 300
+    dispatcher: Any = None  # TaskiqDispatcher — used by startup sweep + maintenance loop
 
 
 def _build_chatagent_agent_factory(
@@ -128,6 +139,19 @@ def _build_chatagent_agent_factory(
         return ADKAgent(caller)
 
     return factory
+
+
+def _make_heartbeat_tick(sync_engine: Any) -> Any:
+    from sqlalchemy import text
+
+    def tick(document_id: str) -> None:
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE documents SET updated_at=NOW(6) WHERE document_id=:id"),
+                {"id": document_id},
+            )
+
+    return tick
 
 
 def build_container() -> Container:
@@ -249,7 +273,7 @@ def build_container() -> Container:
     )
 
     # MARIADB_DSN may use either pymysql:// or aiomysql:// — async engine needs aiomysql.
-    from ragent.bootstrap.init_schema import patch_aiomysql_ping, to_async_dsn
+    from ragent.bootstrap.init_schema import patch_aiomysql_ping, to_async_dsn, to_sync_dsn
 
     # pool_pre_ping reconnects transparently when the server closed an idle
     # connection; pool_recycle must stay below the server-side wait_timeout.
@@ -259,6 +283,29 @@ def build_container() -> Container:
         pool_recycle=_int_env("MARIADB_POOL_RECYCLE_SECONDS", 280),
     )
     patch_aiomysql_ping(engine)
+
+    # T-ATTACH-R.0b — heartbeat uses a separate sync engine to avoid
+    # cross-loop issues with the AsyncEngine (each heartbeat thread would
+    # need its own event loop; sync engine sidesteps this entirely).
+    from sqlalchemy import create_engine as _create_sync_engine
+
+    _sync_engine = _create_sync_engine(
+        to_sync_dsn(_require("MARIADB_DSN")),
+        pool_pre_ping=True,
+        pool_recycle=_int_env("MARIADB_POOL_RECYCLE_SECONDS", 280),
+    )
+    heartbeat_tick = _make_heartbeat_tick(_sync_engine)
+    heartbeat_interval = _float_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 10.0)
+    pending_stale_seconds = _int_env("MAINTENANCE_PENDING_STALE_SECONDS", 300)
+    uploaded_stale_seconds = _int_env("MAINTENANCE_UPLOADED_STALE_SECONDS", 300)
+    deleting_stale_seconds = _int_env("MAINTENANCE_DELETING_STALE_SECONDS", 300)
+    max_attempts = _int_env("WORKER_MAX_ATTEMPTS", 5)
+    maintenance_interval_seconds = _int_env("WORKER_MAINTENANCE_INTERVAL_SECONDS", 300)
+
+    from ragent.bootstrap.broker import broker as _broker
+    from ragent.bootstrap.dispatcher import TaskiqDispatcher
+
+    dispatcher = TaskiqDispatcher(broker=_broker)
 
     doc_repo = DocumentRepository(engine=engine)
 
@@ -516,6 +563,14 @@ def build_container() -> Container:
         retrieve_v2_service=retrieve_v2_service,
         attachment_max_size_bytes=attachment_max_size_bytes,
         attachment_max_files=attachment_max_files,
+        heartbeat_tick=heartbeat_tick,
+        heartbeat_interval=heartbeat_interval,
+        pending_stale_seconds=pending_stale_seconds,
+        uploaded_stale_seconds=uploaded_stale_seconds,
+        deleting_stale_seconds=deleting_stale_seconds,
+        max_attempts=max_attempts,
+        maintenance_interval_seconds=maintenance_interval_seconds,
+        dispatcher=dispatcher,
     )
 
 

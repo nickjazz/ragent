@@ -154,13 +154,19 @@ def make_ingest_container(
     if pipeline_side_effect is not None:
         container.ingest_pipeline.run.side_effect = pipeline_side_effect
     else:
-        container.ingest_pipeline.run.return_value = {"writer": {"documents_written": []}}
+        container.ingest_pipeline.run.return_value = {
+            "embedder": {"documents": [], "documents_written": 1}
+        }
     container.registry = AsyncMock()
     container.unprotect_client = unprotect_client
     # ingest_pipeline_task awaits container.embedding_registry.refresh()
     # to pick up cutover/rollback without restart (B50 T-EM.21).
     container.embedding_registry = MagicMock()
     container.embedding_registry.refresh = AsyncMock()
+    container.heartbeat_tick = MagicMock()
+    container.heartbeat_interval = 60.0  # long interval so it never fires during tests
+    container.max_attempts = 5
+    container.pending_stale_seconds = 300
     return container
 
 

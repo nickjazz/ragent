@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+
+class AttachmentNotFound(Exception):
+    """Raised when the caller does not own a session_documents link to the attachment."""
+
+
 # Spec default; composition.py reads ATTACHMENT_MAX_SIZE_BYTES env and passes
 # the runtime value via constructor kwarg.
 ATTACHMENT_MAX_SIZE_BYTES_DEFAULT = 50 * 1024 * 1024
@@ -180,6 +185,17 @@ class AttachmentIngestService:
             user_id=create_user,
         )
         return True
+
+    async def retry(self, document_id: str, create_user: str) -> None:
+        """Owner-scoped rerun: re-enqueues a FAILED attachment without re-uploading.
+
+        Raises AttachmentNotFound when the caller does not own a link to the document.
+        Propagates DocumentNotRerunnable when the document status is READY or DELETING.
+        """
+        link = await self._session_docs.get_by_document(document_id, create_user=create_user)
+        if link is None:
+            raise AttachmentNotFound(document_id)
+        await self._ingest.rerun(document_id)
 
     async def delete_by_session(self, session_id: str) -> None:
         """Cascade for DELETE /chatagent/v3/session — unlink every document in

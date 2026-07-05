@@ -20,8 +20,11 @@ from ragent.auth.deps import get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.schemas.attachments import AttachmentMime
-from ragent.services.attachment_ingest_service import ATTACHMENT_MAX_SIZE_BYTES_DEFAULT
-from ragent.services.ingest_service import FileTooLarge
+from ragent.services.attachment_ingest_service import (
+    ATTACHMENT_MAX_SIZE_BYTES_DEFAULT,
+    AttachmentNotFound,
+)
+from ragent.services.ingest_service import DocumentNotRerunnable, FileTooLarge
 
 if TYPE_CHECKING:
     from ragent.services.attachment_ingest_service import (
@@ -34,6 +37,12 @@ logger = structlog.get_logger(__name__)
 
 class UploadAttachmentResponse(BaseModel):
     """Response from POST /chatagent/v3/attachments/upload."""
+
+    attachmentId: str
+
+
+class RetryAttachmentResponse(BaseModel):
+    """Response from POST /chatagent/v3/attachments/{attachmentId}/retry."""
 
     attachmentId: str
 
@@ -205,6 +214,24 @@ def create_attachments_router(
             return problem(404, HttpErrorCode.ATTACHMENT_NOT_FOUND, "Attachment not found")
 
         return _to_attachment_info(att)
+
+    @router.post("/{attachmentId}/retry", response_model=RetryAttachmentResponse, status_code=202)
+    async def retry_attachment(
+        attachmentId: str,
+        user_id: Annotated[str | None, Depends(get_user_id)] = None,
+    ) -> RetryAttachmentResponse:
+        """Re-enqueue a FAILED attachment without re-uploading."""
+        if not user_id:
+            return _auth_required("retry")
+        try:
+            await service.retry(attachmentId, create_user=user_id)
+        except AttachmentNotFound:
+            return problem(404, HttpErrorCode.ATTACHMENT_NOT_FOUND, "Attachment not found")
+        except DocumentNotRerunnable:
+            return problem(
+                409, HttpErrorCode.ATTACHMENT_NOT_RERUNNABLE, "Attachment not rerunnable"
+            )
+        return RetryAttachmentResponse(attachmentId=attachmentId)
 
     @router.delete("/{attachmentId}", status_code=204)
     async def delete_attachment(

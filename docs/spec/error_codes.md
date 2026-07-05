@@ -37,6 +37,7 @@
 | `ATTACHMENT_TOO_LARGE`               | 413         | File size exceeds cap (T-CAT.1) | Router T-CAT.12 |
 | `ATTACHMENT_PARSE_FAILED`            | 422         | AST build failed during `chat_attachment` pipeline (T-CAT.1) | `ChatAttachmentService` T-CAT.11 |
 | `ATTACHMENT_NOT_FOUND`               | 404         | `GET /chatagent/v3/attachments/{id}` on unknown id (T-CAT.W2) | Router T-CAT.W2 |
+| `ATTACHMENT_NOT_RERUNNABLE`          | 409         | `POST /chatagent/v3/attachments/{id}/retry` when status is `READY` or `DELETING` (T-ATTACH-R.2b) | Retry router |
 | `EMBEDDING_LIFECYCLE_INVALID_STATE`  | 409         | Embedding model state-machine transition rejected (B50) | Embedding lifecycle router |
 | `EMBEDDING_CUTOVER_PREFLIGHT_FAILED` | 409         | Cutover preflight (warmup / similarity gate) failed (B50) | Embedding lifecycle router |
 | `EMBEDDING_INVALID_CONFIG`           | 422         | Invalid promote payload (B50) | Embedding lifecycle router |

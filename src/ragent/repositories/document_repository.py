@@ -228,6 +228,8 @@ class DocumentRepository:
         to_status: str,
         accept_from: tuple[str, ...],
         bump_attempt: bool = False,
+        attempt_lt: int | None = None,
+        fresh_within_seconds: int | None = None,
     ) -> DocumentRow | None:
         """Pre-state SELECT + atomic conditional UPDATE.
 
@@ -239,12 +241,29 @@ class DocumentRepository:
         ``accept_from``, or a concurrent writer transitioned the row out of
         the accept-set between our SELECT and UPDATE (rowcount=0). InnoDB's
         per-statement row lock on the UPDATE serialises concurrent claimers.
+
+        Optional guards (applied via Python pre-check + matching SQL WHERE):
+        - ``attempt_lt``: skip rows where ``attempt >= attempt_lt``.
+        - ``fresh_within_seconds``: skip PENDING rows whose ``updated_at`` is
+          more recent than ``fresh_within_seconds`` ago (active heartbeat).
+          UPLOADED rows are never gated by this check.
         """
         extra_set = ", attempt=attempt+1" if bump_attempt else ""
+        extra_where = ""
+        params: dict[str, Any] = {"id": document_id, "to_status": to_status}
+        if attempt_lt is not None:
+            extra_where += " AND attempt < :attempt_lt"
+            params["attempt_lt"] = attempt_lt
+        if fresh_within_seconds is not None:
+            threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+                seconds=fresh_within_seconds
+            )
+            extra_where += " AND (status = 'UPLOADED' OR updated_at < :fresh_threshold)"
+            params["fresh_threshold"] = threshold
         update_stmt = text(
             f"UPDATE documents SET status=:to_status{extra_set},"
-            " updated_at=NOW(6) WHERE document_id=:id"
-            " AND status IN :accept_from"
+            f" updated_at=NOW(6) WHERE document_id=:id"
+            f" AND status IN :accept_from{extra_where}"
         ).bindparams(bindparam("accept_from", expanding=True))
         async with self._engine.begin() as conn:
             pre = (
@@ -259,32 +278,52 @@ class DocumentRepository:
             )
             if pre is None or pre["status"] not in accept_from:
                 return None
+            if attempt_lt is not None and pre["attempt"] >= attempt_lt:
+                return None
+            if fresh_within_seconds is not None and pre["status"] == "PENDING":
+                updated_at = pre["updated_at"]
+                if updated_at is not None:
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=datetime.timezone.utc)
+                    threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+                        seconds=fresh_within_seconds
+                    )
+                    if updated_at > threshold:
+                        return None
             update_result = await conn.execute(
                 update_stmt,
-                {
-                    "id": document_id,
-                    "to_status": to_status,
-                    "accept_from": list(accept_from),
-                },
+                {**params, "accept_from": list(accept_from)},
             )
             if update_result.rowcount == 0:
                 return None
             self._log_transition(document_id, pre["status"], to_status)
             return DocumentRow.from_mapping(pre)
 
-    async def claim_for_processing(self, document_id: str) -> DocumentRow | None:
+    async def claim_for_processing(
+        self,
+        document_id: str,
+        max_attempts: int | None = None,
+        fresh_within_seconds: int | None = None,
+    ) -> DocumentRow | None:
         """Claim the row for ingest processing.
 
         Accepts UPLOADED (organic POST→worker hand-off) or PENDING (reconciler
         redispatch / manual rerun). Returns the pre-state row (``status`` is
         the prior value, ``attempt`` is pre-bump) or ``None`` if the row is
         terminal (READY/FAILED/DELETING) or missing.
+
+        Optional guards:
+        - ``max_attempts``: rows at or above this attempt count are not claimed.
+        - ``fresh_within_seconds``: PENDING rows whose heartbeat is more recent
+          than this threshold are not re-claimed (active worker still running).
         """
         return await self._atomic_claim(
             document_id,
             to_status="PENDING",
             accept_from=("UPLOADED", "PENDING"),
             bump_attempt=True,
+            attempt_lt=max_attempts,
+            fresh_within_seconds=fresh_within_seconds,
         )
 
     async def claim_for_deletion(self, document_id: str) -> DocumentRow | None:

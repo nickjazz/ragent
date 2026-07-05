@@ -1018,6 +1018,28 @@ curl -X DELETE "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNP
 
 **Note:** `DELETE /chatagent/v3/session` also cascades this deletion to every attachment in the session once the upstream session delete succeeds — no separate call needed when deleting a whole session.
 
+### `POST /chatagent/v3/attachments/{attachmentId}/retry` — Retry a failed attachment
+
+Re-enqueues a `FAILED` attachment through the standard ingest pipeline without re-uploading the file. Scoped to the requesting user — a missing or foreign-owned `attachmentId` returns `404`. Only `FAILED` (and `UPLOADED`) attachments are re-runnable; attempting to retry a `READY` or `DELETING` attachment returns `409`.
+
+**Response:** `202 Accepted`
+```json
+{
+  "attachmentId": "01J9ABCDEFGHJKMNPQRSTVWXYZ"
+}
+```
+
+**Errors:**
+- `403 AUTH_REQUIRED` — `X-User-Id` header absent or empty.
+- `404 ATTACHMENT_NOT_FOUND` — unknown `attachmentId`, or owned by a different user.
+- `409 ATTACHMENT_NOT_RERUNNABLE` — attachment status is `READY` or `DELETING`.
+
+**Example:**
+```bash
+curl -X POST "http://localhost:8000/chatagent/v3/attachments/01J9ABCDEFGHJKMNPQRSTVWXYZ/retry" \
+  -H "X-User-Id: alice"
+```
+
 ---
 
 ## Operational Endpoints (`/ops/v1`)

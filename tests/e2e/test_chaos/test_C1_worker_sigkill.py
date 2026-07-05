@@ -118,7 +118,7 @@ def test_C1_worker_sigkill_recovers_to_ready(
 
     _ensure_default_bucket(minio_endpoint)
     monkeypatch.setenv("RAGENT_PORT", "8000")
-    monkeypatch.setenv("RECONCILER_PENDING_STALE_SECONDS", "10")
+    monkeypatch.setenv("MAINTENANCE_PENDING_STALE_SECONDS", "10")
     monkeypatch.setenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "2")
 
     spawn_module("ragent.api")
@@ -186,6 +186,12 @@ def test_C1_worker_sigkill_recovers_to_ready(
 
     # Assert 2: ES chunks state matches DB — doc is READY, so ES MUST have
     # ≥ 1 chunk for this document_id (orphan-free invariant per B14/B36).
+    # Force a refresh so bulk-written chunks are visible before counting;
+    # without this the 1s default refresh interval races the READY poll.
+    urllib.request.urlopen(
+        urllib.request.Request(f"{es_url}/chunks_v1/_refresh", method="POST", data=b""),
+        timeout=10,
+    )
     assert _es_chunk_count(es_url, doc_id) >= 1, (
         "READY document has zero ES chunks — orphan invariant violated"
     )

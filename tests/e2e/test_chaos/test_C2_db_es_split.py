@@ -105,7 +105,7 @@ def test_C2_db_es_split_brain_recovers_to_ready(
 
     _ensure_default_bucket(minio_endpoint)
     monkeypatch.setenv("RAGENT_PORT", "8000")
-    monkeypatch.setenv("RECONCILER_PENDING_STALE_SECONDS", "10")
+    monkeypatch.setenv("MAINTENANCE_PENDING_STALE_SECONDS", "10")
     monkeypatch.setenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "2")
 
     spawn_module("ragent.api")
@@ -165,6 +165,12 @@ def test_C2_db_es_split_brain_recovers_to_ready(
 
     # Assert 2: ES idempotency — READY doc must have ≥ 1 chunk (OVERWRITE policy
     # means retried bulk writes do not duplicate or fail, they overwrite).
+    # Force a refresh so bulk-written chunks are visible before counting;
+    # without this the 1s default refresh interval races the READY poll.
+    urllib.request.urlopen(
+        urllib.request.Request(f"{es_url}/chunks_v1/_refresh", method="POST", data=b""),
+        timeout=10,
+    )
     chunk_count = _es_chunk_count(es_url, doc_id)
     assert chunk_count >= 1, (
         f"READY document has {chunk_count} ES chunks — idempotency/OVERWRITE invariant violated"

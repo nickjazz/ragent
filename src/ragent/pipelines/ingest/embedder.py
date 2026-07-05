@@ -61,10 +61,10 @@ class DocumentEmbedder:
             self._embed = None
             self._es = None
 
-    @component.output_types(documents=list[Document])
+    @component.output_types(documents=list[Document], documents_written=int)
     def run(self, documents: list[Document]) -> dict:
         if not documents:
-            return {"documents": []}
+            return {"documents": [], "documents_written": 0}
         if self._mode == "legacy":
             return self._run_legacy(documents)
         return self._run_dual(documents)
@@ -75,7 +75,7 @@ class DocumentEmbedder:
         out = [
             dataclasses.replace(d, embedding=e) for d, e in zip(documents, embeddings, strict=True)
         ]
-        return {"documents": out}
+        return {"documents": out, "documents_written": len(out)}
 
     def _run_dual(self, documents: list[Document]) -> dict:
         models = list(self._registry.write_models())
@@ -98,7 +98,8 @@ class DocumentEmbedder:
                 raise RuntimeError("write_models() returned 2 models but candidate_index is None")
             index_names.append(candidate_idx)
 
-        for vectors, index_name in zip(results, index_names, strict=True):
+        stable_failed = 0
+        for i, (vectors, index_name) in enumerate(zip(results, index_names, strict=True)):
             ops: list[dict] = []
             op_docs: list[tuple[Document, list[float]]] = []
             for doc, vec in zip(documents, vectors, strict=True):
@@ -110,19 +111,21 @@ class DocumentEmbedder:
                 ops.append(body)
                 op_docs.append((doc, vec))
             response = self._es.bulk(index=index_name, operations=ops)
-            self._handle_bulk_response(response, op_docs, index_name)
+            failed = self._handle_bulk_response(response, op_docs, index_name)
+            if i == 0:
+                stable_failed = failed
 
-        return {"documents": []}
+        return {"documents": [], "documents_written": len(documents) - stable_failed}
 
     def _handle_bulk_response(
         self,
         response: dict,
         op_docs: list[tuple[Document, list[float]]],
         index_name: str,
-    ) -> None:
-        """Check bulk response for partial failures and retry failed items."""
+    ) -> int:
+        """Retry partial bulk failures; return count of items that permanently failed."""
         if not response.get("errors"):
-            return
+            return 0
 
         items = response.get("items", [])
         retry_op_docs: list[tuple[Document, list[float]]] = []
@@ -140,7 +143,7 @@ class DocumentEmbedder:
                 retry_op_docs.append((doc, vec))
 
         if not retry_op_docs:
-            return
+            return 0
 
         retry_ops: list[dict] = []
         for doc, vec in retry_op_docs:
@@ -151,12 +154,15 @@ class DocumentEmbedder:
             retry_ops.append(body)
         retry_response = self._es.bulk(index=index_name, operations=retry_ops)
         if retry_response.get("errors"):
+            still_failed = [
+                item.get("index", {}).get("_id")
+                for item in retry_response.get("items", [])
+                if item.get("index", {}).get("status", 200) >= 400
+            ]
             _logger.error(
                 "es.bulk_retry_partial_failure",
                 index=index_name,
-                failed_ids=[
-                    item.get("index", {}).get("_id")
-                    for item in retry_response.get("items", [])
-                    if item.get("index", {}).get("status", 200) >= 400
-                ],
+                failed_ids=still_failed,
             )
+            return len(still_failed)
+        return 0
