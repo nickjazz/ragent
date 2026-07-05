@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -60,7 +60,9 @@ async def test_aggregate_timeout_default_does_not_apply_when_fast(
     monkeypatch.setenv("INGEST_PIPELINE_TIMEOUT_SECONDS", "5")
 
     container = make_ingest_container(_doc())
-    container.ingest_pipeline.run.return_value = {"chunker": {"documents": [MagicMock()]}}
+    container.ingest_pipeline.run.return_value = {
+        "embedder": {"documents": [], "documents_written": 1}
+    }
 
     from ragent.workers.ingest import ingest_pipeline_task
 

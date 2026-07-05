@@ -154,7 +154,9 @@ def make_ingest_container(
     if pipeline_side_effect is not None:
         container.ingest_pipeline.run.side_effect = pipeline_side_effect
     else:
-        container.ingest_pipeline.run.return_value = {"chunker": {"documents": [MagicMock()]}}
+        container.ingest_pipeline.run.return_value = {
+            "embedder": {"documents": [], "documents_written": 1}
+        }
     container.registry = AsyncMock()
     container.unprotect_client = unprotect_client
     # ingest_pipeline_task awaits container.embedding_registry.refresh()

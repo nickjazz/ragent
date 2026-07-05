@@ -42,7 +42,9 @@ def _container(doc: MagicMock, *, minio_content_type: str | None) -> MagicMock:
     container.minio_registry.head_object.return_value = (32, minio_content_type)
     # Minimal valid-ish bytes (worker just passes them through; pipeline is mocked).
     container.minio_registry.get_object.return_value = b"PK\x03\x04" + b"\x00" * 28
-    container.ingest_pipeline.run.return_value = {"chunker": {"documents": [MagicMock()]}}
+    container.ingest_pipeline.run.return_value = {
+        "embedder": {"documents": [], "documents_written": 1}
+    }
     container.registry = MagicMock()
     container.registry.fan_out = AsyncMock()
     container.unprotect_client = None

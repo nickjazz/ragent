@@ -203,10 +203,12 @@ async def _run_ingest(document_id, doc, container, repo, registry):  # noqa: ANN
                 "source_meta": doc.source_meta,
             }
         result = container.ingest_pipeline.run({"loader": loader_kwargs})
-        # The pipeline ends at the "embedder" component which writes directly to ES
-        # and returns {"documents": []}. Count chunks from the upstream "chunker"
-        # component whose output is the set of documents fed to the embedder.
-        return len((result.get("chunker") or {}).get("documents", []))
+        # Haystack only returns leaf outputs (outputs not wired to any downstream
+        # component). "chunker.documents" feeds into "embedder.documents", so
+        # "chunker" is absent from result. The embedder is the sole leaf: it bulk-
+        # writes to ES, returns {"documents": [], "documents_written": N}, where N
+        # is the number of chunks written (the count we need for the zero-chunk gate).
+        return (result.get("embedder") or {}).get("documents_written", 0)
 
     started = time.monotonic()
     with bind_ingest_context(document_id=document_id, mime_type=doc.mime_type):

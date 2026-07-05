@@ -61,10 +61,10 @@ class DocumentEmbedder:
             self._embed = None
             self._es = None
 
-    @component.output_types(documents=list[Document])
+    @component.output_types(documents=list[Document], documents_written=int)
     def run(self, documents: list[Document]) -> dict:
         if not documents:
-            return {"documents": []}
+            return {"documents": [], "documents_written": 0}
         if self._mode == "legacy":
             return self._run_legacy(documents)
         return self._run_dual(documents)
@@ -75,7 +75,7 @@ class DocumentEmbedder:
         out = [
             dataclasses.replace(d, embedding=e) for d, e in zip(documents, embeddings, strict=True)
         ]
-        return {"documents": out}
+        return {"documents": out, "documents_written": len(out)}
 
     def _run_dual(self, documents: list[Document]) -> dict:
         models = list(self._registry.write_models())
@@ -112,7 +112,7 @@ class DocumentEmbedder:
             response = self._es.bulk(index=index_name, operations=ops)
             self._handle_bulk_response(response, op_docs, index_name)
 
-        return {"documents": []}
+        return {"documents": [], "documents_written": len(documents)}
 
     def _handle_bulk_response(
         self,
