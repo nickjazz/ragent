@@ -296,9 +296,9 @@ def build_container() -> Container:
     )
     heartbeat_tick = _make_heartbeat_tick(_sync_engine)
     heartbeat_interval = _float_env("WORKER_HEARTBEAT_INTERVAL_SECONDS", 10.0)
-    pending_stale_seconds = _int_env("RECONCILER_PENDING_STALE_SECONDS", 300)
-    uploaded_stale_seconds = _int_env("RECONCILER_UPLOADED_STALE_SECONDS", 300)
-    deleting_stale_seconds = _int_env("RECONCILER_DELETING_STALE_SECONDS", 300)
+    pending_stale_seconds = _int_env("MAINTENANCE_PENDING_STALE_SECONDS", 300)
+    uploaded_stale_seconds = _int_env("MAINTENANCE_UPLOADED_STALE_SECONDS", 300)
+    deleting_stale_seconds = _int_env("MAINTENANCE_DELETING_STALE_SECONDS", 300)
     max_attempts = _int_env("WORKER_MAX_ATTEMPTS", 5)
     maintenance_interval_seconds = _int_env("WORKER_MAINTENANCE_INTERVAL_SECONDS", 300)
 

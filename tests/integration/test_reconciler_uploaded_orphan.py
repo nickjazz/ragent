@@ -88,8 +88,8 @@ def test_fresh_uploaded_not_redispatched():
 
 
 def test_list_uploaded_stale_called_with_threshold(monkeypatch: pytest.MonkeyPatch):
-    """list_uploaded_stale receives updated_before based on RECONCILER_UPLOADED_STALE_SECONDS."""
-    monkeypatch.setenv("RECONCILER_UPLOADED_STALE_SECONDS", "300")
+    """list_uploaded_stale receives updated_before based on MAINTENANCE_UPLOADED_STALE_SECONDS."""
+    monkeypatch.setenv("MAINTENANCE_UPLOADED_STALE_SECONDS", "300")
 
     repo = _default_repo()
     broker = AsyncMock()

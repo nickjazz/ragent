@@ -145,8 +145,8 @@ def _build_dev_env(
         # are rescued within ~60s instead of the 600s default (300s interval
         # + 300s stale threshold).
         "WORKER_MAINTENANCE_INTERVAL_SECONDS": "30",
-        "RECONCILER_UPLOADED_STALE_SECONDS": "30",
-        "RECONCILER_PENDING_STALE_SECONDS": "30",
+        "MAINTENANCE_UPLOADED_STALE_SECONDS": "30",
+        "MAINTENANCE_PENDING_STALE_SECONDS": "30",
     }
     external_defaults = {
         "AI_LLM_API_J1_TOKEN": "test-llm-j1",

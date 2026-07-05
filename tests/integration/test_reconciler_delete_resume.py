@@ -102,7 +102,7 @@ def test_stale_deleting_calls_fan_out_delete_when_registry_present():
 
 
 def test_list_deleting_stale_called_with_threshold(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("RECONCILER_DELETING_STALE_SECONDS", "300")
+    monkeypatch.setenv("MAINTENANCE_DELETING_STALE_SECONDS", "300")
     repo = _default_repo()
     broker = AsyncMock()
     rec = _make_reconciler(repo, broker)

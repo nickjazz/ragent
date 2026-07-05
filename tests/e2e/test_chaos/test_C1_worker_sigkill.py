@@ -118,7 +118,7 @@ def test_C1_worker_sigkill_recovers_to_ready(
 
     _ensure_default_bucket(minio_endpoint)
     monkeypatch.setenv("RAGENT_PORT", "8000")
-    monkeypatch.setenv("RECONCILER_PENDING_STALE_SECONDS", "10")
+    monkeypatch.setenv("MAINTENANCE_PENDING_STALE_SECONDS", "10")
     monkeypatch.setenv("WORKER_HEARTBEAT_INTERVAL_SECONDS", "2")
 
     spawn_module("ragent.api")
