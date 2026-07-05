@@ -46,7 +46,7 @@ def _container(doc: MagicMock | None, *, pipeline_raises: Exception | None = Non
     if pipeline_raises:
         container.ingest_pipeline.run.side_effect = pipeline_raises
     else:
-        container.ingest_pipeline.run.return_value = {"writer": {"documents_written": 1}}
+        container.ingest_pipeline.run.return_value = {"chunker": {"documents": [MagicMock()]}}
     container.registry = MagicMock()
     container.registry.fan_out = AsyncMock()
     container.unprotect_client = None

@@ -100,7 +100,7 @@ async def test_ingest_task_started_fires_after_claim(monkeypatch: pytest.MonkeyP
     container = MagicMock()
     container.doc_repo = repo
     container.minio_registry = registry
-    container.ingest_pipeline.run.return_value = {"writer": {"documents_written": 1}}
+    container.ingest_pipeline.run.return_value = {"chunker": {"documents": [MagicMock()]}}
     container.registry = MagicMock()
     container.registry.fan_out = AsyncMock()
     container.embedding_registry.refresh = AsyncMock()

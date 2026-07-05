@@ -203,8 +203,10 @@ async def _run_ingest(document_id, doc, container, repo, registry):  # noqa: ANN
                 "source_meta": doc.source_meta,
             }
         result = container.ingest_pipeline.run({"loader": loader_kwargs})
-        written = (result.get("writer") or {}).get("documents_written", 0)
-        return written if isinstance(written, int) else len(written)
+        # The pipeline ends at the "embedder" component which writes directly to ES
+        # and returns {"documents": []}. Count chunks from the upstream "chunker"
+        # component whose output is the set of documents fed to the embedder.
+        return len((result.get("chunker") or {}).get("documents", []))
 
     started = time.monotonic()
     with bind_ingest_context(document_id=document_id, mime_type=doc.mime_type):

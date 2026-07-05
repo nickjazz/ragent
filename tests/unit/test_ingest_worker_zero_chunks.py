@@ -36,7 +36,7 @@ def _container(doc: MagicMock, *, documents_written: int) -> MagicMock:
     container.minio_registry.get_object.return_value = b"hello"
     container.ingest_pipeline = MagicMock()
     container.ingest_pipeline.run.return_value = {
-        "writer": {"documents_written": documents_written}
+        "chunker": {"documents": [MagicMock()] * documents_written}
     }
     container.registry = MagicMock()
     container.registry.fan_out = AsyncMock()
