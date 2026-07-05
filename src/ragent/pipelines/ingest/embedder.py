@@ -123,11 +123,7 @@ class DocumentEmbedder:
         op_docs: list[tuple[Document, list[float]]],
         index_name: str,
     ) -> int:
-        """Check bulk response for partial failures and retry failed items.
-
-        Returns the count of documents that permanently failed (failed on both
-        initial and retry calls).
-        """
+        """Retry partial bulk failures; return count of items that permanently failed."""
         if not response.get("errors"):
             return 0
 
