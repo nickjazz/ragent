@@ -326,13 +326,22 @@ def create_chatagent_v3_router(
 
         @router.get("/memory")
         async def chatagent_v3_memory(
+            request: Request,
             x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
         ) -> Response:
             user_id = x_user_id or "anonymous"
+            # Forward the archival list's paging / search params when present, so
+            # a large memory store paginates server-side (absent ⇒ full list, as
+            # before).
+            params = {"user": user_id}
+            for key in ("page", "pageSize", "q"):
+                value = request.query_params.get(key)
+                if value:
+                    params[key] = value
             return await proxy_get(
                 http_client=http_client,
                 url=chatagent_memory_api_url,
-                params={"user": user_id},
+                params=params,
                 headers=_headers,
                 timeout=timeout,
                 log_prefix="v3.memory",
