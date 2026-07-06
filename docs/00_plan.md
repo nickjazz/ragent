@@ -11,6 +11,48 @@
 
 ---
 
+## Track T-BRAIN — ragent-brain Upstream Surface (`/brainagent/v1`)
+
+> Source: 2026-07-06 design session. Goal: expose the **entire** ragent-brain
+> API through ragent as a new `/brainagent/v1` surface — a twp-ai `POST /run`
+> chat path plus an authenticated reverse proxy over brain's whole `/upstream/*`
+> management surface. **brain requires zero code change**; ragent adds the edge.
+> Spec: [`docs/spec/brainagent_v1.md`](spec/brainagent_v1.md).
+>
+> **Locked decisions:**
+> - **Passthrough (option A)**: ragent does NOT inject skills, resolve
+>   attachments, or build a `<hidden>` preamble. brain owns skills / memory /
+>   projects / attachments; ragent forwards `RunAgentInput` verbatim. Edge only:
+>   auth, rate limit, resumable stream, transport-error framing.
+> - **brain speaks twp-ai natively** → `BrainAgent` is a **relay**, not a
+>   translator: it passes brain's SSE frames through and synthesizes a
+>   `RUN_ERROR` **only** on transport failure. It never re-emits
+>   `RUN_STARTED`/`RUN_FINISHED` (brain already brackets the run).
+> - **User override is security-critical**: the reverse proxy forces `user` =
+>   JWT-resolved caller in both `?user=` and the JSON body, overriding any
+>   client value. `X-Brain-Key` is attached server-to-server.
+> - **Not fronted**: `/healthz` (infra), `/upstream/reindex` (admin — deferred),
+>   A2A plane (`/agent/card`, `/.well-known/*`, `/a2a` — different trust boundary).
+> - Resumable stream reuses the existing `ChatStreamStore` + reconnect verbatim.
+
+**Counter: 完成 9 / 未完成 2 / descope 0**
+
+| # | Category | Task | Status | Owner |
+|---|---|---|:---:|---|
+| T-BRAIN.1 | Structural | • **Achieve:** Add brainagent error codes (SSE-error only).<br>• **Deliver:** `src/ragent/errors/codes.py` (`BRAINAGENT_RATE_LIMITED` / `BRAINAGENT_TIMEOUT` / `BRAINAGENT_UPSTREAM_ERROR`); `docs/spec/error_codes.md` rows.<br>• **Success criteria:** codes present in the catalog; no behavior change. | [x] | Dev |
+| T-BRAIN.2 | Red+Green | • **Achieve:** `BrainCaller` — POST `{BRAIN_API_URL}/run` with `X-User-Id` + `X-Brain-Key`, body = `RunAgentInput` verbatim; stream SSE frames; typed transport error (`classify_upstream_error`) on timeout/connection/non-2xx-before-first-frame.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/callers/brain.py` (`BrainCaller` protocol: `stream_frames(request, model)->Generator[str]`); `src/ragent/clients/brain_caller.py` (concrete httpx client); `tests/unit/test_brain_caller.py` (pytest-httpserver: frame relay, header injection, timeout→typed error, non-2xx→typed error).<br>• **Success criteria:** frames yielded raw; headers correct; transport failures raise typed `UpstreamServiceError`/`UpstreamTimeoutError`. | [x] | Dev |
+| T-BRAIN.3 | Red+Green | • **Achieve:** `BrainAgent` — relay caller frames unchanged; synthesize a single `RUN_ERROR` only when the caller raises (transport failure); never re-emit `RUN_STARTED`/`RUN_FINISHED`.<br>• **Deliver:** `packages/twp-ai/src/twp_ai/agents/brain.py` (`Agent` protocol); `tests/unit/test_brain_agent.py` (happy relay = byte-identical passthrough; caller raises pre-first-frame → lone `RUN_ERROR`; caller raises mid-stream → prior frames + terminal `RUN_ERROR`; no duplicate envelope).<br>• **Success criteria:** brain's terminal frame is the run's terminal frame on the happy path; transport failure always terminates the stream. | [x] | Dev |
+| T-BRAIN.4 | Red+Green | • **Achieve:** `POST /brainagent/v1` router — Model B thread mint; rate limit (`brainagent:{user}`); passthrough body/headers; `RUN_ERROR` framing; resumable producer/consumer + `GET /brainagent/v1/reconnect` reusing `ChatStreamStore` (no store → legacy stream).<br>• **Deliver:** `src/ragent/routers/brainagent.py` (`create_brainagent_v1_router`, `AgentFactory` seam); `tests/unit/test_brainagent_router.py` (mint thread_id; rate-limit→`BRAINAGENT_RATE_LIMITED`; relay; reconnect replay + `USER_MESSAGE`; expired→`CHATAGENT_STREAM_EXPIRED`).<br>• **Success criteria:** event sequence = brain's, wrapped only by edge concerns; reconnect parity with v3. | [x] | Dev |
+| T-BRAIN.5 | Red+Green | • **Achieve:** `POST /brainagent/v1/runs/{run_id}/cancel` — proxy to brain `/runs/{id}/cancel` with `X-User-Id` + `X-Brain-Key`; relay `{cancelled}` / 404.<br>• **Deliver:** `routers/brainagent.py` cancel route; `tests/unit/test_brainagent_router.py` (200 cancelled / 404 / owner header).<br>• **Success criteria:** owner-scoped cancel proxied; brain body relayed. | [x] | Dev |
+| T-BRAIN.6 | Red+Green | • **Achieve:** Generic authenticated reverse proxy `/brainagent/v1/{path}` → brain `/upstream/{path}` — force `user` = resolved caller in `?user=` **and** JSON body (override client); attach `X-Brain-Key`; forward method/path/query; relay status + JSON; relay brain `422 {error,params}` verbatim; **binary** artifact download relays bytes + `Content-Type`/`Content-Disposition`; timeout→504 / unreachable→502.<br>• **Deliver:** `src/ragent/routers/brain_upstream_proxy.py`; `tests/unit/test_brain_upstream_proxy.py` (user override in query+body; forged `user` ignored; JSON relay; 422 envelope relay; binary passthrough; 502/504).<br>• **Success criteria:** all 33 `/upstream/*` routes reachable via one proxy; a forged `user` cannot cross tenants. | [x] | Dev |
+| T-BRAIN.7 | Behavioral | • **Achieve:** Compose + register (gated on `BRAIN_API_URL`).<br>• **Deliver:** `bootstrap/composition.py` (`BRAIN_API_URL`/`BRAIN_KEY`/`BRAIN_TIMEOUT_SECONDS`; `_build_brain_agent_factory`; Container fields); `bootstrap/app.py` (mount run + proxy routers when set); `docs/spec/env_vars.md` (three rows).<br>• **Success criteria:** app builds; surface absent when `BRAIN_API_URL` unset; present when set. | [x] | Dev |
+| T-BRAIN.8 | Red+Green | • **Achieve:** Integration proof against a stub brain — run stream relays end-to-end; two proxy routes (a JSON GET + the binary artifact download) round-trip; user override enforced against a forged body.<br>• **Deliver:** `tests/integration/test_brainagent_int.py` (pytest-httpserver stub brain).<br>• **Success criteria:** SSE relay byte-parity; binary bytes intact; forged `user` overridden. | [ ] | QA |
+| T-BRAIN.D1 | Structural | • **Achieve:** Register the surface in the endpoint inventory + spec pointers.<br>• **Deliver:** `docs/spec/endpoints.md` (`/brainagent/v1` row under "Other domain endpoints"); `docs/00_spec.md §3.4` pointer; `docs/spec/error_codes.md` finalized. (spec body `docs/spec/brainagent_v1.md` already drafted.)<br>• **Success criteria:** inventory links resolve; spec carries run + proxy contracts. | [x] | Dev |
+| T-BRAIN.D2 | Structural | • **Achieve:** Domain-map orientation for the new brain slice.<br>• **Deliver:** `docs/00_domain_map.md` rows for `routers/brainagent.py`, `routers/brain_upstream_proxy.py`, `clients/brain_caller.py`, `twp_ai/agents/brain.py`, `twp_ai/callers/brain.py`; note the DIP seam (composition names the concretes) and the passthrough boundary.<br>• **Success criteria:** new files appear in the module lists; dependency direction documented. | [x] | Dev |
+| T-BRAIN.FE1 | Red+Green | • **Achieve:** Frontend points the tAgent app at `/brainagent/v1` (run + reconnect) and the `/brainagent/v1/*` management routes. **(frontend — out of this backend cycle)** | [ ] | Dev |
+
+---
+
 ## Track T-INF — Ingest Pipeline Performance & Reliability
 
 **Counter: 完成 1 / 未完成 0 / descope 0**
