@@ -428,13 +428,14 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
             excerpt_max_chars=container.excerpt_max_chars,
         )
     )
+    # The legacy v1/v2 routers only serve chat + session-list + session; memory
+    # and projects are v3-only surfaces. Gate this on the session URLs alone so
+    # enabling only memory/projects doesn't spin up the legacy routers.
     if any(
         [
             container.chatagent_api_url,
             container.chatagent_sessionlist_api_url,
             container.chatagent_session_api_url,
-            container.chatagent_memory_api_url,
-            container.chatagent_projects_api_url,
         ]
     ):
         app.include_router(

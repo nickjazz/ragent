@@ -120,10 +120,20 @@ async def proxy_delete(
         resp = await run_in_threadpool(
             http_client.delete, url, params=params, headers=headers, timeout=timeout
         )
+        # 4xx are intentional, structured responses (404 not found, 409 conflict)
+        # the client renders — pass them through. 5xx/transport collapse to 502 so
+        # an upstream fault never leaks as a raw 5xx (matches proxy_get/proxy_write).
+        if 400 <= resp.status_code < 500:
+            return Response(
+                status_code=resp.status_code,
+                content=resp.content,
+                media_type="application/json" if resp.content else None,
+            )
+        resp.raise_for_status()
     except httpx.TimeoutException:
         logger.warning("chatagent.proxy.timeout", route=log_prefix, http_status=504)
         return timeout_error()
-    except httpx.RequestError:
+    except (httpx.HTTPStatusError, httpx.RequestError):
         logger.warning("chatagent.proxy.upstream_error", route=log_prefix, http_status=502)
         return upstream_error()
     return Response(

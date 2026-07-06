@@ -498,7 +498,10 @@ def create_chatagent_v3_router(
             payload: dict[str, object] = {"user": user_id}
             for key in ("title", "prompt", "cron", "timezone"):
                 if key in body:
-                    payload[key] = body[key]
+                    # Coerce to str — the brain store expects strings; a client
+                    # sending a number/bool must not reach the store untyped
+                    # (matches schedules_create / projects_update).
+                    payload[key] = str(body[key]) if body[key] is not None else ""
             return await proxy_write(
                 http_client=http_client,
                 method="PUT",
