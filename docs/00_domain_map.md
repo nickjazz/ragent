@@ -325,7 +325,7 @@ Bootstrap (Composition Root) — 唯一組裝點
 | 檔案 | 職責 |
 |---|---|
 | `archive_guard.py` | DOCX / PPTX zip preflight — members、ratio、expanded bytes 檢查（`INGEST_MAX_ARCHIVE_MEMBERS` / `_RATIO` / `_EXPANDED_BYTES`）|
-| `key_manager.py` | `KeyManager` — 用 `RAGENT_KEK_BASE64` 解開 `RAGENT_ENCRYPTED_DEK_BASE64` 持有 DEK；⚠️ 僅供離線 CLI（`scripts/gen_attachment_keys.py`、`scripts/decrypt_artifact.py`）使用,attachment pipeline 已改走標準 ingest,不再於 request path 加密（issue #224）|
+| `key_manager.py` | `KeyManager` — 用 `RAGENT_KEK_BASE64` 解開 `RAGENT_ENCRYPTED_DEK_BASE64` 持有 DEK；⚠️ 僅供離線 CLI（`scripts/gen_attachment_keys.py`、`scripts/decrypt_artifact.py`）使用，attachment pipeline 已改走標準 ingest，不再於 request path 加密（issue #224）|
 | `ast_cipher.py` | `ASTCipher` — AES-256-GCM `encrypt_ast()`/`decrypt_ast()`；⚠️ **零 import 者，死碼**（同上，attachment 加密路徑已移除，issue #224）|
 
 ---
