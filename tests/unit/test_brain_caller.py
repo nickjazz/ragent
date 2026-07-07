@@ -77,6 +77,51 @@ def test_no_brain_key_header_when_unset() -> None:
     assert "x-brain-key" not in seen["headers"]
 
 
+def test_forwards_extra_headers_to_run() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["headers"] = request.headers
+        return httpx.Response(200, content=b"", headers={"content-type": "text/event-stream"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    caller = BrainCaller(
+        http_client=client,
+        brain_url="http://brain:8100",
+        user_id="alice",
+        brain_key="sekret",
+        extra_headers={"X-Auth-Token": "jwt-abc"},
+        timeout=5.0,
+    )
+    list(caller.stream_frames(_request(), ""))
+    # forwarded auth header rides alongside the service + user headers.
+    assert seen["headers"]["x-auth-token"] == "jwt-abc"
+    assert seen["headers"]["x-user-id"] == "alice"
+    assert seen["headers"]["x-brain-key"] == "sekret"
+
+
+def test_extra_headers_cannot_override_service_headers() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["headers"] = request.headers
+        return httpx.Response(200, content=b"", headers={"content-type": "text/event-stream"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    caller = BrainCaller(
+        http_client=client,
+        brain_url="http://brain:8100",
+        user_id="alice",
+        brain_key="sekret",
+        # a forged X-User-Id in the forwarded set must NOT cross tenants.
+        extra_headers={"X-User-Id": "mallory", "X-Brain-Key": "forged"},
+        timeout=5.0,
+    )
+    list(caller.stream_frames(_request(), ""))
+    assert seen["headers"]["x-user-id"] == "alice"
+    assert seen["headers"]["x-brain-key"] == "sekret"
+
+
 def test_timeout_raises_typed_timeout_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("slow")

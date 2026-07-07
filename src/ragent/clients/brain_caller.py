@@ -15,7 +15,7 @@ data by), so each instance is scoped to one run — mirroring `ADKCaller`.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 
 import httpx
 import structlog
@@ -43,11 +43,16 @@ class BrainCaller:
         brain_url: str,
         user_id: str,
         brain_key: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
         timeout: float = 30.0,
     ) -> None:
         self._http = http_client
         self._run_url = f"{brain_url.rstrip('/')}/run"
-        self._headers = {"X-User-Id": user_id}
+        # Forwarded auth headers go on FIRST so the service-owned X-User-Id /
+        # X-Brain-Key set below always win — a forged forwarded value can never
+        # override the JWT-resolved identity or the service secret.
+        self._headers = dict(extra_headers or {})
+        self._headers["X-User-Id"] = user_id
         if brain_key:
             self._headers["X-Brain-Key"] = brain_key
         self._timeout = timeout

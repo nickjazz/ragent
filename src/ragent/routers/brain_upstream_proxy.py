@@ -24,13 +24,14 @@ routes win over this catch-all.
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from ragent.auth.deps import get_user_id
+from ragent.auth.deps import get_forwarded_auth, get_user_id
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 
@@ -57,8 +58,11 @@ def create_brain_upstream_proxy_router(
     router = APIRouter(prefix="/brainagent/v1")
     base = brain_url.rstrip("/")
 
-    def _upstream_headers(user_id: str) -> dict[str, str]:
-        headers = {"X-User-Id": user_id}
+    def _upstream_headers(user_id: str, forwarded: dict[str, str]) -> dict[str, str]:
+        # Forwarded auth first; service headers overwrite so a forged forwarded
+        # X-User-Id / X-Brain-Key can never cross tenants or spoof the secret.
+        headers = dict(forwarded)
+        headers["X-User-Id"] = user_id
         if brain_key:
             headers["X-Brain-Key"] = brain_key
         return headers
@@ -68,6 +72,7 @@ def create_brain_upstream_proxy_router(
         path: str,
         request: Request,
         x_user_id: str | None = Depends(get_user_id),
+        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
     ) -> Response:
         user_id = x_user_id or "anonymous"
         if path.strip("/") in _DENIED_PATHS:
@@ -92,7 +97,7 @@ def create_brain_upstream_proxy_router(
                 parsed["user"] = user_id
                 json_body = parsed
 
-        headers = _upstream_headers(user_id)
+        headers = _upstream_headers(user_id, forwarded_auth)
         # Forward content negotiation from the client so binary/artifact downloads
         # negotiate correctly at brain. (Content-Type is forwarded only on the
         # raw-body path below; the json= path lets httpx set application/json.)

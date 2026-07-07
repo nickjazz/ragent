@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from twp_ai.agent import Agent
 from twp_ai.schemas import RunAgentInput
 
-from ragent.auth.deps import get_user_id
+from ragent.auth.deps import get_forwarded_auth, get_user_id
 from ragent.clients.chat_stream_store import ChatStreamStore
 from ragent.clients.nats_publisher import NatsSessionPublisher
 from ragent.clients.rate_limiter import RateLimiter
@@ -47,8 +47,9 @@ logger = structlog.get_logger(__name__)
 # http_client / brain_url / brain_key / timeout) and called per request, since
 # BrainCaller carries the per-request X-User-Id. Simpler than v3's factory: brain
 # authenticates the service by X-Brain-Key and scopes by X-User-Id, so no
-# per-request JWT/token or attachment context is threaded through.
-BrainAgentFactory = Callable[[str], Agent]
+# per-request JWT/token or attachment context is threaded through, EXCEPT the
+# allowlisted forwarded auth headers (get_forwarded_auth) passed as extra_headers.
+BrainAgentFactory = Callable[..., Agent]
 
 
 def create_brainagent_v1_router(
@@ -88,6 +89,7 @@ def create_brainagent_v1_router(
         body: RunAgentInput,
         request: Request,
         x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
     ) -> StreamingResponse:
         user_id = x_user_id or "anonymous"
 
@@ -109,7 +111,7 @@ def create_brainagent_v1_router(
                 body.thread_id,
             )
 
-        agent = agent_factory(user_id)
+        agent = agent_factory(user_id, forwarded_auth)
         logger.info("brainagent.request", user_id=user_id)
 
         # No store wired (e.g. Redis down at boot) → legacy connection-bound
@@ -201,10 +203,13 @@ def create_brainagent_v1_router(
     async def brainagent_v1_cancel(
         run_id: str,
         x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
+        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
     ) -> JSONResponse:
         """Cooperative cancel — owner-scoped proxy to brain's POST /runs/{id}/cancel."""
         user_id = x_user_id or "anonymous"
-        headers = {"X-User-Id": user_id}
+        # Forwarded auth first; service headers overwrite so identity/secret win.
+        headers = dict(forwarded_auth or {})
+        headers["X-User-Id"] = user_id
         if brain_key:
             headers["X-Brain-Key"] = brain_key
         url = f"{brain_url.rstrip('/')}/runs/{run_id}/cancel"
