@@ -9,37 +9,18 @@
 ## 一、Domain 總覽
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         HTTP 邊界                                    │
-│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────────────┐  │
-│  │  Middleware  │  │   Routers    │  │  Schemas (Pydantic I/O)   │  │
-│  └──────┬──────┘  └──────┬───────┘  └────────────┬──────────────┘  │
-│         │                │                        │                  │
-│  ┌──────▼────────────────▼────────────────────────▼──────────────┐  │
-│  │                     Services                                   │  │
-│  └──────────────────────────┬───────────────────────────────────┘  │
-│                              │                                       │
-│        ┌─────────────────────┼──────────────────────┐               │
-│        ▼                     ▼                       ▼               │
-│  ┌──────────┐   ┌─────────────────────┐   ┌──────────────────┐     │
-│  │Repositories│  │     Pipelines       │   │     Extractors     │     │
-│  └──────────┘   └────────┬────────────┘   └──────────────────┘     │
-│                           │                                          │
-│        ┌──────────────────┼─────────────┐                          │
-│        ▼                  ▼             ▼                            │
-│  ┌──────────┐  ┌──────────────┐  ┌──────────┐                      │
-│  │  Storage  │  │   Clients    │  │  Errors   │                      │
-│  └──────────┘  └──────────────┘  └──────────┘                      │
-│                                                                       │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │              Bootstrap (Composition Root)                     │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────────┐   │
-│  │  Auth     │  │ Utility  │  │ Security │  │  MCP Hub (process)│   │
-│  └──────────┘  └──────────┘  └──────────┘  └───────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+HTTP 邊界：Middleware ／ Routers ／ Schemas (Pydantic I/O)
+    ↓
+  Services
+    ↓
+Repositories ／ Pipelines ／ Extractors
+    ↓
+  Storage ／ Clients ／ Errors
 
-  獨立 process（不掛載於 FastAPI app，不在上圖框內）：
+Bootstrap (Composition Root) — 唯一組裝點
+  Auth ／ Utility ／ Security ／ MCP Hub (process)
+
+獨立 process（不掛載於 FastAPI app，不在上圖框內）：
   Workers (python -m ragent.worker)　／　Reconciler (python -m ragent.reconciler)
 ```
 
@@ -91,6 +72,7 @@
 | `ingest.py` | `/ingest/v1` | Create / Read / List / Delete / Rerun / Upload |
 | `chat.py` | `/chat/v1` | 同步聊天、SSE 串流 |
 | `retrieve.py` | `/retrieve/v1` | 無 LLM 純檢索 |
+| `retrieve_v2.py` | `/retrieve/v2` | 文件範圍限定檢索；`document_id_list` 必填，anti-IDOR 校驗（未擁有 → 403 `DOCUMENT_FORBIDDEN`）|
 | `chatagent.py` | `/chatagent/v1` | ChatAgent 上游代理(POST + sessionList / session GET/PUT/DELETE)|
 | `chatagent_v2.py` | `/chatagent/v2` | ChatAgent raw-proxy(原樣轉發上游 payload,串流/非串流)|
 | `chatagent_v3.py` | `/chatagent/v3` | twp-ai protocol 代理(`RunAgentInput` → AG-UI SSE)+ v3 session 管理(twp-ai message shape)。POST handler 依賴注入的 `agent_factory: AgentFactory`（`Callable[[user_id, user_token], twp_ai.agent.Agent]`），**不**直接 import `ADKAgent`/`ADKCaller` 等具體類別（T-CAv3.DIP）。亦為 resumable-stream plumbing(`_spawn_producer`/`_consume_stream`/`_reconnect_stream`)的歸屬處,`brainagent.py` 重用之。 |
@@ -107,6 +89,7 @@
 | `admin_ops.py` | `/ops/v1` | 維運操作(retry)|
 | `health.py` | `/livez`, `/readyz`, `/startupz`, `/metrics` | 健康探針、Prometheus 指標 |
 | `health_probes.py` | —(probe 實作)| `/readyz` 的 MariaDB / ES / Redis / MinIO probe 實作,由 `health.py` 注入 |
+| `mcp_transport.py` | —(共用 helper)| `/mcp/v1` 與 `/mcp/v2` 共用的 JSON-RPC 2.0 傳輸層（body-size cap、parse/invalid-request 映射、`tools/list`/`tools/call` 派送）；router 只註冊各自的 tool set |
 
 > 另有 `/twp/v1` router 由 `packages/twp-ai`(repo 內獨立 package)提供,於 `bootstrap/app.py` 掛載;`/chatagent/v3` 依賴該 package 的 `twp_ai.agent.Agent` Protocol 與 schemas,具體實作(`ADKAgent` + ragent 端 `clients/adk_caller.py`)由 `bootstrap/composition.py::_build_chatagent_agent_factory()` 組裝成 `agent_factory` 後注入,router 本身不 import 具體類別。詳見 `docs/spec/chatagent_agent_backend.md`。
 
@@ -175,7 +158,6 @@
 | `ingest/splitter.py` | `_MimeAwareSplitter`、`_MarkdownASTSplitter`、`_HtmlASTSplitter`、`_DocxASTSplitter`、`_PptxASTSplitter`、`_PdfASTSplitter`、`_CsvASTSplitter`、`INGEST_PDF_MARGIN_PTS` |
 | `ingest/chunker.py` | `_BudgetChunker`、`_pack_atoms`、`validate_chunk_config`、`CHUNK_TARGET_CHARS`、`CHUNK_MAX_CHARS`、`CHUNK_OVERLAP_CHARS`、`CHUNK_MAX_PIECES_PER_ATOM` |
 | `ingest/embedder.py` | `_DocumentEmbedder` |
-| `chat_attachment/pipeline.py` | `ChatAttachmentPipeline`、`_build_simplified()` — load → optional unprotect(白名單見 §2.8) → AST build（複用 `ingest/splitter.py` 的 `_MimeAwareSplitter` 家族，不重寫格式解析）；**不**加密、**不**持久化（SRP：留給 service 層）|
 | `retrieve/__init__.py` | `build_retrieval_pipeline()`、`run_retrieval()` — 公用介面；re-exports 所有 sub-module 符號 |
 | `retrieve/_constants.py` | `DEFAULT_TOP_K`、`DEFAULT_MIN_SCORE`、`MAX_TOP_K`、`EXCERPT_MAX_CHARS_DEFAULT`、`_VALID_MODES` |
 | `retrieve/joiner.py` | `build_es_filters`、`dedupe_by_document`、`doc_to_source_entry` |
@@ -227,6 +209,7 @@
 | `embedding_model_config.py` | embedding model identity 設定(B50);ES `dense_vector.dims` 界限於 boot 驗證 |
 | `unprotect.py` | `UnprotectClient` — 外部 unprotect API 取回原始 binary(T-UP.3)|
 | `chat_stream_store.py` | `ChatStreamStore`(T-CAv3R) — Redis Stream tee/replay，讓 `/chatagent/v3` SSE run 可斷線重連 |
+| `nats_publisher.py` | `NatsSessionPublisher`(T-CAv3N) — sessionList 即時狀態（running/hasNewReply）發布到 per-user NATS subject；app-flow JWT 換發 + 連線 supervisor，全程 fail-soft |
 
 ---
 ### 2.8 Schemas（I/O DTO）
@@ -342,8 +325,8 @@
 | 檔案 | 職責 |
 |---|---|
 | `archive_guard.py` | DOCX / PPTX zip preflight — members、ratio、expanded bytes 檢查（`INGEST_MAX_ARCHIVE_MEMBERS` / `_RATIO` / `_EXPANDED_BYTES`）|
-| `key_manager.py` | `KeyManager` — 啟動時用 `RAGENT_KEK_BASE64` 解開 `RAGENT_ENCRYPTED_DEK_BASE64`，process 生命週期持有單一 DEK（ISP：對外只曝露 `.dek`，不洩漏 KEK/wrap 細節）|
-| `ast_cipher.py` | `ASTCipher` — AES-256-GCM，依賴 `KeyManager.dek`；`encrypt_ast()` / `decrypt_ast()` |
+| `key_manager.py` | `KeyManager` — 用 `RAGENT_KEK_BASE64` 解開 `RAGENT_ENCRYPTED_DEK_BASE64` 持有 DEK；⚠️ 僅供離線 CLI（`scripts/gen_attachment_keys.py`、`scripts/decrypt_artifact.py`）使用,attachment pipeline 已改走標準 ingest,不再於 request path 加密（issue #224）|
+| `ast_cipher.py` | `ASTCipher` — AES-256-GCM `encrypt_ast()`/`decrypt_ast()`；⚠️ **零 import 者，死碼**（同上，attachment 加密路徑已移除，issue #224）|
 
 ---
 ### 2.15 Workers（TaskIQ Task Entrypoints）
@@ -363,6 +346,8 @@
 | `backfill.py` | `ingest.backfill_candidate` task（T-EM-R.9）— scroll stable_index、補嵌入到 candidate_index |
 | `heartbeat.py` | PENDING row 30s heartbeat 背景迴圈 |
 | `attachment.py` | `attachment.process` task（T-CAT.W2）— 呼叫 `services/chat_attachment_service.ChatAttachmentService.process()`；`RAGENT_KEK_BASE64` 未設定時 no-op + log |
+| `startup_sweep.py` | `run_startup_sweep()`（T-ATTACH-R.1a）— worker 開機時重新派送 stale PENDING/UPLOADED rows |
+| `maintenance.py` | `run_maintenance_cycle()`（T-ATTACH-R.3c）— 週期迴圈：超額 attempt 標記 FAILED、恢復 stale DELETING、重派 stale PENDING/UPLOADED |
 
 ---
 ### 2.16 Reconciler（獨立 Process）

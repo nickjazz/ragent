@@ -47,15 +47,7 @@
 
 **Source fields:** `source_id` + `source_app` (logical identity, mandatory) · `source_title VARCHAR(256) NOT NULL` · `source_meta VARCHAR(1024) NULL` (free-format, B35) · `source_url VARCHAR(2048) NULL` (display-only).
 
-**MinIO retention by `ingest_type`:**
-MinIO source objects are retained for audit/replay. Cleanup paths delete derived
-stores such as ES chunks; they do not delete MinIO bytes.
-
-| `ingest_type` | Post-READY MinIO delete | `DELETE /ingest/{id}` MinIO delete |
-|---|---|---|
-| `inline`  | no | no |
-| `file`    | no | no |
-| `upload`  | no | no |
+**MinIO retention by `ingest_type`:** MinIO source objects are retained for audit/replay across all `ingest_type` values (`inline`/`file`/`upload`) — no post-READY delete, no `DELETE /ingest/{id}` delete. Cleanup paths delete derived stores such as ES chunks; they do not delete MinIO bytes.
 
 **Locking:** atomic conditional `UPDATE … WHERE status IN (:accept_set)`; `rowcount=1` = won; `rowcount=0` = lost, no-op. No `SELECT FOR UPDATE` on single-row transitions. Pipeline body runs **outside any DB tx** — no row locks held during external calls (B16). Heartbeat: `updated_at=NOW()` every 30 s; Reconciler scans `updated_at < NOW() − 5 min`.
 
@@ -197,8 +189,6 @@ retrieval ran but returned no hits; `[{…}]` when retrieval ran and found resul
 data: {"type":"delta","content":"<token>"}
 
   … data: {"type":"done","content":"<full>","model":"…","provider":"…","sources":[…],"request_id":"…","feedback_token":"…"}
-
-
 ```
 
 `request_id`+`feedback_token` fields present only when `CHAT_FEEDBACK_ENABLED=true` AND `X-User-Id` present; absent otherwise (see §3.4.2 for same condition). `done` omits `usage` — token counts go to server-side `chat.llm` logs only.
@@ -319,28 +309,13 @@ The chaos suite asserts the resilience claims of §3.6 (reconciler recovery, ide
 
 ### 3.8 MCP Tool Server (P2.5)
 
-Exposes ragent tools over MCP (JSON-RPC 2.0): the read-only `retrieve` tool, plus
-the **write** `create_skill` tool (T-SK) when `skill_service` is wired (always, in
-production).
+Exposes ragent tools over MCP (JSON-RPC 2.0): the read-only `retrieve` tool, plus the **write** `create_skill` tool (T-SK) when `skill_service` is wired (always, in production).
 
 > Full spec: [docs/spec/mcp_server.md](spec/mcp_server.md) — protocol, methods, `retrieve` tool schema, error codes, BDD S58–S67.
 
-**`create_skill` (write tool, T-SK):** creates a skill under the **authenticated
-caller** — the owner is resolved via `get_user_id` inside the MCP endpoint and is
-**never** a tool argument (the inputSchema is `additionalProperties:false`, so a
-spoofed `user_id` is rejected as `MCP_TOOL_INPUT_INVALID`). With no resolved
-identity the call **fails closed** (`MISSING_USER_ID`) — a skill is never created
-under an unknown owner. Args mirror `SkillWriteRequest` (`{name, description?,
-instructions, enabled?}`); a name collision → `SKILL_NAME_CONFLICT`. Result:
-`structuredContent.skill = {skill_id, name, description, enabled, readonly}`. The tool is
-advertised in `tools/list` only when `skill_service` is wired. `annotations.readOnlyHint=false`.
-Whether an agent actually calls it depends on the upstream ChatAgent's MCP client
-config (or a frontend tool runtime) — that wiring is outside ragent.
+**`create_skill` (write tool, T-SK):** creates a skill under the **authenticated caller** — the owner is resolved via `get_user_id` inside the MCP endpoint and is **never** a tool argument (the inputSchema is `additionalProperties:false`, so a spoofed `user_id` is rejected as `MCP_TOOL_INPUT_INVALID`). With no resolved identity the call **fails closed** (`MISSING_USER_ID`) — a skill is never created under an unknown owner. Args mirror `SkillWriteRequest` (`{name, description?, instructions, enabled?}`); a name collision → `SKILL_NAME_CONFLICT`. Result: `structuredContent.skill = {skill_id, name, description, enabled, readonly}`. The tool is advertised in `tools/list` only when `skill_service` is wired. `annotations.readOnlyHint=false`. Whether an agent actually calls it depends on the upstream ChatAgent's MCP client config (or a frontend tool runtime) — that wiring is outside ragent.
 
-**`create_skill` error handling:** non-object `arguments` (e.g. `[]`/`""`/`false`)
-→ `MCP_TOOL_INPUT_INVALID` (not silently coerced to `{}`); any unexpected backend
-failure (DB outage, write error) is wrapped as a JSON-RPC `MCP_TOOL_EXECUTION_FAILED`
-envelope — never an HTTP 500 — matching the `retrieve` tool.
+**`create_skill` error handling:** non-object `arguments` (e.g. `[]`/`""`/`false`) → `MCP_TOOL_INPUT_INVALID` (not silently coerced to `{}`); any unexpected backend failure (DB outage, write error) is wrapped as a JSON-RPC `MCP_TOOL_EXECUTION_FAILED` envelope — never an HTTP 500 — matching the `retrieve` tool.
 
 **Interface notes (2026-05-27):**
 - `tools/list` response includes `annotations: {readOnlyHint: true}` on the `retrieve` tool — signals to MCP hosts (protocol 2025-03-26+) that the tool is read-only. Clients on earlier pinned version (`"2024-11-05"`) silently ignore the field.
