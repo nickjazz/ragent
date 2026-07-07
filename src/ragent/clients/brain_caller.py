@@ -28,6 +28,28 @@ logger = structlog.get_logger(__name__)
 
 _HTTPX_ERRORS = (httpx.TimeoutException, httpx.HTTPStatusError, httpx.RequestError)
 _SSE_PREFIX = "data: "
+# Service-owned headers that a forwarded/extra header must never carry: they are
+# set by ragent from the JWT-resolved identity and the service secret.
+SERVICE_HEADER_NAMES = frozenset({"x-user-id", "x-brain-key"})
+
+
+def build_brain_headers(
+    user_id: str, brain_key: str | None, forwarded: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Outbound brain headers with service-owned identity/secret forced to win.
+
+    Forwarded auth headers ride along, but any that collide **case-insensitively**
+    with X-User-Id / X-Brain-Key are dropped first — a plain dict merge would keep
+    e.g. both ``x-user-id`` (forged) and ``X-User-Id`` (real), and httpx emits BOTH
+    lines so a FastAPI brain reads the first, defeating the override. ``None``
+    forwarded is treated as empty (no crash)."""
+    headers = {
+        k: v for k, v in (forwarded or {}).items() if k.lower() not in SERVICE_HEADER_NAMES
+    }
+    headers["X-User-Id"] = user_id
+    if brain_key:
+        headers["X-Brain-Key"] = brain_key
+    return headers
 # Client-visible message for any upstream failure. Never interpolate upstream or
 # httpx exception text here — the raw detail goes to the server log only.
 _UPSTREAM_GENERIC_MESSAGE = "brain upstream request failed"
@@ -48,13 +70,7 @@ class BrainCaller:
     ) -> None:
         self._http = http_client
         self._run_url = f"{brain_url.rstrip('/')}/run"
-        # Forwarded auth headers go on FIRST so the service-owned X-User-Id /
-        # X-Brain-Key set below always win — a forged forwarded value can never
-        # override the JWT-resolved identity or the service secret.
-        self._headers = dict(extra_headers or {})
-        self._headers["X-User-Id"] = user_id
-        if brain_key:
-            self._headers["X-Brain-Key"] = brain_key
+        self._headers = build_brain_headers(user_id, brain_key, extra_headers)
         self._timeout = timeout
 
     def stream_frames(self, request: RunAgentInput, model: str) -> Generator[str, None, None]:

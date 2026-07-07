@@ -28,6 +28,7 @@ from twp_ai.agent import Agent
 from twp_ai.schemas import RunAgentInput
 
 from ragent.auth.deps import get_forwarded_auth, get_user_id
+from ragent.clients.brain_caller import build_brain_headers
 from ragent.clients.chat_stream_store import ChatStreamStore
 from ragent.clients.nats_publisher import NatsSessionPublisher
 from ragent.clients.rate_limiter import RateLimiter
@@ -207,11 +208,7 @@ def create_brainagent_v1_router(
     ) -> JSONResponse:
         """Cooperative cancel — owner-scoped proxy to brain's POST /runs/{id}/cancel."""
         user_id = x_user_id or "anonymous"
-        # Forwarded auth first; service headers overwrite so identity/secret win.
-        headers = dict(forwarded_auth or {})
-        headers["X-User-Id"] = user_id
-        if brain_key:
-            headers["X-Brain-Key"] = brain_key
+        headers = build_brain_headers(user_id, brain_key, forwarded_auth)
         url = f"{brain_url.rstrip('/')}/runs/{run_id}/cancel"
         try:
             resp = await run_in_threadpool(http_client.post, url, headers=headers, timeout=timeout)

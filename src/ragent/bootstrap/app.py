@@ -25,6 +25,7 @@ from ragent.bootstrap.metrics import (
 )
 from ragent.bootstrap.openapi import install_openapi
 from ragent.bootstrap.telemetry import setup_tracing
+from ragent.clients.brain_caller import SERVICE_HEADER_NAMES
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.middleware.logging import (
@@ -225,8 +226,14 @@ def _x_user_id_middleware(
         sourced from here (the callers set X-User-Id / X-Brain-Key themselves)."""
         if not forward_names:
             return
+        # Protected service headers are never forwardable — drop them (case-
+        # insensitively) here at the source so the bag can never carry a value
+        # that would collide with the service-owned X-User-Id / X-Brain-Key set
+        # by the brain callers (belt-and-suspenders with build_brain_headers).
         request.scope[SCOPE_FORWARDED_AUTH_KEY] = {
-            name: request.headers[name] for name in forward_names if request.headers.get(name)
+            name: request.headers[name]
+            for name in forward_names
+            if request.headers.get(name) and name.lower() not in SERVICE_HEADER_NAMES
         }
 
     @app.middleware("http")

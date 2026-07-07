@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
 from ragent.auth.deps import get_forwarded_auth, get_user_id
+from ragent.clients.brain_caller import build_brain_headers
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 
@@ -58,14 +59,11 @@ def create_brain_upstream_proxy_router(
     router = APIRouter(prefix="/brainagent/v1")
     base = brain_url.rstrip("/")
 
-    def _upstream_headers(user_id: str, forwarded: dict[str, str]) -> dict[str, str]:
-        # Forwarded auth first; service headers overwrite so a forged forwarded
-        # X-User-Id / X-Brain-Key can never cross tenants or spoof the secret.
-        headers = dict(forwarded)
-        headers["X-User-Id"] = user_id
-        if brain_key:
-            headers["X-Brain-Key"] = brain_key
-        return headers
+    def _upstream_headers(user_id: str, forwarded: dict[str, str] | None) -> dict[str, str]:
+        # Service-owned X-User-Id / X-Brain-Key always win over any same-named
+        # (case-insensitive) forwarded header — a forged value cannot cross
+        # tenants or spoof the secret. ``None`` forwarded is handled safely.
+        return build_brain_headers(user_id, brain_key, forwarded)
 
     @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def proxy(

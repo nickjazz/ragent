@@ -44,6 +44,17 @@ def test_non_allowlisted_header_is_not_captured() -> None:
     assert resp.json()["forwarded"] == {}
 
 
+def test_protected_service_headers_never_enter_the_bag() -> None:
+    # even if an operator allowlists a service header (any casing), it must not
+    # be captured — it could otherwise collide with the caller-set X-User-Id.
+    with TestClient(_build_app(["x-user-id", "X-Brain-Key", "X-Auth-Token"])) as client:
+        resp = client.get(
+            "/echo",
+            headers={"x-user-id": "mallory", "X-Brain-Key": "forged", "X-Auth-Token": "ok"},
+        )
+    assert resp.json()["forwarded"] == {"X-Auth-Token": "ok"}
+
+
 def test_empty_allowlist_captures_nothing() -> None:
     with TestClient(_build_app([])) as client:
         resp = client.get("/echo", headers={"X-Auth-Token": "jwt-abc"})
