@@ -31,7 +31,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from ragent.auth.deps import get_forwarded_auth, get_user_id
+from ragent.auth.deps import get_forwarded_headers, get_user_id
 from ragent.clients.brain_caller import build_brain_headers
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
@@ -70,7 +70,7 @@ def create_brain_upstream_proxy_router(
         path: str,
         request: Request,
         x_user_id: str | None = Depends(get_user_id),
-        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
+        forwarded_headers: Annotated[dict[str, str], Depends(get_forwarded_headers)] = None,
     ) -> Response:
         user_id = x_user_id or "anonymous"
         if path.strip("/") in _DENIED_PATHS:
@@ -95,7 +95,7 @@ def create_brain_upstream_proxy_router(
                 parsed["user"] = user_id
                 json_body = parsed
 
-        headers = _upstream_headers(user_id, forwarded_auth)
+        headers = _upstream_headers(user_id, forwarded_headers)
         # Forward content negotiation from the client so binary/artifact downloads
         # negotiate correctly at brain. (Content-Type is forwarded only on the
         # raw-body path below; the json= path lets httpx set application/json.)

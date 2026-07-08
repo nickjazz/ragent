@@ -29,7 +29,7 @@ from ragent.clients.brain_caller import SERVICE_HEADER_NAMES
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 from ragent.middleware.logging import (
-    SCOPE_FORWARDED_AUTH_KEY,
+    SCOPE_FORWARDED_HEADERS_KEY,
     SCOPE_USER_ID_KEY,
     RequestLoggingMiddleware,
 )
@@ -222,7 +222,7 @@ def _x_user_id_middleware(
 
         Read here (once, mode-agnostic) because the raw inbound headers — the
         JWT included — are present regardless of auth mode; downstream brain
-        callers pull this via ``get_forwarded_auth``. Service headers are never
+        callers pull this via ``get_forwarded_headers``. Service headers are never
         sourced from here (the callers set X-User-Id / X-Brain-Key themselves)."""
         if not forward_names:
             return
@@ -230,7 +230,7 @@ def _x_user_id_middleware(
         # insensitively) here at the source so the bag can never carry a value
         # that would collide with the service-owned X-User-Id / X-Brain-Key set
         # by the brain callers (belt-and-suspenders with build_brain_headers).
-        request.scope[SCOPE_FORWARDED_AUTH_KEY] = {
+        request.scope[SCOPE_FORWARDED_HEADERS_KEY] = {
             name: request.headers[name]
             for name in forward_names
             if request.headers.get(name) and name.lower() not in SERVICE_HEADER_NAMES

@@ -22,7 +22,7 @@ from fastapi import Request
 
 from ragent.middleware.logging import (
     _USER_ID_HEADER,
-    SCOPE_FORWARDED_AUTH_KEY,
+    SCOPE_FORWARDED_HEADERS_KEY,
     SCOPE_USER_ID_KEY,
 )
 
@@ -34,10 +34,10 @@ async def get_user_id(request: Request) -> str | None:
     return request.headers.get(_USER_ID_HEADER) or None
 
 
-async def get_forwarded_auth(request: Request) -> dict[str, str]:
+async def get_forwarded_headers(request: Request) -> dict[str, str]:
     """Allowlisted inbound headers ragent carries through to the brain callers.
 
     Populated by ``_x_user_id_middleware``; empty when no ``forward_headers``
     are configured or when a router runs under a bare app (unit tests) with no
     middleware. Never the raw ``request.headers`` — only the configured subset."""
-    return request.scope.get(SCOPE_FORWARDED_AUTH_KEY) or {}
+    return request.scope.get(SCOPE_FORWARDED_HEADERS_KEY) or {}

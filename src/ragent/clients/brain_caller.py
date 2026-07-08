@@ -38,7 +38,7 @@ def build_brain_headers(
 ) -> dict[str, str]:
     """Outbound brain headers with service-owned identity/secret forced to win.
 
-    Forwarded auth headers ride along, but any that collide **case-insensitively**
+    Forwarded headers ride along, but any that collide **case-insensitively**
     with X-User-Id / X-Brain-Key are dropped first — a plain dict merge would keep
     e.g. both ``x-user-id`` (forged) and ``X-User-Id`` (real), and httpx emits BOTH
     lines so a FastAPI brain reads the first, defeating the override. ``None``

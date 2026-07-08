@@ -105,7 +105,7 @@ def test_forwards_extra_headers_to_run() -> None:
         timeout=5.0,
     )
     list(caller.stream_frames(_request(), ""))
-    # forwarded auth header rides alongside the service + user headers.
+    # forwarded header rides alongside the service + user headers.
     assert seen["headers"]["x-auth-token"] == "jwt-abc"
     assert seen["headers"]["x-user-id"] == "alice"
     assert seen["headers"]["x-brain-key"] == "sekret"

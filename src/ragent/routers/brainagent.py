@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from twp_ai.agent import Agent
 from twp_ai.schemas import RunAgentInput
 
-from ragent.auth.deps import get_forwarded_auth, get_user_id
+from ragent.auth.deps import get_forwarded_headers, get_user_id
 from ragent.clients.brain_caller import build_brain_headers
 from ragent.clients.chat_stream_store import ChatStreamStore
 from ragent.clients.nats_publisher import NatsSessionPublisher
@@ -49,7 +49,7 @@ logger = structlog.get_logger(__name__)
 # BrainCaller carries the per-request X-User-Id. Simpler than v3's factory: brain
 # authenticates the service by X-Brain-Key and scopes by X-User-Id, so no
 # per-request JWT/token or attachment context is threaded through, EXCEPT the
-# allowlisted forwarded auth headers (get_forwarded_auth) passed as extra_headers.
+# allowlisted forwarded headers (get_forwarded_headers) passed as extra_headers.
 BrainAgentFactory = Callable[..., Agent]
 
 
@@ -90,7 +90,7 @@ def create_brainagent_v1_router(
         body: RunAgentInput,
         request: Request,
         x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
-        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
+        forwarded_headers: Annotated[dict[str, str], Depends(get_forwarded_headers)] = None,
     ) -> StreamingResponse:
         user_id = x_user_id or "anonymous"
 
@@ -112,7 +112,7 @@ def create_brainagent_v1_router(
                 body.thread_id,
             )
 
-        agent = agent_factory(user_id, forwarded_auth)
+        agent = agent_factory(user_id, forwarded_headers)
         logger.info("brainagent.request", user_id=user_id)
 
         # No store wired (e.g. Redis down at boot) → legacy connection-bound
@@ -204,11 +204,11 @@ def create_brainagent_v1_router(
     async def brainagent_v1_cancel(
         run_id: str,
         x_user_id: Annotated[str | None, Depends(get_user_id)] = None,
-        forwarded_auth: Annotated[dict[str, str], Depends(get_forwarded_auth)] = None,
+        forwarded_headers: Annotated[dict[str, str], Depends(get_forwarded_headers)] = None,
     ) -> JSONResponse:
         """Cooperative cancel — owner-scoped proxy to brain's POST /runs/{id}/cancel."""
         user_id = x_user_id or "anonymous"
-        headers = build_brain_headers(user_id, brain_key, forwarded_auth)
+        headers = build_brain_headers(user_id, brain_key, forwarded_headers)
         url = f"{brain_url.rstrip('/')}/runs/{run_id}/cancel"
         try:
             resp = await run_in_threadpool(http_client.post, url, headers=headers, timeout=timeout)

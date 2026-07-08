@@ -33,8 +33,8 @@ _USER_ID_HEADER = "X-User-Id"
 SCOPE_USER_ID_KEY = "ragent.user_id"
 # ASGI scope key holding the allowlisted inbound headers ragent forwards to the
 # brain callers (e.g. the raw JWT for on-behalf-of downstreams). Written by
-# ``_x_user_id_middleware`` and read via ``ragent.auth.deps.get_forwarded_auth``.
-SCOPE_FORWARDED_AUTH_KEY = "ragent.forwarded_auth"
+# ``_x_user_id_middleware`` and read via ``ragent.auth.deps.get_forwarded_headers``.
+SCOPE_FORWARDED_HEADERS_KEY = "ragent.forwarded_headers"
 _MAX_REQUEST_ID_LEN = 128
 _VALID_REQUEST_ID = (  # printable ASCII without whitespace / control chars
     set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")

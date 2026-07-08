@@ -1,4 +1,4 @@
-"""Forwarded auth headers: middleware capture + get_forwarded_auth dep.
+"""Forwarded headers: middleware capture + get_forwarded_headers dep.
 
 ragent stays the verification boundary; it *additionally* carries an allowlisted
 set of inbound headers (e.g. the raw JWT) through to the brain callers so brain
@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from ragent.auth.deps import get_forwarded_auth
+from ragent.auth.deps import get_forwarded_headers
 from ragent.bootstrap.app import _x_user_id_middleware
 from ragent.bootstrap.auth_mode import AuthMode
 
@@ -26,7 +26,7 @@ def _build_app(forward_headers: list[str]) -> FastAPI:
     )
 
     @app.get("/echo")
-    def echo(forwarded: Annotated[dict, Depends(get_forwarded_auth)] = None) -> dict:
+    def echo(forwarded: Annotated[dict, Depends(get_forwarded_headers)] = None) -> dict:
         return {"forwarded": forwarded}
 
     return app
@@ -66,7 +66,7 @@ def test_dep_defaults_to_empty_without_middleware() -> None:
     app = FastAPI()
 
     @app.get("/echo")
-    def echo(forwarded: Annotated[dict, Depends(get_forwarded_auth)] = None) -> dict:
+    def echo(forwarded: Annotated[dict, Depends(get_forwarded_headers)] = None) -> dict:
         return {"forwarded": forwarded}
 
     with TestClient(app) as client:
