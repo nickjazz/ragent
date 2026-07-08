@@ -83,6 +83,8 @@ class Container:
     chatagent_artifacts_api_url: str | None = None
     chatagent_schedules_api_url: str | None = None
     chatagent_preferences_api_url: str | None = None
+    chatagent_settings_api_url: str | None = None
+    chatagent_prompts_api_url: str | None = None
     chatagent_ap_name: str = "ragent"
     chatagent_auth: str | None = None
     # Service-to-service key sent to the brain as X-Brain-Key on every proxy
@@ -552,6 +554,16 @@ def build_container() -> Container:
         if chatagent_projects_api_url
         else None
     )
+    chatagent_settings_api_url = os.environ.get("CHATAGENT_SETTINGS_API_URL") or (
+        chatagent_projects_api_url.replace("/projects", "/settings")
+        if chatagent_projects_api_url
+        else None
+    )
+    chatagent_prompts_api_url = os.environ.get("CHATAGENT_PROMPTS_API_URL") or (
+        chatagent_projects_api_url.replace("/projects", "/prompts")
+        if chatagent_projects_api_url
+        else None
+    )
     chatagent_ap_name = os.environ.get("CHATAGENT_AP_NAME", "ragent")
     chatagent_auth = os.environ.get("CHATAGENT_AUTH") or None
     # BRAIN_URL routes /chatagent/v3 to the ragent-brain service (twp-ai native).
@@ -622,6 +634,8 @@ def build_container() -> Container:
         chatagent_artifacts_api_url=chatagent_artifacts_api_url,
         chatagent_schedules_api_url=chatagent_schedules_api_url,
         chatagent_preferences_api_url=chatagent_preferences_api_url,
+        chatagent_settings_api_url=chatagent_settings_api_url,
+        chatagent_prompts_api_url=chatagent_prompts_api_url,
         chatagent_ap_name=chatagent_ap_name,
         chatagent_auth=chatagent_auth,
         brain_key=brain_key,
