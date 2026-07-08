@@ -1,9 +1,9 @@
-"""MCP tool descriptor for the /mcp/v2 document-scoped `retrieve` tool (spec §3.8.6).
+"""MCP tool descriptor for the document-scoped `retrieve` tool on /mcp/v1 (spec §3.8.3).
 
-Same tool name as v1's corpus-wide retrieve — the `<attachments>` instruction
-block tells the LLM to "use the retrieve tool" — but the input contract is the
-zero-trust v2 shape: `document_id_list` is mandatory and every id must belong
-to the authenticated caller.
+Same tool name as the original corpus-wide retrieve — the `<attachments>`
+instruction block tells the LLM to "use the retrieve tool" — but the input
+contract is the zero-trust `/retrieve/v2` shape: `document_id_list` is
+mandatory and every id must belong to the authenticated caller.
 """
 
 from __future__ import annotations

@@ -53,7 +53,7 @@ src/ragent/
   repositories/     — DB access: DocumentRepository, FeedbackRepository
   pipelines/        — Haystack pipelines: ingest, retrieval
   extractors/       — pluggable extractors: VectorExtractor, StubGraphExtractor
-  workers/          — TaskIQ task entrypoints: ingest, backfill, heartbeat
+  workers/          — TaskIQ task entrypoints: ingest, backfill, heartbeat, maintenance, startup sweep
   clients/          — 3rd-party clients: EmbeddingClient, LLMClient, RerankClient
   mcp_hub/          — standalone FastMCP hub (separate process)
   storage/          — MinIO site registry

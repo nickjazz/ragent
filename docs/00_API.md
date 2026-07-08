@@ -668,6 +668,50 @@ Event types: `RUN_STARTED` · `TEXT_MESSAGE_START`/`TEXT_MESSAGE_CONTENT`/`TEXT_
 
 ---
 
+## BrainAgent
+
+Fronts the separate **ragent-brain** service (`BRAIN_API_URL`) through ragent as `/brainagent/v1` — an independent surface from `/chatagent/v3`, unrelated to the `CHATAGENT_API_URL` upstream. Registered only when `BRAIN_API_URL` is set. Full spec: [`docs/spec/brainagent_v1.md`](docs/spec/brainagent_v1.md).
+
+### `POST /brainagent/v1` — twp-ai run (SSE, passthrough)
+
+Accepts a twp-ai `RunAgentInput` and forwards it **verbatim** to brain's `POST /run`, then relays brain's native twp-ai SSE stream unchanged — brain already speaks twp-ai, so unlike `/chatagent/v3` there is no request/response conversion, no `<hidden>` preamble, no attachment/skill injection (brain owns all of that). ragent's only responsibilities are edge concerns: auth (`X-User-Id`), rate limit (`brainagent:{user}`, 60/60s default), Model B thread-id minting (omit `threadId` on a new conversation; ragent mints one and brain echoes it in `RUN_STARTED`), the resumable Redis-stream buffer + reconnect (reused from `/chatagent/v3`), and transport-error framing — every failure (rate limit, timeout, unreachable) is a single `RUN_ERROR` over a `200` stream, never HTTP 4xx/5xx.
+
+```bash
+curl -X POST http://localhost:8000/brainagent/v1 \
+  -H "X-Auth-Token: <jwt>" -H "Content-Type: application/json" \
+  -d '{"runId":"run_1","messages":[{"id":"m1","role":"user","content":"Summarise the release notes."}],"tools":[],"state":null,"context":[],"forwardedProps":null}' \
+  --no-buffer
+```
+
+**Response:** `text/event-stream` — brain's own twp-ai frames, passed through unchanged; `RUN_ERROR` codes: `BRAINAGENT_RATE_LIMITED`, `BRAINAGENT_TIMEOUT`, `BRAINAGENT_UPSTREAM_ERROR`.
+
+### `GET /brainagent/v1/reconnect` — Resume an in-flight run (SSE)
+
+Same contract as `GET /chatagent/v3/reconnect` above: takes `thread_id` + optional `Last-Event-ID` header; a finished/unknown/other-owner run returns a `RUN_ERROR` with `code=CHATAGENT_STREAM_EXPIRED`.
+
+```bash
+curl "http://localhost:8000/brainagent/v1/reconnect?thread_id=thread_1" -H "X-Auth-Token: <jwt>" --no-buffer
+```
+
+### `POST /brainagent/v1/runs/{run_id}/cancel` — Cooperative cancel
+
+Owner-scoped proxy to brain's `POST /runs/{run_id}/cancel` (attaches `X-User-Id` + `X-Brain-Key` server-to-server). Relays brain's JSON body + status code verbatim; unreachable → `502 {"cancelled":false}`, timeout → `504 {"cancelled":false}`.
+
+```bash
+curl -X POST http://localhost:8000/brainagent/v1/runs/run_1/cancel -H "X-Auth-Token: <jwt>"
+```
+
+### `{GET,POST,PUT,DELETE} /brainagent/v1/{path}` — Management reverse proxy
+
+Generic authenticated reverse proxy onto brain's entire `/upstream/*` management surface (session / memory / projects / sources / artifacts / skills / preferences / schedules) — `/brainagent/v1/{path}` → `{BRAIN_API_URL}/upstream/{path}`. **Security-critical:** the caller's `user` is forced to the JWT-resolved identity in both the query string and (when the body is a JSON object) the body, overriding any client-supplied value — a forged `user` can never cross tenants. `X-Brain-Key` is attached server-to-server. Responses relay verbatim, including brain's `422 {"error","params"}` i18n envelope and binary artifact downloads (bytes + `Content-Type`/`Content-Disposition`); timeout → `504`, unreachable → `502`. `reindex` is explicitly denied (`404`) — it is a server-to-server admin rebuild requiring brain's own admin key, not reachable through this user-authenticated proxy. Not fronted at all: `/healthz` (infra) and the A2A plane (`/agent/card`, `/.well-known/*`, `/a2a` — different trust boundary).
+
+```bash
+curl "http://localhost:8000/brainagent/v1/projects?user=ignored" -H "X-Auth-Token: <jwt>"
+# ?user= is overridden server-side with the JWT-resolved caller regardless of what's sent
+```
+
+---
+
 ## Retrieve
 
 ### `POST /retrieve/v1` — Retrieve chunks without LLM
@@ -832,7 +876,7 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 
 ## MCP (Phase 2)
 
-`POST /mcp/v1` — Model Context Protocol server (JSON-RPC 2.0, spec `2025-06-18`; `initialize` echoes a supported older revision — `2025-03-26` / `2024-11-05` — when the client requests one). Exposes the corpus as a `retrieve` tool, plus a `create_skill` write tool (T-SK) when skill support is wired. Full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
+`POST /mcp/v1` — the only MCP server mounted (JSON-RPC 2.0, spec `2025-06-18`; `initialize` echoes a supported older revision — `2025-03-26` / `2024-11-05` — when the client requests one). Exposes a **document-scoped** `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block (Anti-IDOR — every id must belong to the authenticated caller), plus a `create_skill` write tool (T-SK) when skill support is wired. There is no corpus-wide retrieve variant — `document_id_list` is always mandatory. Full spec: [`docs/spec/mcp_server.md`](docs/spec/mcp_server.md).
 
 | Method | Purpose |
 |---|---|
@@ -842,7 +886,7 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
 | `tools/call` | Invokes `retrieve` (see below) or `create_skill`. |
 | `ping` | Returns `{}`. |
 
-**`tools/call retrieve`** — result `structuredContent.sources` is the machine-readable source list (for the frontend's retrieved-sources panel); `content[0].text` is a `<context>`-wrapped markdown citation table + `### [N]` excerpt blocks for LLM grounding (no internal fields like `document_id`/`score`; cells injection-safe — CR/LF stripped, `\|` escaped; only http(s) `source_url` linkified with markdown-breaking chars percent-encoded; literal `<context>` tags in corpus text neutralised). Unknown args → `-32602 MCP_TOOL_INPUT_INVALID`.
+**`tools/call retrieve`** — `inputSchema` requires `query` + `document_id_list` (1–100 ids) and accepts optional `top_k` (1–3, default 3, `additionalProperties:false`). Anti-IDOR ownership check runs before ES access. Result `structuredContent.sources` is the machine-readable source list (for the frontend's retrieved-sources panel); `content[0].text` is a `<context>`-wrapped markdown citation table + `### [N]` excerpt blocks for LLM grounding (no internal fields like `document_id`/`score`; cells injection-safe — CR/LF stripped, `\|` escaped; only http(s) `source_url` linkified with markdown-breaking chars percent-encoded; literal `<context>` tags in corpus text neutralised).
 
 **`tools/call create_skill`** — `arguments: {name, description?, instructions, enabled?}` (`additionalProperties:false`). Creates a skill under the **authenticated caller** (`X-User-Id`/JWT resolved at the endpoint); `user_id` is **not** an argument and a stray one is rejected (`MCP_TOOL_INPUT_INVALID`). No identity → fails closed with `MISSING_USER_ID`. Name collision (incl. a built-in preset name, case-insensitive) → `SKILL_NAME_CONFLICT`. Non-object `arguments` → `MCP_TOOL_INPUT_INVALID`; an unexpected backend failure → `MCP_TOOL_EXECUTION_FAILED` (JSON-RPC envelope, never an HTTP 500). Result: `structuredContent.skill = {skill_id, name, description, enabled, readonly}`. Example:
 ```json
@@ -850,19 +894,7 @@ The instructions ride the existing `<hidden>` machine-context block (the upstrea
  "params":{"name":"create_skill","arguments":{"name":"Pirate","instructions":"Answer in pirate slang."}}}
 ```
 
-Optional `retrieve` arguments (`source_app`, `source_meta`, `min_score`) must be **omitted** to skip filtering — do not send `null`. The `inputSchema` does not advertise `default: null` for these fields; sending explicit `null` returns `-32602`. For `source_app`, use the exact value returned in a prior `retrieve` result's `source_app` metadata field — omit on the first call to search across all sources.
-
-Errors surface as JSON-RPC error envelopes with `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_NOT_FOUND`, `MCP_TOOL_INPUT_INVALID`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
-
-`POST /mcp/v1` — Document-scoped MCP server (JSON-RPC 2.0). Exposes a single `retrieve` tool scoped to the caller-owned documents listed in the `<attachments>` block. Designed for chat agents whose retrieval must stay inside a specific document set.
-
-| Method | Purpose |
-|---|---|
-| `initialize` | Capability negotiation (shared transport, same as `/mcp/v1`). |
-| `tools/list` | Returns exactly one tool: `retrieve` (name, `inputSchema` with required `query` + `document_id_list` [1–100 ids], optional `top_k` [1–3, default 3], `additionalProperties:false`). |
-| `tools/call retrieve` | Anti-IDOR ownership check before ES access; returns `structuredContent.sources` + `content[0].text` markdown digest. |
-
-**Error codes:** `DOCUMENT_FORBIDDEN` → `{code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}` (any id unknown or not owned by caller; unauthenticated caller). Missing/empty `document_id_list` → `{code:-32602, data:{error_code:"MCP_TOOL_INPUT_INVALID"}}`. Unknown tool → `{code:-32602, data:{error_code:"MCP_TOOL_NOT_FOUND"}}`.
+**Error codes:** `DOCUMENT_FORBIDDEN` → `{code:-32002, data:{error_code:"DOCUMENT_FORBIDDEN"}}` (any id unknown or not owned by caller; unauthenticated caller). Missing/empty `document_id_list` → `{code:-32602, data:{error_code:"MCP_TOOL_INPUT_INVALID"}}`. Unknown tool → `{code:-32602, data:{error_code:"MCP_TOOL_NOT_FOUND"}}`. Other JSON-RPC envelopes carry `data.error_code` (`MCP_PARSE_ERROR`, `MCP_INVALID_REQUEST`, `MCP_METHOD_NOT_FOUND`, `MCP_TOOL_EXECUTION_FAILED`). Auth failures still use `application/problem+json`.
 
 ## Embedding Model Lifecycle (admin)
 

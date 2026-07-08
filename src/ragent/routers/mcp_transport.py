@@ -1,9 +1,10 @@
-"""Shared JSON-RPC 2.0 transport for the MCP routers (/mcp/v1, /mcp/v2).
+"""Shared JSON-RPC 2.0 transport for the MCP router (/mcp/v1).
 
-Extracted verbatim from routers/mcp.py so both protocol versions share one
-hardened envelope implementation: body-size cap, parse/invalid-request
-mapping, notification semantics, initialize/ping, tools/list, and the
-tools/call dispatch that threads the authenticated caller id into handlers.
+Extracted verbatim from routers/mcp.py so this hardened envelope
+implementation is reusable if a future MCP surface is added: body-size cap,
+parse/invalid-request mapping, notification semantics, initialize/ping,
+tools/list, and the tools/call dispatch that threads the authenticated
+caller id into handlers.
 
 Routers own their tool sets and handlers; this module owns the wire protocol.
 """

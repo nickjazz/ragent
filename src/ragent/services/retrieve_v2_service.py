@@ -1,4 +1,4 @@
-"""RetrieveV2Service — anti-IDOR ownership gate for /retrieve/v2 and mcp/v2.
+"""RetrieveV2Service — anti-IDOR ownership gate for /retrieve/v2 and the /mcp/v1 `retrieve` tool.
 
 Zero-trust contract: every document_id in a request must exist AND be owned
 by the authenticated caller before any ES query is built. Missing ids are

@@ -1,6 +1,6 @@
 ### 3.8 MCP Tool Server (P2.5)
 
-Exposes ragent's retrieval pipeline as a **Model Context Protocol** tool so external LLM agents (Claude Desktop, Cursor, in-house agents) can call ragent's corpus through the MCP standard rather than a bespoke HTTP shape. The MCP server **wraps `POST /retrieve/v1`** (§3.4.4) — it does NOT call the LLM. The calling agent's own LLM does the synthesis; ragent supplies the grounded chunks.
+Exposes ragent's retrieval pipeline as a **Model Context Protocol** tool so external LLM agents (Claude Desktop, Cursor, in-house agents) can call ragent's corpus through the MCP standard rather than a bespoke HTTP shape. The MCP server **wraps `POST /retrieve/v2`** (§3.4.6, document-scoped, Anti-IDOR) — it does NOT call the LLM. The calling agent's own LLM does the synthesis; ragent supplies the grounded chunks. (Historical note: the original B47/P2.5 design wrapped the corpus-wide `POST /retrieve/v1`; the T-CAT.R2 Zero-Trust redesign moved the tool to the document-scoped `/retrieve/v2` contract below.)
 
 **Decision (B47):** P2.5 implements a **real MCP server speaking JSON-RPC 2.0** (not the P1 stub's REST shape). The P1 `POST /mcp/v1/tools/rag` 501 endpoint is **removed** and replaced by `POST /mcp/v1` carrying JSON-RPC envelopes. This is the user-requested Option B (full MCP, retrieve-only). Option A (REST tool-call) and Option C (REST + thin MCP shim) were rejected because they either misrepresent the protocol (A) or carry two surfaces with the same behavior (C).
 
@@ -37,25 +37,23 @@ Any other method → JSON-RPC error `-32601 Method not found`.
 
 #### 3.8.3 The `retrieve` tool
 
-The sole tool advertised by `tools/list`. Mirrors §3.4.4 `POST /retrieve/v1` semantics:
+Advertised by `tools/list` alongside `create_skill` (§3.8 in `00_spec.md`, when `skill_service` is wired). Document-scoped — mirrors §3.4.6 `POST /retrieve/v2` semantics (Anti-IDOR via `document_id_list`), NOT the corpus-wide `POST /retrieve/v1`:
 
 ```json
 {
   "name": "retrieve",
-  "description": "Retrieve ranked document chunks from the ragent knowledge corpus. Use when you need to ground a response in the organisation's internal documents — runs hybrid semantic + keyword search. Results are ordered by descending relevance. structuredContent.sources is the machine-readable source list: pass it to the UI's retrieved-sources panel. The text content is a <context>-delimited block with a citation table and [N] excerpt sections: ground your answer on the excerpts and cite by [N] — do NOT transcribe the <context> block verbatim into your reply. Does NOT synthesise an answer.",
+  "description": "Retrieve ranked chunks from a SPECIFIC set of documents — pass the documentId values from the <attachments> block as document_id_list (required, non-empty). Use this to read the content of files attached to the conversation: runs hybrid semantic + keyword search scoped strictly to those documents. Results are ordered by descending relevance; structuredContent.sources is the machine-readable source list. The text content is a <context>-delimited block with a citation table and [N] excerpt sections: ground your answer on the excerpts and cite by [N] — do NOT transcribe the <context> block verbatim into your reply. A recently uploaded file may still be processing, in which case it yields no chunks yet — say so instead of guessing its content. Does NOT synthesise an answer.",
   "annotations": {"readOnlyHint": true},
   "inputSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "query":       {"type": "string",  "minLength": 1, "description": "Natural-language question or topic to search for. Write as a full question or statement rather than keyword strings — both semantic and keyword matching are applied."},
-      "top_k":       {"type": "integer", "minimum": 1, "maximum": 3,   "default": 3,    "description": "Maximum chunks to return, ranked by relevance (1–3, default 3)."},
-      "source_app":  {"type": "string",  "minLength": 1, "maxLength": 64,   "description": "Restrict results to documents from one source application (exact match, max 64 chars). Use a value from the `source_app` field in a previous retrieve result — omit on the first call to search across all sources."},
-      "source_meta": {"type": "string",  "minLength": 1, "maxLength": 1024, "description": "Restrict results to documents tagged with this exact source_meta value (product, team, or category label; max 1024 chars). Omit to search without this filter."},
-      "min_score":   {"type": "number",  "minimum": 0,                      "description": "Exclude chunks below this relevance score (≥ 0.0). Use 0.7 for high-confidence results only. Omit to return all top_k results regardless of score — recommended for exploratory queries."},
-      "dedupe":      {"type": "boolean", "default": false, "description": "When true, return at most one chunk per source document (highest-scored). Set true for broad topic coverage across different documents; leave false to allow multiple excerpts from the same document."}
+      "query":             {"type": "string",  "minLength": 1, "description": "Natural-language question or topic to search for within the listed documents. Write as a full question or statement — both semantic and keyword matching are applied."},
+      "document_id_list":  {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100, "description": "Document ids to search within (1–100, required). Every id must belong to the authenticated caller; any foreign or unknown id rejects the whole request with 403 DOCUMENT_FORBIDDEN."},
+      "top_k":             {"type": "integer", "minimum": 1, "maximum": 3, "default": 3, "description": "Maximum chunks to return, ranked by relevance (1–3, default 3)."},
+      "min_score":         {"type": "number",  "minimum": 0, "description": "Exclude chunks below this relevance score (≥ 0.0). Omit to return all top_k results regardless of score."}
     },
-    "required": ["query"]
+    "required": ["query", "document_id_list"]
   },
   "outputSchema": {
     "type": "object",
@@ -132,12 +130,12 @@ App-level errors (-32000..-32099) carry `data.error_code` matching the existing 
 #### 3.8.5 BDD
 
 - **S58 mcp initialize** — `initialize` with `protocolVersion:"2025-06-18"` → `result.{protocolVersion:"2025-06-18", capabilities:{tools:{}}, serverInfo:{name:"ragent",version:"<semver>"}}`. A supported older revision (`2025-03-26` / `2024-11-05`) is echoed back; an unsupported revision falls back to `2025-06-18`.
-- **S59 mcp tools/list** — `result.tools` has exactly one entry `name:"retrieve"` with `inputSchema` and `outputSchema` matching §3.8.3.
-- **S60 mcp tools/call retrieve** — Given indexed corpus and `tools/call` with `{name:"retrieve", arguments:{query:"...",top_k:3}}`, When the server processes it, Then `result.structuredContent.sources` carries one full source entry per chunk (N ≤ 3) validating against `outputSchema`, `result.content[0].text` is the `<context>`-wrapped citation table + `### [N]` excerpt blocks with no natural-language wording and no internal fields, and `result.isError` is `false`. Empty results return `structuredContent: {sources: []}` with `<context>\n</context>`.
-- **S60a mcp tools/call retrieve unknown arg** — Given `tools/call` with `{name:"retrieve", arguments:{query:"q", unknown_field:"bad"}}`, Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_INPUT_INVALID`.
+- **S59 mcp tools/list** — `result.tools` includes `name:"retrieve"` (`inputSchema`/`outputSchema` matching §3.8.3), plus `name:"create_skill"` when `skill_service` is wired (§3.8 in `00_spec.md`).
+- **S60 mcp tools/call retrieve** — Given a document owned by the caller and `tools/call` with `{name:"retrieve", arguments:{query:"...",document_id_list:["<owned-id>"],top_k:3}}`, When the server processes it, Then `result.structuredContent.sources` carries one full source entry per chunk (N ≤ 3) validating against `outputSchema`, `result.content[0].text` is the `<context>`-wrapped citation table + `### [N]` excerpt blocks with no natural-language wording and no internal fields, and `result.isError` is `false`. Empty results return `structuredContent: {sources: []}` with `<context>\n</context>`. A `document_id_list` id not owned by the caller (or unknown) rejects the whole request with `403 DOCUMENT_FORBIDDEN`.
+- **S60a mcp tools/call retrieve unknown arg** — Given `tools/call` with `{name:"retrieve", arguments:{query:"q", document_id_list:["<owned-id>"], unknown_field:"bad"}}`, Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_INPUT_INVALID`.
 - **S61 mcp method not found** — Given `{method:"resources/list"}` (unimplemented), Then `error.code` is `-32601`.
 - **S62 mcp tools/call invalid name** — Given `{method:"tools/call", params:{name:"unknown_tool",arguments:{}}}`, Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_NOT_FOUND`.
-- **S63 mcp tools/call missing query** — Given `{method:"tools/call", params:{name:"retrieve",arguments:{}}}` (no `query`), Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_INPUT_INVALID`.
+- **S63 mcp tools/call missing required args** — Given `{method:"tools/call", params:{name:"retrieve",arguments:{}}}` (no `query`/`document_id_list`), Then `error.code` is `-32602` and `error.data.error_code` is `MCP_TOOL_INPUT_INVALID`.
 - **S64 mcp parse error** — Given a request body that is not valid JSON, Then HTTP `200` with JSON-RPC body `{jsonrpc:"2.0",id:null,error:{code:-32700,...}}` (per JSON-RPC 2.0 §5: `id` is `null` when parse failed).
 - **S65 mcp notifications/initialized** — Given `{jsonrpc:"2.0", method:"notifications/initialized"}` (no `id`), Then HTTP `204` with empty body; no JSON-RPC response object emitted.
 - **S66 mcp auth required** — Given `RAGENT_AUTH_MODE=jwt_header` and no `<RAGENT_JWT_HEADER>` header, Then HTTP `401` with `application/problem+json` (NOT a JSON-RPC error envelope) and `error_code=AUTH_TOKEN_INVALID`.
