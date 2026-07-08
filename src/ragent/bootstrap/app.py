@@ -498,6 +498,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
                 rate_limit=container.rate_limit,
                 rate_limit_window=container.rate_limit_window,
                 jwt_header=str_env("RAGENT_JWT_HEADER", _DEFAULT_JWT_HEADER),
+                brain_key=container.brain_key,
                 timeout=_float_env("CHATAGENT_TIMEOUT_SECONDS", 30.0),
                 chat_stream_store=container.chat_stream_store,
                 nats_publisher=container.nats_publisher,

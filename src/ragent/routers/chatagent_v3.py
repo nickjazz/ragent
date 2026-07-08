@@ -74,6 +74,7 @@ def create_chatagent_v3_router(
     rate_limit: int = 60,
     rate_limit_window: int = 60,
     jwt_header: str = "X-Auth-Token",
+    brain_key: str | None = None,
     timeout: float = 30.0,
     chat_stream_store: ChatStreamStore | None = None,
     nats_publisher: NatsSessionPublisher | None = None,
@@ -97,6 +98,12 @@ def create_chatagent_v3_router(
     )
 
     _headers: dict[str, str] = {"Authorization": chatagent_auth} if chatagent_auth else {}
+    # Service-to-service auth for a brain-backed session store: when the session
+    # upstream is ragent-brain's /upstream/session*, brain enforces X-Brain-Key
+    # on every call. Attach it so the enriched v3 session proxy authenticates
+    # (the /brainagent/v1 passthrough already does this for resources).
+    if brain_key:
+        _headers["X-Brain-Key"] = brain_key
 
     def _rate_limited(user_id: str | None) -> bool:
         if rate_limiter is None or user_id is None:
