@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -169,12 +170,13 @@ def _build_brain_agent_factory(
 
     from ragent.clients.brain_caller import BrainCaller
 
-    def factory(user_id: str) -> Agent:
+    def factory(user_id: str, extra_headers: Mapping[str, str] | None = None) -> Agent:
         caller = BrainCaller(
             http_client=http_client,
             brain_url=brain_url,
             user_id=user_id,
             brain_key=brain_key,
+            extra_headers=extra_headers,
             timeout=timeout,
         )
         return BrainAgent(caller)

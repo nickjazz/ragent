@@ -25,9 +25,14 @@ from ragent.bootstrap.metrics import (
 )
 from ragent.bootstrap.openapi import install_openapi
 from ragent.bootstrap.telemetry import setup_tracing
+from ragent.clients.brain_caller import SERVICE_HEADER_NAMES
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
-from ragent.middleware.logging import SCOPE_USER_ID_KEY, RequestLoggingMiddleware
+from ragent.middleware.logging import (
+    SCOPE_FORWARDED_HEADERS_KEY,
+    SCOPE_USER_ID_KEY,
+    RequestLoggingMiddleware,
+)
 from ragent.routers.admin_embedding import create_router as create_admin_embedding_router
 from ragent.routers.admin_ingest import create_router as create_upload_ingest_router
 from ragent.routers.admin_ops import create_admin_ops_router
@@ -166,6 +171,7 @@ def _x_user_id_middleware(
     jwt_header: str = _DEFAULT_JWT_HEADER,
     jwt_claim: str = _DEFAULT_JWT_CLAIM,
     token_manager: Any = None,
+    forward_headers: list[str] | None = None,
 ) -> None:
     """User-identity middleware (§3.5, T-AM.2).
 
@@ -179,6 +185,7 @@ def _x_user_id_middleware(
 
     user_id_header_lower = user_id_header.lower().encode("latin-1")
     jwt_header_lower = jwt_header.lower()
+    forward_names = list(forward_headers or [])
     needs_jwt = auth_mode in (AuthMode.jwt_header, AuthMode.jwt_prefer_header)
     if needs_jwt and token_manager is None:
         raise RuntimeError(
@@ -210,10 +217,31 @@ def _x_user_id_middleware(
         request.scope["headers"] = headers
         request.scope[SCOPE_USER_ID_KEY] = value
 
+    def _capture_forwarded(request: Request) -> None:
+        """Snapshot the allowlisted inbound headers before any mode branch.
+
+        Read here (once, mode-agnostic) because the raw inbound headers — the
+        JWT included — are present regardless of auth mode; downstream brain
+        callers pull this via ``get_forwarded_headers``. Service headers are never
+        sourced from here (the callers set X-User-Id / X-Brain-Key themselves)."""
+        if not forward_names:
+            return
+        # Protected service headers are never forwardable — drop them (case-
+        # insensitively) here at the source so the bag can never carry a value
+        # that would collide with the service-owned X-User-Id / X-Brain-Key set
+        # by the brain callers (belt-and-suspenders with build_brain_headers).
+        request.scope[SCOPE_FORWARDED_HEADERS_KEY] = {
+            name: request.headers[name]
+            for name in forward_names
+            if request.headers.get(name) and name.lower() not in SERVICE_HEADER_NAMES
+        }
+
     @app.middleware("http")
     async def require_user_id(request: Request, call_next: Any) -> Response:
         if request.url.path in _PUBLIC_PATHS:
             return await call_next(request)
+
+        _capture_forwarded(request)
 
         if auth_mode == AuthMode.none:
             _inject_header(request, "anonymous")
@@ -602,6 +630,7 @@ def create_app() -> FastAPI:  # pragma: no cover — composition root, tested by
         jwt_header=_jwt_header,
         jwt_claim=str_env("RAGENT_JWT_CLAIM_USER_ID", _DEFAULT_JWT_CLAIM),
         token_manager=container.auth_token_manager,
+        forward_headers=_list_env("BRAIN_FORWARD_HEADERS"),
     )
     install_openapi(
         app,

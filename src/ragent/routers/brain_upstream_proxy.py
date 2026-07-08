@@ -24,13 +24,15 @@ routes win over this catch-all.
 from __future__ import annotations
 
 import json
+from typing import Annotated
 
 import httpx
 import structlog
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.concurrency import run_in_threadpool
 
-from ragent.auth.deps import get_user_id
+from ragent.auth.deps import get_forwarded_headers, get_user_id
+from ragent.clients.brain_caller import build_brain_headers
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.problem import problem
 
@@ -57,17 +59,18 @@ def create_brain_upstream_proxy_router(
     router = APIRouter(prefix="/brainagent/v1")
     base = brain_url.rstrip("/")
 
-    def _upstream_headers(user_id: str) -> dict[str, str]:
-        headers = {"X-User-Id": user_id}
-        if brain_key:
-            headers["X-Brain-Key"] = brain_key
-        return headers
+    def _upstream_headers(user_id: str, forwarded: dict[str, str] | None) -> dict[str, str]:
+        # Service-owned X-User-Id / X-Brain-Key always win over any same-named
+        # (case-insensitive) forwarded header — a forged value cannot cross
+        # tenants or spoof the secret. ``None`` forwarded is handled safely.
+        return build_brain_headers(user_id, brain_key, forwarded)
 
     @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def proxy(
         path: str,
         request: Request,
         x_user_id: str | None = Depends(get_user_id),
+        forwarded_headers: Annotated[dict[str, str], Depends(get_forwarded_headers)] = None,
     ) -> Response:
         user_id = x_user_id or "anonymous"
         if path.strip("/") in _DENIED_PATHS:
@@ -92,7 +95,7 @@ def create_brain_upstream_proxy_router(
                 parsed["user"] = user_id
                 json_body = parsed
 
-        headers = _upstream_headers(user_id)
+        headers = _upstream_headers(user_id, forwarded_headers)
         # Forward content negotiation from the client so binary/artifact downloads
         # negotiate correctly at brain. (Content-Type is forwarded only on the
         # raw-body path below; the json= path lets httpx set application/json.)

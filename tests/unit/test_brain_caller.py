@@ -8,9 +8,20 @@ import httpx
 import pytest
 from twp_ai.schemas import RunAgentInput
 
-from ragent.clients.brain_caller import BrainCaller
+from ragent.clients.brain_caller import BrainCaller, build_brain_headers
 from ragent.errors.codes import HttpErrorCode
 from ragent.errors.upstream import UpstreamServiceError, UpstreamTimeoutError
+
+
+def test_build_brain_headers_drops_case_insensitive_service_collisions() -> None:
+    out = build_brain_headers(
+        "alice", "sekret", {"x-user-id": "mallory", "X-Brain-Key": "forged", "X-Auth-Token": "t"}
+    )
+    assert out == {"X-User-Id": "alice", "X-Brain-Key": "sekret", "X-Auth-Token": "t"}
+
+
+def test_build_brain_headers_handles_none_and_missing_brain_key() -> None:
+    assert build_brain_headers("alice", None, None) == {"X-User-Id": "alice"}
 
 
 def _request() -> RunAgentInput:
@@ -75,6 +86,55 @@ def test_no_brain_key_header_when_unset() -> None:
 
     list(_caller(handler, brain_key=None).stream_frames(_request(), ""))
     assert "x-brain-key" not in seen["headers"]
+
+
+def test_forwards_extra_headers_to_run() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["headers"] = request.headers
+        return httpx.Response(200, content=b"", headers={"content-type": "text/event-stream"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    caller = BrainCaller(
+        http_client=client,
+        brain_url="http://brain:8100",
+        user_id="alice",
+        brain_key="sekret",
+        extra_headers={"X-Auth-Token": "jwt-abc"},
+        timeout=5.0,
+    )
+    list(caller.stream_frames(_request(), ""))
+    # forwarded header rides alongside the service + user headers.
+    assert seen["headers"]["x-auth-token"] == "jwt-abc"
+    assert seen["headers"]["x-user-id"] == "alice"
+    assert seen["headers"]["x-brain-key"] == "sekret"
+
+
+def test_extra_headers_cannot_override_service_headers() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["headers"] = request.headers
+        return httpx.Response(200, content=b"", headers={"content-type": "text/event-stream"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    caller = BrainCaller(
+        http_client=client,
+        brain_url="http://brain:8100",
+        user_id="alice",
+        brain_key="sekret",
+        # forged service headers in DIFFERENT casing must NOT ride along: a
+        # case-sensitive dict merge would otherwise leave httpx emitting BOTH
+        # `x-user-id: mallory` and `X-User-Id: alice`, and a FastAPI brain reads
+        # the first — defeating the override. The collision must be dropped.
+        extra_headers={"x-user-id": "mallory", "x-brain-key": "forged"},
+        timeout=5.0,
+    )
+    list(caller.stream_frames(_request(), ""))
+    # exactly one value per service header — no duplicate case variant emitted.
+    assert seen["headers"].get_list("x-user-id") == ["alice"]
+    assert seen["headers"].get_list("x-brain-key") == ["sekret"]
 
 
 def test_timeout_raises_typed_timeout_error() -> None:

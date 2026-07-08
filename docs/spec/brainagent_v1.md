@@ -49,8 +49,17 @@ ragent-side in `src/ragent/clients/brain_caller.py`.
   is built** (contrast §3.4.7, which folds context/state into a single upstream
   `inputData.message` because the ADK wire has only one text field).
 - **Headers:** `X-User-Id: {resolved user}` and `X-Brain-Key: {BRAIN_KEY}`
-  (service-to-service). The user's JWT is **not** forwarded to brain — brain
-  authenticates the caller by `X-Brain-Key` and scopes data by `X-User-Id`.
+  (service-to-service). brain authenticates the caller by `X-Brain-Key` and
+  scopes data by `X-User-Id`.
+  **Forwarded headers (opt-in via `BRAIN_FORWARD_HEADERS`):** any inbound header
+  named in that allowlist (e.g. `X-Auth-Token`, the raw JWT) is copied
+  verbatim onto the outbound run / cancel / `/upstream/*` calls, so brain can
+  relay it to on-behalf-of downstreams (e.g. an MCP tool's `headerTemplates`
+  opening). This is a plain header key→value passthrough, not an auth mechanism —
+  ragent remains the verification boundary and does not re-verify the forwarded
+  value, and the service-owned `X-User-Id` / `X-Brain-Key` always override any
+  same-named forwarded header (a forged forwarded value cannot cross tenants or
+  spoof the secret). Unset allowlist = nothing forwarded.
 - **Session id ownership (Model B, unchanged):** request `thread_id` is optional;
   when the client omits it ragent mints one (`new_id()`) and sends it in the
   body. brain echoes it verbatim in `RUN_STARTED.thread_id` (brain's engine uses
@@ -163,6 +172,11 @@ the generic proxy:
   - `BRAIN_API_URL` — brain base URL (e.g. `http://brain:8100`). Unset → the
     whole `/brainagent/v1` surface is not registered.
   - `BRAIN_KEY` — `X-Brain-Key` service-to-service secret (never logged).
+  - `BRAIN_FORWARD_HEADERS` — comma-separated inbound-header allowlist forwarded
+    verbatim to brain (read in `bootstrap/app.py` and handed to the auth
+    middleware, which snapshots the allowlisted headers into
+    `request.scope[SCOPE_FORWARDED_HEADERS_KEY]`; routers read them via
+    `auth.deps.get_forwarded_headers`). Unset → nothing forwarded.
   - `BRAIN_TIMEOUT_SECONDS` — transport timeout (default 30).
 - **Agent factory.** `_build_brain_agent_factory(http, brain_url, brain_key,
   timeout)` returns `factory(user_id) -> Agent` building `BrainCaller` wrapped in

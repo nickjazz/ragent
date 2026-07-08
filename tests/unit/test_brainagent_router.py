@@ -44,7 +44,7 @@ def _make_app(
             http_client=http_mock,
             brain_url="http://brain:8100",
             brain_key="sekret",
-            agent_factory=lambda user_id: _EchoAgent(),
+            agent_factory=lambda user_id, extra_headers=None: _EchoAgent(),
             rate_limiter=rate_limiter,
             chat_stream_store=chat_stream_store,
             stream_idle_timeout=3.0,
